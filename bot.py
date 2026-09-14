@@ -1368,7 +1368,7 @@ async def main():
     try:
         await init_redis()
     except Exception as e:
-        logger.error(f"Redis: ошибка подключения — {e}")
+        logger.error(f"Redis: ошибка подключенияяяяя — {e}")
         return
     await dp.start_polling(bot, drop_pending_updates=True)
 
