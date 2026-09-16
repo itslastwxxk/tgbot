@@ -666,6 +666,10 @@ def get_casino_keyboard():
 
 def get_roulette_amount_keyboard(amount: int):
     return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➗ 0.5", callback_data="roulette_mul:0.5"),
+            InlineKeyboardButton(text="✖️ 2", callback_data="roulette_mul:2"),
+        ],
         [InlineKeyboardButton(text=f"💰 Ставка {amount:,} ₽", callback_data="roulette_amount_noop")],
         [InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")],
     ])
@@ -1805,31 +1809,36 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 
     if amount <= 0:
         await callback.answer("Сначала укажите сумму ставки.", show_alert=True)
-        await state.clear()
         return
 
     balance = await get_balance(user_id)
     if amount > balance:
         await callback.answer("Недостаточно средств для этой ставки.", show_alert=True)
-        await state.clear()
         return
 
     await callback.answer()
     await state.update_data(bet=bet)
-
-    # Ставка списывается до вращения, чтобы двойное нажатие не создавало дубль.
     await add_to_balance(user_id, -amount)
 
-    # Простая анимация вращения.
-    spin_frames = ["🎡 |", "🎡 /", "🎡 —", "🎡 \\", "🎡 |", "🎡 /", "🎡 —", "🎡 \\"]
-    for frame in spin_frames:
+    # Редактируем то же самое сообщение, по которому нажали ставку.
+    # Inline-кнопки полностью убираются на время прокрутки.
+    frames = [
+        "🎡 🔄 🟢 0", "🎡 🔄 🔴 17", "🎡 🔄 ⚫ 32",
+        "🎡 🔄 🔴 9", "🎡 🔄 ⚫ 26", "🎡 🔄 🔴 21",
+        "🎡 🔄 ⚫ 35"
+    ]
+
+    for frame in frames:
         try:
             await callback.message.edit_text(
+                f"<b>РУЛЕТКА КРУТИТСЯ...</b>\n\n"
                 f"{frame}\n\n"
-                f"🎯 Ставка: {roulette_bet_name(bet)}\n"
-                f"💰 Сумма: {amount:,} ₽"
+                f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
+                f"💰 Сумма: <b>{amount:,} ₽</b>",
+                parse_mode="HTML",
+                reply_markup=None
             )
-            await asyncio.sleep(0.16)
+            await asyncio.sleep(0.18)
         except TelegramBadRequest:
             break
 
@@ -1839,49 +1848,45 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 
     if won:
         winnings = amount * (payout_mult + 1)
-        new_balance = await add_to_balance(user_id, winnings)
-        if payout_mult == 35:
-            payout_text = f"🎉 Выигрыш: +{amount * payout_mult:,} ₽"
-        else:
-            payout_text = f"🎉 Выигрыш: +{amount * payout_mult:,} ₽"
+        await add_to_balance(user_id, winnings)
+        new_balance = await get_balance(user_id)
         result_text = (
-            f"🎡 Рулетка остановилась!\n\n"
-            f"Выпало: {color} {number}\n"
-            f"Ваша ставка: {roulette_bet_name(bet)}\n"
-            f"Сумма: {amount:,} ₽\n\n"
-            f"✅ ПРАВИЛЬНО!\n"
-            f"{payout_text}\n"
-            f"💰 Баланс: {new_balance:,} ₽"
+            f"🎡 <b>РУЛЕТКА ОСТАНОВИЛАСЬ!</b>\n\n"
+            f"Выпало: {color} <b>{number}</b>\n"
+            f"Ваша ставка: <b>{roulette_bet_name(bet)}</b>\n"
+            f"Сумма: <b>{amount:,} ₽</b>\n\n"
+            f"✅ <b>ПРАВИЛЬНО!</b>\n"
+            f"🎉 Выигрыш: +{amount * payout_mult:,} ₽\n"
+            f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
         new_balance = await get_balance(user_id)
         result_text = (
-            f"🎡 Рулетка остановилась!\n\n"
-            f"Выпало: {color} {number}\n"
-            f"Ваша ставка: {roulette_bet_name(bet)}\n"
-            f"Сумма: {amount:,} ₽\n\n"
-            f"❌ НЕПРАВИЛЬНО!\n"
+            f"🎡 <b>РУЛЕТКА ОСТАНОВИЛАСЬ!</b>\n\n"
+            f"Выпало: {color} <b>{number}</b>\n"
+            f"Ваша ставка: <b>{roulette_bet_name(bet)}</b>\n"
+            f"Сумма: <b>{amount:,} ₽</b>\n\n"
+            f"❌ <b>НЕПРАВИЛЬНО!</b>\n"
             f"💸 Ставка сгорела.\n"
-            f"💰 Баланс: {new_balance:,} ₽"
+            f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
-
-    await state.clear()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎡 Ещё раз", callback_data="casino_roulette"),
+            InlineKeyboardButton(text="🎡 Ещё раз", callback_data=f"roulette_bet:{bet}"),
             InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")
         ],
-        [
-            InlineKeyboardButton(text="🏙 В меню", callback_data="casino_exit")
-        ]
+        [InlineKeyboardButton(text="🏙 В меню", callback_data="casino_exit")]
     ])
 
     try:
-        await callback.message.edit_text(result_text, reply_markup=kb)
+        await callback.message.edit_text(
+            result_text, parse_mode="HTML", reply_markup=kb
+        )
     except TelegramBadRequest:
-        await callback.message.answer(result_text, reply_markup=kb)
-
+        await callback.message.answer(
+            result_text, parse_mode="HTML", reply_markup=kb
+        )
 
 @router.callback_query(F.data.startswith("roulette_mul:"))
 async def roulette_change_amount_outside_state(callback: CallbackQuery):
