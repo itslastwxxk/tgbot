@@ -236,8 +236,6 @@ def biz_settle(biz):
     return biz
 
 async def settle_and_save_biz(user_id, biz):
-    """Начисляет доход за прошедшее время и сохраняет в Redis.
-    Вызывать ПЕРЕД любым использованием biz в хендлерах."""
     if biz is None:
         return None
     biz_settle(biz)
@@ -562,7 +560,7 @@ async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple
         _farm_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
 
-# --- Математика ---
+# --- Математика: кулдаун ---
 async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
     if user_id in _math_cooldown_cache:
@@ -726,7 +724,6 @@ def _ensure_images_dir():
         _images_dir_ready = True
 
 def _generate_image_sync(problem_text: str, filepath: str) -> str:
-    """Синхронная генерация картинки. Вызывается в отдельном потоке."""
     _ensure_images_dir()
     img = Image.new("RGB", (400, 150), color=(30, 30, 30))
     draw = ImageDraw.Draw(img)
@@ -757,12 +754,8 @@ async def generate_math_problem(user_id: int) -> tuple[str, int]:
         answer = a * b
     problem_text = f"{a} {operation} {b} = ?"
 
-    # Уникальное имя файла — чтобы параллельные запросы не перезаписывали друг друга
     filepath = f"images/math_{user_id}_{uuid.uuid4().hex[:8]}.png"
-
-    # Генерация в отдельном потоке — не блокирует event loop
     await asyncio.to_thread(_generate_image_sync, problem_text, filepath)
-
     return filepath, answer
 
 # ============================================================
@@ -791,7 +784,6 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.message(Command("ping"))
 async def cmd_ping(message: Message):
-    """Проверка состояния бота и Redis."""
     try:
         await redis_client.ping()
         redis_ok = "✅ Redis OK"
@@ -1040,14 +1032,14 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer("🚪 Вы вышли из трейдинга.", reply_markup=get_work_keyboard())
 
-# --- МАТЕМАТИКА ---
+# ============================================================
+# МАТЕМАТИКА
+# ============================================================
+
 @router.message(F.text == "🧮 Математика")
 async def handle_math(message: Message, state: FSMContext):
+    """Вход в математику — без кулдауна, первый пример сразу."""
     user_id = message.from_user.id
-    allowed, remaining = await can_math(user_id, cooldown_seconds=MATH_COOLDOWN)
-    if not allowed:
-        await message.answer(f"⏳ Математика отдыхает. Осталось: {remaining} сек.")
-        return
 
     image_path, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
@@ -1065,7 +1057,6 @@ async def handle_math(message: Message, state: FSMContext):
             reply_markup=get_math_keyboard()
         )
         await state.update_data(problem_msg_id=sent.message_id)
-        # Удаляем временный файл после отправки
         try:
             os.remove(image_path)
         except OSError:
@@ -1107,9 +1098,14 @@ async def process_math_answer(message: Message, state: FSMContext):
 async def process_math_next(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = callback.from_user.id
+
+    # --- Кулдаун 15 сек ---
     allowed, remaining = await can_math(user_id, cooldown_seconds=MATH_COOLDOWN)
     if not allowed:
-        await callback.answer(f"⏳ Осталось: {remaining} сек.", show_alert=True)
+        await callback.answer(
+            f"⏳ Вы пока не можете пользоваться! КД: {remaining} сек.",
+            show_alert=True
+        )
         return
 
     image_path, answer = await generate_math_problem(user_id)
@@ -1117,10 +1113,13 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MathForm.waiting_for_answer)
 
     try:
+        # Снимаем кнопки с сообщения-результата, текст оставляем
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
+
+        # Отправляем новую картинку
         photo = FSInputFile(image_path)
         sent = await callback.message.answer_photo(
             photo=photo,
@@ -1128,7 +1127,7 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_math_keyboard()
         )
         await state.update_data(problem_msg_id=sent.message_id)
-        # Удаляем временный файл после отправки
+
         try:
             os.remove(image_path)
         except OSError:
@@ -1136,7 +1135,7 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка отправки фото: {e}")
         await callback.message.answer("🧮 Не удалось создать картинку. Попробуй ещё раз.")
-
+        
 @router.callback_query(F.data == "math_exit")
 async def process_math_exit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -1147,7 +1146,10 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer("🚪 Вы вышли из математики.", reply_markup=get_work_keyboard())
 
-# --- БИЗНЕС: reply-кнопка ---
+# ============================================================
+# БИЗНЕС
+# ============================================================
+
 @router.message(F.text == "🏪 Мои бизнесы")
 async def handle_my_businesses(message: Message, state: FSMContext):
     await state.clear()
@@ -1161,7 +1163,6 @@ async def handle_my_businesses(message: Message, state: FSMContext):
 
     await message.answer(text, reply_markup=kb)
 
-# --- БИЗНЕС: все inline-кнопки ---
 @router.callback_query(F.data.startswith("biz_"))
 async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
     data = callback.data
@@ -1260,7 +1261,6 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await biz_edit(callback, text, kb)
         return
 
-    # Единая точка: начисляем доход за прошедшее время и сохраняем
     await settle_and_save_biz(user_id, biz)
 
     if data == "biz_wh":
@@ -1453,14 +1453,11 @@ dp.include_router(router)
 LOCK_FILE = "bot.lock"
 
 async def main():
-    # --- Защита от двойного запуска ---
     if os.path.exists(LOCK_FILE):
         logger.warning("Lock-файл существует. Возможно, бот уже запущен.")
         with open(LOCK_FILE, "r") as f:
             old_pid = f.read().strip()
         logger.warning(f"PID предыдущего процесса: {old_pid}")
-        # Если хочешь жёстко блокировать — раскомментируй:
-        # return
 
     with open(LOCK_FILE, "w") as f:
         f.write(str(os.getpid()))
