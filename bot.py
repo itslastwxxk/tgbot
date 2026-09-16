@@ -1581,25 +1581,19 @@ async def show_casino(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "casino_menu")
 async def casino_menu(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await callback.answer()  # <-- обязательно: снимает «часы» у пользователя
     await state.clear()
-    await callback.message.edit_text(
-        "🎰 Казино\n\nВыберите игру:",
-        reply_markup=get_casino_keyboard()
-    )
 
-async def casino_exit(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.clear()
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
+        # Сообщение могло быть удалено/изменено — просто игнорируем
         pass
-    await callback.message.answer(
-        "🏙 Главное меню",
-        reply_markup=get_main_keyboard()
-    )
 
+    await callback.message.answer(
+        "🎰 Казино\n\nВыберите игру:",
+        reply_markup=get_casino_keyboard()
+    )
 
 @router.message(F.text == "🎡 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
