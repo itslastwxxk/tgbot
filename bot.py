@@ -10,6 +10,8 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import BufferedInputFile
+from io import BytesIO
 import asyncio
 import logging
 import os
@@ -776,8 +778,7 @@ def _ensure_images_dir():
         os.makedirs("images", exist_ok=True)
         _images_dir_ready = True
 
-def _generate_image_sync(problem_text: str, filepath: str) -> str:
-    _ensure_images_dir()
+def _generate_image_in_memory(problem_text: str) -> bytes:
     img = Image.new("RGB", (400, 150), color=(30, 30, 30))
     draw = ImageDraw.Draw(img)
     font = _get_font(48)
@@ -785,11 +786,16 @@ def _generate_image_sync(problem_text: str, filepath: str) -> str:
     left, top, right, bottom = bbox
     text_w = right - left
     text_h = bottom - top
-    x = (400 - text_w) // 2
-    y = (150 - text_h) // 2
+
+    # Центрируем текст
+    x = (img.width - text_w) // 2
+    y = (img.height - text_h) // 2
+
     draw.text((x, y), problem_text, fill=(255, 255, 255), font=font)
-    img.save(filepath)
-    return filepath
+
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 async def generate_math_problem(user_id: int) -> tuple[str, int]:
     a = random.randint(1, 50)
@@ -807,9 +813,8 @@ async def generate_math_problem(user_id: int) -> tuple[str, int]:
         answer = a * b
     problem_text = f"{a} {operation} {b} = ?"
 
-    filepath = f"images/math_{user_id}_{uuid.uuid4().hex[:8]}.png"
-    await asyncio.to_thread(_generate_image_sync, problem_text, filepath)
-    return filepath, answer
+    image_bytes = await asyncio.to_thread(_generate_image_in_memory, problem_text)
+    return image_bytes, answer
 
 # ============================================================
 # ХЕНДЛЕРЫ
@@ -1152,45 +1157,32 @@ async def process_math_answer(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "math_next")
 async def process_math_next(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
     user_id = callback.from_user.id
 
-    # --- Кулдаун 15 сек ---
     allowed, remaining = await can_math(user_id, cooldown_seconds=MATH_COOLDOWN)
     if not allowed:
-        await callback.answer(
-            f"⏳ Вы пока не можете пользоваться! КД: {remaining} сек.",
-            show_alert=True
-        )
+        await callback.answer(f"⏳ КД: {remaining} сек.", show_alert=True)
         return
 
-    image_path, answer = await generate_math_problem(user_id)
+    await callback.answer()
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+    image_bytes, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
 
-    try:
-        # Снимаем кнопки с сообщения-результата, текст оставляем
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
+    photo = BufferedInputFile(image_bytes, filename="math_problem.png")
 
-        # Отправляем новую картинку
-        photo = FSInputFile(image_path)
-        sent = await callback.message.answer_photo(
-            photo=photo,
-            caption="🧮 Реши пример! Напиши ответ числом:",
-            reply_markup=get_math_keyboard()
-        )
-        await state.update_data(problem_msg_id=sent.message_id)
-
-        try:
-            os.remove(image_path)
-        except OSError:
-            pass
-    except Exception as e:
-        logger.error(f"Ошибка отправки фото: {e}")
-        await callback.message.answer("🧮 Не удалось создать картинку. Попробуй ещё раз.")
+    sent = await callback.message.answer_photo(
+        photo=photo,
+        caption="🧮 Реши пример! Напиши ответ числом:",
+        reply_markup=get_math_keyboard()
+    )
+    await state.update_data(problem_msg_id=sent.message_id)
 
 @router.callback_query(F.data == "math_exit")
 async def process_math_exit(callback: CallbackQuery, state: FSMContext):
