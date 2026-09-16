@@ -1676,12 +1676,14 @@ async def casino_exit(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🎡 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
+
+    # Убираем Reply-клавиатуру, но само сообщение выбора ставки
+    # создаётся отдельно и остаётся на месте вместе с inline-кнопками.
+    await message.answer(
+        "🎡 Рулетка открыта.",
+        reply_markup=ReplyKeyboardRemove()
+    )
     await roulette_show_amount(message, state)
-
-async def casino_roulette(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await roulette_show_amount(callback.message, state)
-
 
 @router.callback_query(F.data == "roulette_amount_noop")
 async def roulette_amount_noop(callback: CallbackQuery):
@@ -1803,8 +1805,8 @@ async def roulette_amount_noop_bet(callback: CallbackQuery):
 @router.callback_query(RouletteForm.waiting_for_bet, F.data.startswith("roulette_bet:"))
 async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
-    data = await state.get_data()
-    amount = int(data.get("amount", 0))
+    state_data = await state.get_data()
+    amount = int(state_data.get("amount", 0))
     bet = callback.data.split(":", 1)[1]
 
     if amount <= 0:
@@ -1817,24 +1819,68 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer()
-    await state.update_data(bet=bet)
     await add_to_balance(user_id, -amount)
 
-    # Редактируем то же самое сообщение, по которому нажали ставку.
-    # Inline-кнопки полностью убираются на время прокрутки.
-    frames = [
-        "🎡 🔄 🟢 0", "🎡 🔄 🔴 17", "🎡 🔄 ⚫ 32",
-        "🎡 🔄 🔴 9", "🎡 🔄 ⚫ 26", "🎡 🔄 🔴 21",
-        "🎡 🔄 ⚫ 35"
+    # Для первого вращения создаём сообщение.
+    # Для всех следующих игр используем ПОСЛЕДНЕЕ сообщение результата
+    # и превращаем его обратно в прокрутку.
+    last_result_message_id = state_data.get("last_result_message_id")
+    chat_id = callback.message.chat.id
+
+    spin_text = (
+        f"🎡 <b>РУЛЕТКА КРУТИТСЯ...</b>\n\n"
+        f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
+        f"💰 Сумма: <b>{amount:,} ₽</b>"
+    )
+
+    spin_message = None
+
+    if last_result_message_id:
+        try:
+            spin_message = await callback.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=last_result_message_id,
+                text=spin_text,
+                parse_mode="HTML",
+                reply_markup=None
+            )
+        except TelegramBadRequest:
+            spin_message = None
+
+    if spin_message is None:
+        spin_message = await callback.message.answer(
+            spin_text,
+            parse_mode="HTML"
+        )
+
+    # Запоминаем сообщение, которое сейчас используется для прокрутки.
+    await state.update_data(
+        last_result_message_id=spin_message.message_id,
+        bet=bet
+    )
+
+    spin_frames = [
+        "🎡 🔄 🟢 0",
+        "🎡 🔄 🔴 17",
+        "🎡 🔄 ⚫ 32",
+        "🎡 🔄 🔴 9",
+        "🎡 🔄 ⚫ 26",
+        "🎡 🔄 🔴 21",
+        "🎡 🔄 ⚫ 35",
     ]
 
-    for frame in frames:
+    # Во время прокрутки inline-кнопок нет.
+    for frame in spin_frames:
         try:
-            await callback.message.edit_text(
-                f"<b>РУЛЕТКА КРУТИТСЯ...</b>\n\n"
-                f"{frame}\n\n"
-                f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
-                f"💰 Сумма: <b>{amount:,} ₽</b>",
+            await callback.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=spin_message.message_id,
+                text=(
+                    f"<b>РУЛЕТКА КРУТИТСЯ...</b>\n\n"
+                    f"{frame}\n\n"
+                    f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
+                    f"💰 Сумма: <b>{amount:,} ₽</b>"
+                ),
                 parse_mode="HTML",
                 reply_markup=None
             )
@@ -1850,6 +1896,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         winnings = amount * (payout_mult + 1)
         await add_to_balance(user_id, winnings)
         new_balance = await get_balance(user_id)
+
         result_text = (
             f"🎡 <b>РУЛЕТКА ОСТАНОВИЛАСЬ!</b>\n\n"
             f"Выпало: {color} <b>{number}</b>\n"
@@ -1861,6 +1908,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         )
     else:
         new_balance = await get_balance(user_id)
+
         result_text = (
             f"🎡 <b>РУЛЕТКА ОСТАНОВИЛАСЬ!</b>\n\n"
             f"Выпало: {color} <b>{number}</b>\n"
@@ -1871,22 +1919,18 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎡 Ещё раз", callback_data=f"roulette_bet:{bet}"),
-            InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")
-        ],
-        [InlineKeyboardButton(text="🏙 В меню", callback_data="casino_exit")]
-    ])
+    # После остановки оставляем только результат без inline-кнопок.
+    await callback.bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=spin_message.message_id,
+        text=result_text,
+        parse_mode="HTML",
+        reply_markup=None
+    )
 
-    try:
-        await callback.message.edit_text(
-            result_text, parse_mode="HTML", reply_markup=kb
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            result_text, parse_mode="HTML", reply_markup=kb
-        )
+    # last_result_message_id остаётся в state.
+    # Поэтому следующий клик по ставке изменит ЭТО ЖЕ сообщение
+    # обратно на прокрутку, а не создаст новое.
 
 @router.callback_query(F.data.startswith("roulette_mul:"))
 async def roulette_change_amount_outside_state(callback: CallbackQuery):
