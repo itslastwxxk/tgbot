@@ -610,7 +610,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             if name:
                 _name_cache[user_id] = name
     display_name = name or "Игрок"
-    text = f"🏙 Гггггглавное меню\n{display_name}, ваш баланс: {balance:,} ₽\nВыберите раздел:"
+    text = f"🏙 Ггггглавное меню\n{display_name}, ваш баланс: {balance:,} ₽\nВыберите раздел:"
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
