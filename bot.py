@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import json
+import uuid
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import redis.asyncio as redis
@@ -693,8 +694,17 @@ def get_math_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# --- Генератор примера ---
+# ============================================================
+# ГЕНЕРАЦИЯ КАРТИНКИ ДЛЯ МАТЕМАТИКИ (ОПТИМИЗИРОВАНО)
+# ============================================================
+
+_font_cache = None
+_images_dir_ready = False
+
 def _get_font(size=48):
+    global _font_cache
+    if _font_cache is not None:
+        return _font_cache
     paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "C:/Windows/Fonts/arial.ttf",
@@ -702,12 +712,36 @@ def _get_font(size=48):
     ]
     for path in paths:
         try:
-            return ImageFont.truetype(path, size)
+            _font_cache = ImageFont.truetype(path, size)
+            return _font_cache
         except Exception:
             continue
-    return ImageFont.load_default()
+    _font_cache = ImageFont.load_default()
+    return _font_cache
 
-async def generate_math_problem() -> tuple[str, int]:
+def _ensure_images_dir():
+    global _images_dir_ready
+    if not _images_dir_ready:
+        os.makedirs("images", exist_ok=True)
+        _images_dir_ready = True
+
+def _generate_image_sync(problem_text: str, filepath: str) -> str:
+    """Синхронная генерация картинки. Вызывается в отдельном потоке."""
+    _ensure_images_dir()
+    img = Image.new("RGB", (400, 150), color=(30, 30, 30))
+    draw = ImageDraw.Draw(img)
+    font = _get_font(48)
+    bbox = draw.textbbox((0, 0), problem_text, font=font)
+    left, top, right, bottom = bbox
+    text_w = right - left
+    text_h = bottom - top
+    x = (400 - text_w) // 2
+    y = (150 - text_h) // 2
+    draw.text((x, y), problem_text, fill=(255, 255, 255), font=font)
+    img.save(filepath)
+    return filepath
+
+async def generate_math_problem(user_id: int) -> tuple[str, int]:
     a = random.randint(1, 50)
     b = random.randint(1, 50)
     operation = random.choice(["+", "-", "×"])
@@ -722,20 +756,14 @@ async def generate_math_problem() -> tuple[str, int]:
         b = random.randint(2, 15)
         answer = a * b
     problem_text = f"{a} {operation} {b} = ?"
-    img = Image.new("RGB", (400, 150), color=(30, 30, 30))
-    draw = ImageDraw.Draw(img)
-    font = _get_font(48)
-    bbox = draw.textbbox((0, 0), problem_text, font=font)
-    left, top, right, bottom = bbox
-    text_w = right - left
-    text_h = bottom - top
-    x = (400 - text_w) // 2
-    y = (150 - text_h) // 2
-    draw.text((x, y), problem_text, fill=(255, 255, 255), font=font)
-    os.makedirs("images", exist_ok=True)
-    image_path = "images/math_problem.png"
-    img.save(image_path)
-    return image_path, answer
+
+    # Уникальное имя файла — чтобы параллельные запросы не перезаписывали друг друга
+    filepath = f"images/math_{user_id}_{uuid.uuid4().hex[:8]}.png"
+
+    # Генерация в отдельном потоке — не блокирует event loop
+    await asyncio.to_thread(_generate_image_sync, problem_text, filepath)
+
+    return filepath, answer
 
 # ============================================================
 # ХЕНДЛЕРЫ
@@ -1020,9 +1048,11 @@ async def handle_math(message: Message, state: FSMContext):
     if not allowed:
         await message.answer(f"⏳ Математика отдыхает. Осталось: {remaining} сек.")
         return
-    image_path, answer = await generate_math_problem()
+
+    image_path, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
+
     try:
         await message.answer(
             f"🧮 Математика началась! За правильный ответ: {MATH_REWARD:,} ₽",
@@ -1035,6 +1065,11 @@ async def handle_math(message: Message, state: FSMContext):
             reply_markup=get_math_keyboard()
         )
         await state.update_data(problem_msg_id=sent.message_id)
+        # Удаляем временный файл после отправки
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
     except Exception as e:
         logger.error(f"Ошибка отправки фото: {e}")
         await message.answer("🧮 Не удалось создать картинку. Попробуй ещё раз.")
@@ -1076,9 +1111,11 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     if not allowed:
         await callback.answer(f"⏳ Осталось: {remaining} сек.", show_alert=True)
         return
-    image_path, answer = await generate_math_problem()
+
+    image_path, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
+
     try:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
@@ -1091,6 +1128,11 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_math_keyboard()
         )
         await state.update_data(problem_msg_id=sent.message_id)
+        # Удаляем временный файл после отправки
+        try:
+            os.remove(image_path)
+        except OSError:
+            pass
     except Exception as e:
         logger.error(f"Ошибка отправки фото: {e}")
         await callback.message.answer("🧮 Не удалось создать картинку. Попробуй ещё раз.")
