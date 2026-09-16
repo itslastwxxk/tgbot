@@ -59,6 +59,7 @@ _math_cooldown_cache: dict[int, float] = {}
 TOKEN = os.getenv("TG_BOT_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
 REDIS_TOKEN = os.getenv("REDIS_TOKEN")
+
 # === ЧТЕНИЕ ADMIN_IDS ИЗ .ENV ===
 raw_admin_ids = os.getenv("ADMIN_IDS", "")
 if raw_admin_ids:
@@ -1043,6 +1044,10 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🧮 Математика")
 async def handle_math(message: Message, state: FSMContext):
     user_id = message.from_user.id
+    allowed, remaining = await can_math(user_id, cooldown_seconds=MATH_COOLDOWN)
+    if not allowed:
+        await message.answer(f"⏳ Математика отдыхает. Осталось: {remaining} сек.")
+        return
 
     image_path, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
@@ -1102,33 +1107,20 @@ async def process_math_answer(message: Message, state: FSMContext):
 async def process_math_next(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = callback.from_user.id
-
-    # Кулдаун — только здесь, при нажатии "Следующий пример"
     allowed, remaining = await can_math(user_id, cooldown_seconds=MATH_COOLDOWN)
     if not allowed:
         await callback.answer(f"⏳ Осталось: {remaining} сек.", show_alert=True)
         return
-
-    # Получаем ID старого сообщения с картинкой
-    data = await state.get_data()
-    old_problem_msg_id = data.get("problem_msg_id")
 
     image_path, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
 
     try:
-        # Удаляем старое фото с примером
-        if old_problem_msg_id:
-            try:
-                await callback.bot.delete_message(
-                    chat_id=callback.message.chat.id,
-                    message_id=old_problem_msg_id
-                )
-            except TelegramBadRequest:
-                pass
-
-        # Отправляем новую картинку
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
         photo = FSInputFile(image_path)
         sent = await callback.message.answer_photo(
             photo=photo,
@@ -1136,7 +1128,6 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_math_keyboard()
         )
         await state.update_data(problem_msg_id=sent.message_id)
-
         # Удаляем временный файл после отправки
         try:
             os.remove(image_path)
