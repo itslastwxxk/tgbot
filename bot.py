@@ -836,9 +836,7 @@ async def show_shop_menu(message: Message):
 @router.message(F.text == "🏆 Топ")
 async def show_top(message: Message):
     user_id = message.from_user.id
-    if is_admin(user_id):
-        pass
-    else:
+    if not is_admin(user_id):
         cooldown_key = f"cooldown:top:{user_id}"
         ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
         if not ok:
@@ -849,15 +847,20 @@ async def show_top(message: Message):
                 await redis_client.set(cooldown_key, "1", nx=True, ex=60)
                 await message.answer("⏳ Топ можно проверять раз в минуту. Подожди немного.")
             return
+
     balances = await get_all_balances()
     if not balances:
         await message.answer("🏆 Топ игроков\n\nПока нет данных.")
         return
+
     text = "🏆 Топ игроков по балансу:\n\n"
     for i, (uid, name, balance) in enumerate(balances[:10], 1):
-        text += f"{i}. {name} ({uid}) — {balance:,} ₽\n"
+        # Убрали uid — показываем только позицию, имя и баланс
+        text += f"{i}. {name} — {balance:,} ₽\n"
+
     if len(balances) > 10:
         text += f"\n...и ещё {len(balances) - 10} игроков"
+
     await message.answer(text)
 
 # --- ВОЗВРАТЫ ---
@@ -1135,7 +1138,7 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка отправки фото: {e}")
         await callback.message.answer("🧮 Не удалось создать картинку. Попробуй ещё раз.")
-        
+
 @router.callback_query(F.data == "math_exit")
 async def process_math_exit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
