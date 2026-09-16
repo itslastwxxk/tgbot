@@ -655,18 +655,17 @@ def get_main_keyboard():
 
 
 def get_casino_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎡 Рулетка", callback_data="casino_roulette")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="casino_exit")]
-    ])
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎡 Рулетка")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
 
 
 def get_roulette_amount_keyboard(amount: int):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="➗ 0.5", callback_data="roulette_mul:0.5"),
-            InlineKeyboardButton(text="✖️ 2", callback_data="roulette_mul:2"),
-        ],
         [InlineKeyboardButton(text=f"💰 Ставка {amount:,} ₽", callback_data="roulette_amount_noop")],
         [InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")],
     ])
@@ -1649,7 +1648,14 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "casino_exit")
+@router.message(F.text == "🔙 Назад")
+async def casino_exit(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🏙 Главное меню",
+        reply_markup=get_main_keyboard()
+    )
+
 async def casino_exit(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
@@ -1663,7 +1669,11 @@ async def casino_exit(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "casino_roulette")
+@router.message(F.text == "🎡 Рулетка")
+async def casino_roulette(message: Message, state: FSMContext):
+    await state.clear()
+    await roulette_show_amount(message, state)
+
 async def casino_roulette(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await roulette_show_amount(callback.message, state)
