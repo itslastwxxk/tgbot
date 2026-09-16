@@ -666,10 +666,6 @@ def get_casino_keyboard():
 
 def get_roulette_amount_keyboard(amount: int):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="➗ 0.5", callback_data="roulette_mul:0.5"),
-            InlineKeyboardButton(text="✖️ 2", callback_data="roulette_mul:2"),
-        ],
         [InlineKeyboardButton(text=f"💰 Ставка {amount:,} ₽", callback_data="roulette_amount_noop")],
         [InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")],
     ])
@@ -683,85 +679,25 @@ def get_roulette_bet_keyboard(amount: int = 0):
             InlineKeyboardButton(text=f"💰 {amount:,} ₽", callback_data="roulette_amount_noop"),
             InlineKeyboardButton(text="✖️ 2", callback_data="roulette_mul:2"),
         ],
-        [InlineKeyboardButton(text="🟢 0", callback_data="roulette_bet:0")],
         [
-            InlineKeyboardButton(text="🔴 1", callback_data="roulette_bet:1"),
-            InlineKeyboardButton(text="⚫ 2", callback_data="roulette_bet:2"),
-            InlineKeyboardButton(text="🔴 3", callback_data="roulette_bet:3"),
+            InlineKeyboardButton(text="🔴 красное", callback_data="roulette_bet:red"),
+            InlineKeyboardButton(text="🟢 зеро", callback_data="roulette_bet:0"),
+            InlineKeyboardButton(text="⚫ чёрное", callback_data="roulette_bet:black"),
         ],
         [
-            InlineKeyboardButton(text="⚫ 4", callback_data="roulette_bet:4"),
-            InlineKeyboardButton(text="🔴 5", callback_data="roulette_bet:5"),
-            InlineKeyboardButton(text="⚫ 6", callback_data="roulette_bet:6"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 7", callback_data="roulette_bet:7"),
-            InlineKeyboardButton(text="⚫ 8", callback_data="roulette_bet:8"),
-            InlineKeyboardButton(text="🔴 9", callback_data="roulette_bet:9"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 10", callback_data="roulette_bet:10"),
-            InlineKeyboardButton(text="⚫ 11", callback_data="roulette_bet:11"),
-            InlineKeyboardButton(text="⚫ 12", callback_data="roulette_bet:12"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 13", callback_data="roulette_bet:13"),
-            InlineKeyboardButton(text="⚫ 14", callback_data="roulette_bet:14"),
-            InlineKeyboardButton(text="🔴 15", callback_data="roulette_bet:15"),
-        ],
-        [
-            InlineKeyboardButton(text="⚫ 16", callback_data="roulette_bet:16"),
-            InlineKeyboardButton(text="🔴 17", callback_data="roulette_bet:17"),
-            InlineKeyboardButton(text="⚫ 18", callback_data="roulette_bet:18"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 19", callback_data="roulette_bet:19"),
-            InlineKeyboardButton(text="🔴 20", callback_data="roulette_bet:20"),
-            InlineKeyboardButton(text="⚫ 21", callback_data="roulette_bet:21"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 22", callback_data="roulette_bet:22"),
-            InlineKeyboardButton(text="⚫ 23", callback_data="roulette_bet:23"),
-            InlineKeyboardButton(text="🔴 24", callback_data="roulette_bet:24"),
-        ],
-        [
-            InlineKeyboardButton(text="⚫ 25", callback_data="roulette_bet:25"),
-            InlineKeyboardButton(text="🔴 26", callback_data="roulette_bet:26"),
-            InlineKeyboardButton(text="⚫ 27", callback_data="roulette_bet:27"),
-        ],
-        [
-            InlineKeyboardButton(text="⚫ 28", callback_data="roulette_bet:28"),
-            InlineKeyboardButton(text="🔴 29", callback_data="roulette_bet:29"),
-            InlineKeyboardButton(text="⚫ 30", callback_data="roulette_bet:30"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 31", callback_data="roulette_bet:31"),
-            InlineKeyboardButton(text="⚫ 32", callback_data="roulette_bet:32"),
-            InlineKeyboardButton(text="🔴 33", callback_data="roulette_bet:33"),
-        ],
-        [
-            InlineKeyboardButton(text="⚫ 34", callback_data="roulette_bet:34"),
-            InlineKeyboardButton(text="🔴 35", callback_data="roulette_bet:35"),
-            InlineKeyboardButton(text="⚫ 36", callback_data="roulette_bet:36"),
-        ],
-        [
-            InlineKeyboardButton(text="🔴 Красное", callback_data="roulette_bet:red"),
-            InlineKeyboardButton(text="⚫ Чёрное", callback_data="roulette_bet:black"),
-        ],
-        [
-            InlineKeyboardButton(text="Нечёт", callback_data="roulette_bet:odd"),
-            InlineKeyboardButton(text="Чёт", callback_data="roulette_bet:even"),
+            InlineKeyboardButton(text="нечёт", callback_data="roulette_bet:odd"),
+            InlineKeyboardButton(text="чёт", callback_data="roulette_bet:even"),
         ],
         [
             InlineKeyboardButton(text="1–18", callback_data="roulette_bet:low"),
             InlineKeyboardButton(text="19–36", callback_data="roulette_bet:high"),
         ],
         [
-            InlineKeyboardButton(text="1-я дюжина", callback_data="roulette_bet:dozen1"),
-            InlineKeyboardButton(text="2-я дюжина", callback_data="roulette_bet:dozen2"),
-            InlineKeyboardButton(text="3-я дюжина", callback_data="roulette_bet:dozen3"),
+            InlineKeyboardButton(text="1-12", callback_data="roulette_bet:dozen1"),
+            InlineKeyboardButton(text="13-24", callback_data="roulette_bet:dozen2"),
+            InlineKeyboardButton(text="25-36", callback_data="roulette_bet:dozen3"),
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="casino_menu")]
+        [InlineKeyboardButton(text="🔙 назад", callback_data="casino_menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1575,15 +1511,16 @@ def roulette_color(number: int) -> str:
 
 def roulette_bet_name(bet: str) -> str:
     names = {
-        "red": "🔴 Красное",
-        "black": "⚫ Чёрное",
-        "odd": "Нечёт",
-        "even": "Чёт",
+        "0": "🟢 зеро",
+        "red": "🔴 красное",
+        "black": "⚫ чёрное",
+        "odd": "нечёт",
+        "even": "чёт",
         "low": "1–18",
         "high": "19–36",
-        "dozen1": "1-я дюжина",
-        "dozen2": "2-я дюжина",
-        "dozen3": "3-я дюжина",
+        "dozen1": "1-12",
+        "dozen2": "13-24",
+        "dozen3": "25-36",
     }
     if bet in names:
         return names[bet]
@@ -1594,8 +1531,8 @@ def roulette_bet_result(bet: str, number: int) -> tuple[bool, int]:
     """Возвращает (победа, коэффициент выплаты).
     Коэффициент — чистый выигрыш к размеру ставки.
     """
-    if bet.isdigit():
-        return int(bet) == number, 35
+    if bet == "0":
+        return number == 0, 35
 
     if bet == "red":
         return number in EUROPEAN_RED_NUMBERS, 1
@@ -1649,15 +1586,6 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "🎰 Казино\n\nВыберите игру:",
         reply_markup=get_casino_keyboard()
-    )
-
-
-@router.message(F.text == "🔙 Назад")
-async def casino_exit(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "🏙 Главное меню",
-        reply_markup=get_main_keyboard()
     )
 
 async def casino_exit(callback: CallbackQuery, state: FSMContext):
