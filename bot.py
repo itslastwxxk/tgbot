@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import json
+from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import redis.asyncio as redis
 import random
@@ -23,8 +24,25 @@ from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+# --- Логирование: ротация в файл + дублирование в stdout ---
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+_fh = RotatingFileHandler(
+    "bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+)
+_fh.setLevel(logging.INFO)
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+_fh.setFormatter(_fmt)
+logger.addHandler(_fh)
+
+_sh = logging.StreamHandler()
+_sh.setLevel(logging.INFO)
+_sh.setFormatter(_fmt)
+logger.addHandler(_sh)
+
+# --- Время старта для /ping ---
+start_time = time.time()
 
 redis_client = None
 
@@ -235,7 +253,6 @@ async def get_biz(user_id):
     except Exception:
         return None
 
-    # Конвертируем все числовые поля в int (для совместимости со старыми данными)
     for key in ("income_per_min", "raw_consumption_per_min", "raw_capacity",
                 "raw_stock", "balance", "price", "level"):
         if key in biz and biz[key] is not None:
@@ -259,7 +276,7 @@ async def save_biz(user_id, biz):
         data["business_last_collected"] = str(biz["last_collected"])
     await redis_client.hset(f"user:{user_id}", mapping=data)
 
-# --- Бизнес: генерация текстов и клавиатур (чистые функции, без biz_settle) ---
+# --- Бизнес: генерация текстов и клавиатур ---
 def biz_manage_view(biz):
     biz_balance = biz.get("balance", 0)
     consumption = biz.get("raw_consumption_per_min", 0)
@@ -544,7 +561,7 @@ async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple
         _farm_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
 
-# --- Примеры ---
+# --- Математика ---
 async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
     if user_id in _math_cooldown_cache:
@@ -610,7 +627,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             if name:
                 _name_cache[user_id] = name
     display_name = name or "Игрок"
-    text = f"🏙 Ггггглавное меню\n{display_name}, ваш баланс: {balance:,} ₽\nВыберите раздел:"
+    text = f"🏙 Главное меню\n{display_name}, ваш баланс: {balance:,} ₽\nВыберите раздел:"
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
@@ -720,7 +737,9 @@ async def generate_math_problem() -> tuple[str, int]:
     img.save(image_path)
     return image_path, answer
 
-# --- Игровые хендлеры ---
+# ============================================================
+# ХЕНДЛЕРЫ
+# ============================================================
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
@@ -741,6 +760,24 @@ async def cmd_start(message: Message, state: FSMContext):
         await state.set_state(NameForm.waiting_for_name)
         return
     await send_main_menu(message, user_id)
+
+@router.message(Command("ping"))
+async def cmd_ping(message: Message):
+    """Проверка состояния бота и Redis."""
+    try:
+        await redis_client.ping()
+        redis_ok = "✅ Redis OK"
+    except Exception as e:
+        redis_ok = f"❌ Redis ERROR: {e}"
+        logger.error(f"Redis healthcheck failed: {e}")
+    uptime = int(time.time() - start_time)
+    days, rem = divmod(uptime, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    uptime_str = f"{days} дн {hours} ч {mins} мин"
+    await message.answer(
+        f"🤖 Бот работает\n{redis_ok}\n⏳ Uptime: {uptime_str}"
+    )
 
 @router.message(NameForm.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
@@ -811,6 +848,11 @@ async def handle_back_from_mine(message: Message, state: FSMContext):
 
 @router.message(F.text == "🔙 Назад")
 async def handle_back(message: Message):
+    await send_main_menu(message, message.from_user.id)
+
+@router.message(F.text == "🔙 В главное меню")
+async def handle_back_to_main(message: Message, state: FSMContext):
+    await state.clear()
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text == "⛏ Шахта")
@@ -1075,7 +1117,6 @@ async def handle_my_businesses(message: Message, state: FSMContext):
     else:
         text, kb = biz_no_biz_view()
 
-    # Убираем reply-клавиатуру
     await message.answer(text, reply_markup=kb)
 
 # --- БИЗНЕС: все inline-кнопки ---
@@ -1264,8 +1305,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         return
 
     if data == "biz_sell_do":
+        await callback.answer("Продажа завершена.")
         sell_price = biz_sell_price(biz)
-        await callback.answer()
         await add_to_balance(user_id, sell_price)
         await save_biz(user_id, None)
         text, kb = biz_no_biz_view()
@@ -1363,14 +1404,45 @@ async def handle_unknown_text(message: Message, state: FSMContext):
 
 dp.include_router(router)
 
+# ============================================================
+# ТОЧКА ВХОДА
+# ============================================================
+
+LOCK_FILE = "bot.lock"
+
 async def main():
+    # --- Защита от двойного запуска ---
+    if os.path.exists(LOCK_FILE):
+        logger.warning("Lock-файл существует. Возможно, бот уже запущен.")
+        with open(LOCK_FILE, "r") as f:
+            old_pid = f.read().strip()
+        logger.warning(f"PID предыдущего процесса: {old_pid}")
+        # Если хочешь жёстко блокировать — раскомментируй:
+        # return
+
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
     logger.info("Запуск бота...")
     try:
         await init_redis()
     except Exception as e:
         logger.error(f"Redis: ошибка подключения — {e}")
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
         return
-    await dp.start_polling(bot, drop_pending_updates=True)
+
+    try:
+        await dp.start_polling(bot, drop_pending_updates=True)
+    finally:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+        logger.info("Бот остановлен.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Остановка бота по сигналу пользователя.")
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
