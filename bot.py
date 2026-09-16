@@ -100,6 +100,11 @@ class MineForm(StatesGroup):
 class BusinessForm(StatesGroup):
     waiting_for_raw = State()
 
+
+class RouletteForm(StatesGroup):
+    waiting_for_amount = State()
+    waiting_for_bet = State()
+
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
@@ -644,9 +649,118 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
-        [KeyboardButton(text="🏆 Топ")]
+        [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🏆 Топ")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def get_casino_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎡 Рулетка", callback_data="casino_roulette")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="casino_exit")]
+    ])
+
+
+def get_roulette_amount_keyboard(amount: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➗ 0.5", callback_data="roulette_mul:0.5"),
+            InlineKeyboardButton(text="✖️ 2", callback_data="roulette_mul:2"),
+        ],
+        [InlineKeyboardButton(text=f"💰 Ставка {amount:,} ₽", callback_data="roulette_amount_noop")],
+        [InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")],
+    ])
+
+
+def get_roulette_bet_keyboard(amount: int = 0):
+    # Европейская рулетка: 0 + 1..36, с логикой цвета через эмодзи.
+    rows = [
+        [
+            InlineKeyboardButton(text="➗ 0.5", callback_data="roulette_mul:0.5"),
+            InlineKeyboardButton(text=f"💰 {amount:,} ₽", callback_data="roulette_amount_noop"),
+            InlineKeyboardButton(text="✖️ 2", callback_data="roulette_mul:2"),
+        ],
+        [InlineKeyboardButton(text="🟢 0", callback_data="roulette_bet:0")],
+        [
+            InlineKeyboardButton(text="🔴 1", callback_data="roulette_bet:1"),
+            InlineKeyboardButton(text="⚫ 2", callback_data="roulette_bet:2"),
+            InlineKeyboardButton(text="🔴 3", callback_data="roulette_bet:3"),
+        ],
+        [
+            InlineKeyboardButton(text="⚫ 4", callback_data="roulette_bet:4"),
+            InlineKeyboardButton(text="🔴 5", callback_data="roulette_bet:5"),
+            InlineKeyboardButton(text="⚫ 6", callback_data="roulette_bet:6"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 7", callback_data="roulette_bet:7"),
+            InlineKeyboardButton(text="⚫ 8", callback_data="roulette_bet:8"),
+            InlineKeyboardButton(text="🔴 9", callback_data="roulette_bet:9"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 10", callback_data="roulette_bet:10"),
+            InlineKeyboardButton(text="⚫ 11", callback_data="roulette_bet:11"),
+            InlineKeyboardButton(text="⚫ 12", callback_data="roulette_bet:12"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 13", callback_data="roulette_bet:13"),
+            InlineKeyboardButton(text="⚫ 14", callback_data="roulette_bet:14"),
+            InlineKeyboardButton(text="🔴 15", callback_data="roulette_bet:15"),
+        ],
+        [
+            InlineKeyboardButton(text="⚫ 16", callback_data="roulette_bet:16"),
+            InlineKeyboardButton(text="🔴 17", callback_data="roulette_bet:17"),
+            InlineKeyboardButton(text="⚫ 18", callback_data="roulette_bet:18"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 19", callback_data="roulette_bet:19"),
+            InlineKeyboardButton(text="🔴 20", callback_data="roulette_bet:20"),
+            InlineKeyboardButton(text="⚫ 21", callback_data="roulette_bet:21"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 22", callback_data="roulette_bet:22"),
+            InlineKeyboardButton(text="⚫ 23", callback_data="roulette_bet:23"),
+            InlineKeyboardButton(text="🔴 24", callback_data="roulette_bet:24"),
+        ],
+        [
+            InlineKeyboardButton(text="⚫ 25", callback_data="roulette_bet:25"),
+            InlineKeyboardButton(text="🔴 26", callback_data="roulette_bet:26"),
+            InlineKeyboardButton(text="⚫ 27", callback_data="roulette_bet:27"),
+        ],
+        [
+            InlineKeyboardButton(text="⚫ 28", callback_data="roulette_bet:28"),
+            InlineKeyboardButton(text="🔴 29", callback_data="roulette_bet:29"),
+            InlineKeyboardButton(text="⚫ 30", callback_data="roulette_bet:30"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 31", callback_data="roulette_bet:31"),
+            InlineKeyboardButton(text="⚫ 32", callback_data="roulette_bet:32"),
+            InlineKeyboardButton(text="🔴 33", callback_data="roulette_bet:33"),
+        ],
+        [
+            InlineKeyboardButton(text="⚫ 34", callback_data="roulette_bet:34"),
+            InlineKeyboardButton(text="🔴 35", callback_data="roulette_bet:35"),
+            InlineKeyboardButton(text="⚫ 36", callback_data="roulette_bet:36"),
+        ],
+        [
+            InlineKeyboardButton(text="🔴 Красное", callback_data="roulette_bet:red"),
+            InlineKeyboardButton(text="⚫ Чёрное", callback_data="roulette_bet:black"),
+        ],
+        [
+            InlineKeyboardButton(text="Нечёт", callback_data="roulette_bet:odd"),
+            InlineKeyboardButton(text="Чёт", callback_data="roulette_bet:even"),
+        ],
+        [
+            InlineKeyboardButton(text="1–18", callback_data="roulette_bet:low"),
+            InlineKeyboardButton(text="19–36", callback_data="roulette_bet:high"),
+        ],
+        [
+            InlineKeyboardButton(text="1-я дюжина", callback_data="roulette_bet:dozen1"),
+            InlineKeyboardButton(text="2-я дюжина", callback_data="roulette_bet:dozen2"),
+            InlineKeyboardButton(text="3-я дюжина", callback_data="roulette_bet:dozen3"),
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="casino_menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def get_work_keyboard():
     keyboard = [
@@ -1439,6 +1553,330 @@ async def process_raw_amount(message: Message, state: FSMContext):
 
     text, kb = biz_warehouse_view(biz)
     await message.answer(text, reply_markup=kb)
+
+
+# ============================================================
+# КАЗИНО — ЕВРОПЕЙСКАЯ РУЛЕТКА
+# ============================================================
+
+EUROPEAN_RED_NUMBERS = {
+    1, 3, 5, 7, 9, 12, 14, 16, 18,
+    19, 21, 23, 25, 27, 30, 32, 34, 36
+}
+
+def roulette_color(number: int) -> str:
+    if number == 0:
+        return "🟢"
+    return "🔴" if number in EUROPEAN_RED_NUMBERS else "⚫"
+
+
+def roulette_bet_name(bet: str) -> str:
+    names = {
+        "red": "🔴 Красное",
+        "black": "⚫ Чёрное",
+        "odd": "Нечёт",
+        "even": "Чёт",
+        "low": "1–18",
+        "high": "19–36",
+        "dozen1": "1-я дюжина",
+        "dozen2": "2-я дюжина",
+        "dozen3": "3-я дюжина",
+    }
+    if bet in names:
+        return names[bet]
+    return f"{roulette_color(int(bet))} {bet}"
+
+
+def roulette_bet_result(bet: str, number: int) -> tuple[bool, int]:
+    """Возвращает (победа, коэффициент выплаты).
+    Коэффициент — чистый выигрыш к размеру ставки.
+    """
+    if bet.isdigit():
+        return int(bet) == number, 35
+
+    if bet == "red":
+        return number in EUROPEAN_RED_NUMBERS, 1
+    if bet == "black":
+        return number != 0 and number not in EUROPEAN_RED_NUMBERS, 1
+    if bet == "odd":
+        return number != 0 and number % 2 == 1, 1
+    if bet == "even":
+        return number != 0 and number % 2 == 0, 1
+    if bet == "low":
+        return 1 <= number <= 18, 1
+    if bet == "high":
+        return 19 <= number <= 36, 1
+    if bet == "dozen1":
+        return 1 <= number <= 12, 2
+    if bet == "dozen2":
+        return 13 <= number <= 24, 2
+    if bet == "dozen3":
+        return 25 <= number <= 36, 2
+
+    return False, 0
+
+
+async def roulette_show_amount(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    balance = await get_balance(user_id)
+    await state.clear()
+    await state.set_state(RouletteForm.waiting_for_amount)
+    sent = await message.answer(
+        f"🎡 Европейская рулетка\n\n"
+        f"💰 Ваш баланс: {balance:,} ₽\n\n"
+        f"Введите сумму ставки:",
+        reply_markup=get_roulette_amount_keyboard(0)
+    )
+    await state.update_data(amount_msg_id=sent.message_id, amount=0)
+
+
+@router.message(F.text == "🎰 Казино")
+async def show_casino(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🎰 Казино\n\nВыберите игру:",
+        reply_markup=get_casino_keyboard()
+    )
+
+
+@router.callback_query(F.data == "casino_menu")
+async def casino_menu(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text(
+        "🎰 Казино\n\nВыберите игру:",
+        reply_markup=get_casino_keyboard()
+    )
+
+
+@router.callback_query(F.data == "casino_exit")
+async def casino_exit(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await callback.message.answer(
+        "🏙 Главное меню",
+        reply_markup=get_main_keyboard()
+    )
+
+
+@router.callback_query(F.data == "casino_roulette")
+async def casino_roulette(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await roulette_show_amount(callback.message, state)
+
+
+@router.callback_query(F.data == "roulette_amount_noop")
+async def roulette_amount_noop(callback: CallbackQuery):
+    await callback.answer("Введите сумму сообщением.")
+
+
+@router.message(RouletteForm.waiting_for_amount)
+async def process_roulette_amount(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+
+    try:
+        amount = int(message.text.strip())
+    except (TypeError, ValueError):
+        await message.answer("❌ Введите целое число, например: 100")
+        return
+
+    if amount <= 0:
+        await message.answer("❌ Ставка должна быть больше 0.")
+        return
+
+    balance = await get_balance(user_id)
+    if amount > balance:
+        await message.answer(
+            f"❌ Недостаточно средств.\n"
+            f"Ваш баланс: {balance:,} ₽\n"
+            f"Введите меньшую сумму:"
+        )
+        return
+
+    data = await state.get_data()
+    amount_msg_id = data.get("amount_msg_id")
+    if amount_msg_id:
+        try:
+            await message.bot.edit_message_reply_markup(
+                chat_id=message.chat.id,
+                message_id=amount_msg_id,
+                reply_markup=None
+            )
+        except TelegramBadRequest:
+            pass
+
+    await state.update_data(amount=amount)
+    await state.set_state(RouletteForm.waiting_for_bet)
+
+    await message.answer(
+        f"🎡 Европейская рулетка\n\n"
+        f"💰 Ставка: {amount:,} ₽\n"
+        f"🎯 Выберите, на что поставить:",
+        reply_markup=get_roulette_bet_keyboard(amount)
+    )
+
+
+@router.callback_query(RouletteForm.waiting_for_amount, F.data.startswith("roulette_mul:"))
+async def roulette_change_amount(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current = int(data.get("amount", 0))
+    multiplier = callback.data.split(":")[1]
+
+    # Если сумма ещё не введена, 0.5/2 ничего не меняет.
+    if current <= 0:
+        await callback.answer("Сначала введите сумму ставки.", show_alert=True)
+        return
+
+    new_amount = int(current * float(multiplier))
+    balance = await get_balance(callback.from_user.id)
+
+    if new_amount <= 0:
+        await callback.answer("Минимальная ставка — 1 ₽.", show_alert=True)
+        return
+    if new_amount > balance:
+        await callback.answer(
+            f"Недостаточно средств. Баланс: {balance:,} ₽",
+            show_alert=True
+        )
+        return
+
+    await state.update_data(amount=new_amount)
+    await callback.answer(f"Ставка: {new_amount:,} ₽")
+
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=get_roulette_amount_keyboard(new_amount)
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(RouletteForm.waiting_for_bet, F.data.startswith("roulette_mul:"))
+async def roulette_change_bet_amount(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current = int(data.get("amount", 0))
+    multiplier = float(callback.data.split(":")[1])
+    new_amount = int(current * multiplier)
+    balance = await get_balance(callback.from_user.id)
+
+    if new_amount < 1:
+        await callback.answer("Минимальная ставка — 1 ₽.", show_alert=True)
+        return
+    if new_amount > balance:
+        await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
+        return
+
+    await state.update_data(amount=new_amount)
+    await callback.answer(f"Ставка изменена: {new_amount:,} ₽")
+
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=get_roulette_bet_keyboard(new_amount)
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(RouletteForm.waiting_for_bet, F.data == "roulette_amount_noop")
+async def roulette_amount_noop_bet(callback: CallbackQuery):
+    await callback.answer("Используйте кнопки 0.5/2 или выберите ставку.")
+
+
+@router.callback_query(RouletteForm.waiting_for_bet, F.data.startswith("roulette_bet:"))
+async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    data = await state.get_data()
+    amount = int(data.get("amount", 0))
+    bet = callback.data.split(":", 1)[1]
+
+    if amount <= 0:
+        await callback.answer("Сначала укажите сумму ставки.", show_alert=True)
+        await state.clear()
+        return
+
+    balance = await get_balance(user_id)
+    if amount > balance:
+        await callback.answer("Недостаточно средств для этой ставки.", show_alert=True)
+        await state.clear()
+        return
+
+    await callback.answer()
+    await state.update_data(bet=bet)
+
+    # Ставка списывается до вращения, чтобы двойное нажатие не создавало дубль.
+    await add_to_balance(user_id, -amount)
+
+    # Простая анимация вращения.
+    spin_frames = ["🎡 |", "🎡 /", "🎡 —", "🎡 \\", "🎡 |", "🎡 /", "🎡 —", "🎡 \\"]
+    for frame in spin_frames:
+        try:
+            await callback.message.edit_text(
+                f"{frame}\n\n"
+                f"🎯 Ставка: {roulette_bet_name(bet)}\n"
+                f"💰 Сумма: {amount:,} ₽"
+            )
+            await asyncio.sleep(0.16)
+        except TelegramBadRequest:
+            break
+
+    number = random.randint(0, 36)
+    color = roulette_color(number)
+    won, payout_mult = roulette_bet_result(bet, number)
+
+    if won:
+        winnings = amount * (payout_mult + 1)
+        new_balance = await add_to_balance(user_id, winnings)
+        if payout_mult == 35:
+            payout_text = f"🎉 Выигрыш: +{amount * payout_mult:,} ₽"
+        else:
+            payout_text = f"🎉 Выигрыш: +{amount * payout_mult:,} ₽"
+        result_text = (
+            f"🎡 Рулетка остановилась!\n\n"
+            f"Выпало: {color} {number}\n"
+            f"Ваша ставка: {roulette_bet_name(bet)}\n"
+            f"Сумма: {amount:,} ₽\n\n"
+            f"✅ ПРАВИЛЬНО!\n"
+            f"{payout_text}\n"
+            f"💰 Баланс: {new_balance:,} ₽"
+        )
+    else:
+        new_balance = await get_balance(user_id)
+        result_text = (
+            f"🎡 Рулетка остановилась!\n\n"
+            f"Выпало: {color} {number}\n"
+            f"Ваша ставка: {roulette_bet_name(bet)}\n"
+            f"Сумма: {amount:,} ₽\n\n"
+            f"❌ НЕПРАВИЛЬНО!\n"
+            f"💸 Ставка сгорела.\n"
+            f"💰 Баланс: {new_balance:,} ₽"
+        )
+
+    await state.clear()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎡 Ещё раз", callback_data="casino_roulette"),
+            InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")
+        ],
+        [
+            InlineKeyboardButton(text="🏙 В меню", callback_data="casino_exit")
+        ]
+    ])
+
+    try:
+        await callback.message.edit_text(result_text, reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(result_text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("roulette_mul:"))
+async def roulette_change_amount_outside_state(callback: CallbackQuery):
+    await callback.answer("Сначала откройте рулетку и введите ставку.", show_alert=True)
+
 
 # --- Универсальный хендлер ---
 @router.message(F.text)
