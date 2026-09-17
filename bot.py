@@ -683,16 +683,36 @@ def get_admin_back_keyboard(player_id: int):
         [InlineKeyboardButton(text="🏠 В меню админа", callback_data="admin_main")],
     ])
 
+
+async def _edit_or_answer(bot_obj, chat_id: int, msg_id: int | None, text: str, kb=None):
+    """Пытается отредактировать сообщение; если не получается — отправляет новое."""
+    if msg_id:
+        try:
+            await bot_obj.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=msg_id,
+                reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass
+    # Фолбэк: отправить новое
+    await bot_obj.send_message(chat_id, text, reply_markup=kb)
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Доступ запрещён.")
         return
     await state.clear()
-    await message.answer(
+    sent = await message.answer(
         "🛡 Админ-панель\n\nВыберите действие:",
         reply_markup=get_admin_keyboard()
     )
+    await state.update_data(admin_msg_id=sent.message_id)
+
 
 @router.callback_query(F.data == "admin_main")
 async def admin_main(callback: CallbackQuery, state: FSMContext):
@@ -701,16 +721,13 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
         return
     await state.clear()
     await callback.answer()
-    try:
-        await callback.message.edit_text(
-            "🛡 Админ-панель\n\nВыберите действие:",
-            reply_markup=get_admin_keyboard()
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            "🛡 Админ-панель\n\nВыберите действие:",
-            reply_markup=get_admin_keyboard()
-        )
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        "🛡 Админ-панель\n\nВыберите действие:",
+        get_admin_keyboard(),
+    )
+    await state.update_data(admin_msg_id=callback.message.message_id)
+
 
 @router.callback_query(F.data == "admin_find")
 async def admin_find(callback: CallbackQuery, state: FSMContext):
@@ -719,10 +736,12 @@ async def admin_find(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer()
     await state.set_state(AdminForm.waiting_for_search)
-    await callback.message.answer(
-        "🔍 Введите ник игрока или @username:\n"
-        "Например: Alex123 или @someuser"
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        "🔍 Введите ник игрока или @username:\nНапример: Alex123 или @someuser",
     )
+    await state.update_data(admin_msg_id=callback.message.message_id)
+
 
 @router.message(AdminForm.waiting_for_search)
 async def admin_search(message: Message, state: FSMContext):
@@ -730,19 +749,34 @@ async def admin_search(message: Message, state: FSMContext):
         return
 
     query = message.text.strip()
+    chat_id = message.chat.id
 
-    # Сначала ищем по нику, потом по @username
+    # Удаляем сообщение пользователя, чтобы не засорять чат
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
+    data = await state.get_data()
+    msg_id = data.get("admin_msg_id")
+
+    # Сначала по нику, потом по @username
     player_id = await get_user_id_by_name_direct(query)
     if not player_id:
         player_id = await get_user_id_by_username(query)
 
     if not player_id:
-        await message.answer(f"❌ Игрок «{query}» не найден. Попробуйте ещё раз:")
+        await _edit_or_answer(
+            message.bot, chat_id, msg_id,
+            f"❌ Игрок «{query}» не найден.\n\nПопробуйте ещё раз — введите ник или @username:",
+        )
         return
 
-    await _show_admin_player(message, state, player_id)
+    await _show_admin_player(message.bot, chat_id, msg_id, state, player_id)
 
-async def _show_admin_player(target, state: FSMContext, player_id: int):
+
+async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
+                             state: FSMContext, player_id: int):
     balance = await get_balance(player_id)
     name = await get_user_name(player_id) or "без ника"
     username = await get_username(player_id)
@@ -756,14 +790,9 @@ async def _show_admin_player(target, state: FSMContext, player_id: int):
     kb = get_admin_player_keyboard(player_id)
 
     await state.update_data(admin_player_id=player_id)
+    await _edit_or_answer(bot_obj, chat_id, msg_id, text, kb)
+    await state.update_data(admin_msg_id=msg_id)
 
-    if isinstance(target, CallbackQuery):
-        try:
-            await target.message.edit_text(text, reply_markup=kb)
-        except TelegramBadRequest:
-            await target.message.answer(text, reply_markup=kb)
-    else:
-        await target.answer(text, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("admin_act:"))
 async def admin_action_start(callback: CallbackQuery, state: FSMContext):
@@ -783,35 +812,68 @@ async def admin_action_start(callback: CallbackQuery, state: FSMContext):
         "sub": "вычесть из баланса",
     }
 
-    await state.update_data(admin_action=action, admin_player_id=player_id)
+    current_balance = await get_balance(player_id)
+
+    await state.update_data(
+        admin_action=action,
+        admin_player_id=player_id,
+        admin_msg_id=callback.message.message_id,
+    )
     await state.set_state(AdminForm.waiting_for_amount)
 
-    current_balance = await get_balance(player_id)
-    await callback.message.answer(
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
         f"💰 Текущий баланс: {current_balance:,} ₽\n\n"
-        f"Введите сумму для «{action_names[action]}»:"
+        f"Введите сумму для «{action_names[action]}»:",
     )
+
 
 @router.message(AdminForm.waiting_for_amount)
 async def admin_enter_amount(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
 
+    chat_id = message.chat.id
+
     try:
         amount = int(message.text.strip())
         if amount < 0:
-            await message.answer("❌ Сумма не может быть отрицательной. Введите число:")
+            try:
+                await message.delete()
+            except TelegramBadRequest:
+                pass
+            await _edit_or_answer(
+                message.bot, chat_id, (await state.get_data()).get("admin_msg_id"),
+                "❌ Сумма не может быть отрицательной. Введите число:",
+            )
             return
     except ValueError:
-        await message.answer("❌ Введите целое число:")
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            pass
+        await _edit_or_answer(
+            message.bot, chat_id, (await state.get_data()).get("admin_msg_id"),
+            "❌ Введите целое число:",
+        )
         return
+
+    # Удаляем сообщение пользователя
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
 
     data = await state.get_data()
     action = data.get("admin_action")
     player_id = data.get("admin_player_id")
+    msg_id = data.get("admin_msg_id")
 
     if not action or not player_id:
-        await message.answer("❌ Сессия истекла. Начните заново через /admin")
+        await _edit_or_answer(
+            message.bot, chat_id, msg_id,
+            "❌ Сессия истекла. Начните заново через /admin",
+        )
         await state.clear()
         return
 
@@ -832,8 +894,9 @@ async def admin_enter_amount(message: Message, state: FSMContext):
     )
 
     kb = get_admin_confirm_keyboard(action, player_id, amount)
-    await message.answer(text, reply_markup=kb)
+    await _edit_or_answer(message.bot, chat_id, msg_id, text, kb)
     await state.set_state(None)
+
 
 @router.callback_query(F.data.startswith("admin_do:"))
 async def admin_do_action(callback: CallbackQuery, state: FSMContext):
@@ -858,12 +921,14 @@ async def admin_do_action(callback: CallbackQuery, state: FSMContext):
     new_balance = await get_balance(player_id)
     name = await get_user_name(player_id) or "без ника"
 
-    await callback.message.edit_text(
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
         f"✅ Готово!\n\n"
         f"👤 Игрок: {name} (#{player_id})\n"
         f"💰 Новый баланс: {new_balance:,} ₽",
-        reply_markup=get_admin_back_keyboard(player_id)
+        get_admin_back_keyboard(player_id),
     )
+
 
 @router.callback_query(F.data.startswith("admin_back:"))
 async def admin_back_to_player(callback: CallbackQuery, state: FSMContext):
@@ -873,10 +938,14 @@ async def admin_back_to_player(callback: CallbackQuery, state: FSMContext):
 
     player_id = int(callback.data.split(":")[1])
     await callback.answer()
-    await _show_admin_player(callback, state, player_id)
+    await _show_admin_player(
+        callback.bot, callback.message.chat.id,
+        callback.message.message_id, state, player_id,
+    )
+
 
 @router.callback_query(F.data == "admin_top")
-async def admin_top(callback: CallbackQuery):
+async def admin_top(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещён.", show_alert=True)
         return
@@ -884,7 +953,13 @@ async def admin_top(callback: CallbackQuery):
     await callback.answer()
     balances = await get_all_balances()
     if not balances:
-        await callback.message.answer("Нет данных.")
+        await _edit_or_answer(
+            callback.bot, callback.message.chat.id, callback.message.message_id,
+            "Нет данных.",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
+            ]),
+        )
         return
 
     text = "📊 Топ игроков (админ-режим):\n\n"
@@ -893,12 +968,15 @@ async def admin_top(callback: CallbackQuery):
 
     text += f"\nВсего игроков: {len(balances)}"
 
-    await callback.message.answer(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
-        ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
+    ])
+
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        text, kb,
     )
+    await state.update_data(admin_msg_id=callback.message.message_id)
 
 # --- Клавиатуры ---
 def get_main_keyboard():
