@@ -716,7 +716,9 @@ def get_mine_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="⛏ Фармить", callback_data="mine_farm"),
         InlineKeyboardButton(text="🔙 Назад", callback_data="mine_exit"),
-    ])
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def get_trading_direction_keyboard():
     keyboard = [
         [
@@ -931,10 +933,7 @@ async def handle_back_to_main(message: Message, state: FSMContext):
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text == "⛏ Шахта")
-async def show_mine_menu(message: Message, state: FSMContext):
-    # MineForm не был объявлен в коде, поэтому убираем установку состояния.
-    # Логика кулдауна реализована через Redis в функции can_farm.
-    
+async def show_mine_menu(message: Message):
     await message.answer(
         f"⛏ Шахта\n\n"
         f"Заработок: {MINE_REWARD:,} ₽ за клик\n"
