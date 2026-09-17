@@ -1011,7 +1011,7 @@ async def handle_ref(message: Message):
     await message.answer("Вы выбрали «Реф».")
 
 # --- ТРЕЙДИНГ ---
-@router.callback_query(F.data == "trading_enter")
+@router.callback_query(F.data == "📈 Трейдинг")
 async def handle_trading(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     required_balance = 25000
