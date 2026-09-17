@@ -359,9 +359,9 @@ def biz_manage_view(biz):
 
 
 def biz_no_biz_view():
-    text = "🏪 Мои бизнесы\n\nПока пусто — бизнеса нет.\nЖми кнопку ниже, выбери себе точку."
+    text = "🏪 Бизнесы\n\nПока пусто — бизнеса нет.\nЖми кнопку ниже, выбери себе точку."
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Взять бизнес", callback_data="biz_car:0")]
+        [InlineKeyboardButton(text="🛒 Купить бизнес", callback_data="biz_car:0")]
     ])
     return text, kb
 
@@ -375,7 +375,7 @@ def biz_carousel_view(idx, balance):
     run_time = biz["raw_capacity"] / consumption if consumption > 0 else 0
     payback_min = biz["price"] / net if net > 0 else 0
     text = (
-        f"🏪 Берём бизнес\n\n"
+        f"🏪 Купить бизнес\n\n"
         f"🏗 {biz['name']}\n"
         f"💸 Цена: {biz['price']:,} ₽\n"
         f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
@@ -696,7 +696,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             if name:
                 _name_cache[user_id] = name
     display_name = name or "Игрок"
-    text = f"вечер в хату, {display_name}. твой баланс: {balance:,} ₽"
+    text = f"вечер в хату, {display_name}.\nтвой баланс: {balance:,} ₽"
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
@@ -1320,7 +1320,8 @@ async def process_name(message: Message, state: FSMContext):
     await send_main_menu(message, user_id)
 
 @router.message(F.text == "💼 Работа")
-async def show_work_menu(message: Message):
+async def show_work_menu(message: Message, state: FSMContext):
+    await state.clear()  # ← добавить
     await message.answer("Выбирай, чем займешься:", reply_markup=get_work_keyboard())
 
 @router.message(F.text == "🛒 Магаз")
@@ -1358,7 +1359,8 @@ async def show_top(message: Message):
 
 # --- ВОЗВРАТЫ ---
 @router.message(F.text == "🔙 Назад")
-async def handle_back(message: Message):
+async def handle_back(message: Message, state: FSMContext):
+    await state.clear()  # ← добавить
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text.in_({"🔙 В главное меню", "🔙 В меню"}))
