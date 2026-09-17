@@ -958,7 +958,6 @@ async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
         f"⛏ Красава, ты заработал {MINE_REWARD:,} ₽!\n"
         f"Твой баланс: {new_balance:,} ₽"
     )
-    kb = get_mine_keyboard()
 
     data = await state.get_data()
     farm_msg_id = data.get("farm_msg_id")
@@ -967,17 +966,20 @@ async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
         # Последующие клики — редактируем сообщение с результатом
         try:
             await callback.bot.edit_message_text(
-                text=text,
+                text=(
+        f"⛏ Красава, ты заработал еще {MINE_REWARD:,} ₽!\n"
+        f"Твой баланс: {new_balance:,} ₽"
+    ),
                 chat_id=callback.message.chat.id,
                 message_id=farm_msg_id,
-                reply_markup=kb,
+                reply_markup=None,
             )
             return
         except TelegramBadRequest:
             pass  # сообщение удалили — отправим новое ниже
 
     # Первый клик — отправляем новое сообщение, меню не трогаем
-    sent = await callback.message.answer(text, reply_markup=kb)
+    sent = await callback.message.answer(text, reply_markup=None)
     await state.update_data(farm_msg_id=sent.message_id)
 
 @router.callback_query(F.data == "mine_exit")
