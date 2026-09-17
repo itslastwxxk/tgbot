@@ -660,7 +660,7 @@ def get_casino_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🎡 Рулетка")],
-            [KeyboardButton(text="🔙 Назад")]
+            [KeyboardButton(text="🔙 В меню")]
         ],
         resize_keyboard=True
     )
@@ -1774,17 +1774,24 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
     )
 
     spin_frames = [
-        "🎡 🔄 🟢 0",
-        "🎡 🔄 🔴 17",
-        "🎡 🔄 ⚫ 32",
+        "🎡 🔄 ⚫ 17",
+        "🎡 🔄 🔴 32",
         "🎡 🔄 🔴 9",
+        "🎡 🔄 🟢 0",
         "🎡 🔄 ⚫ 26",
+        "🎡 🔄 🔴 14",
+        "🎡 🔄 ⚫ 4",
         "🎡 🔄 🔴 21",
         "🎡 🔄 ⚫ 35",
     ]
 
-    # Во время прокрутки inline-кнопок нет.
-    for frame in spin_frames:
+    # Перемешиваем кадры каждый раз — рандомный порядок
+    random.shuffle(spin_frames)
+
+    # Эффект замедления: первые кадры быстро, потом медленнее
+    delays = [0.10, 0.08, 0.07, 0.06, 0.06, 0.08, 0.12, 0.18, 0.25]
+
+    for i, frame in enumerate(spin_frames):
         try:
             await callback.bot.edit_message_text(
                 chat_id=chat_id,
@@ -1798,7 +1805,8 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
                 parse_mode="HTML",
                 reply_markup=None
             )
-            await asyncio.sleep(0.18)
+            delay = delays[i] if i < len(delays) else 0.25
+            await asyncio.sleep(delay)
         except TelegramBadRequest:
             break
 
