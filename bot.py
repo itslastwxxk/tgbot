@@ -933,23 +933,14 @@ async def handle_back_to_main(message: Message, state: FSMContext):
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text == "⛏ Шахта")
-async def handle_work_mine(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    
-    # 1. Убираем Reply‑клавиатуру (кнопки внизу экрана)
+async def show_mine_menu(message: Message):
     await message.answer(
-        "🏗 Вы вошли в шахту!",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    # 2. Сразу показываем Inline‑меню шахты (как у тебя в get_mine_keyboard)
-    await message.answer(
-        "⛏ Шахта — выберите действие:",
+        f"⛏ Шахта\n\n"
+        f"Заработок: {MINE_REWARD:,} ₽ за клик\n"
+        f"Кулдаун: {MINE_COOLDOWN} сек\n"
+        f"Нажмите «Фармить», чтобы заработать!",
         reply_markup=get_mine_keyboard()
     )
-    
-    # 3. (Опционально) Сохраняем состояние, если нужно
-    await state.set_state(MineForm.in_mine)
 
 @router.callback_query(F.data == "mine_farm")
 async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
@@ -1020,41 +1011,35 @@ async def handle_ref(message: Message):
     await message.answer("Вы выбрали «Реф».")
 
 # --- ТРЕЙДИНГ ---
-@router.callback_query(F.data == "📈 Трейдинг")
-async def handle_start_handler(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "trading_enter")
+async def handle_trading_enter(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     required_balance = 25000
     
-    # Используем существующую функцию get_balance, а не get_user_balance
-    current_balance = await get_balance(user_id)
-    
-    if current_balance < required_balance:
-        await callback.answer() 
-        await callback.message.answer(
-            f"❌ Минимальный порог входа в трейдинг: {required_balance:,} ₽\n"
-            f"У вас на балансе: {current_balance:,} ₽"
+@router.message(F.text == "📈 Трейдинг")
+async def handle_trading(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    balance = await get_balance(user_id)
+    if balance <= 0:
+        await message.answer(
+            "У вас недостаточно средств для трейдинга. Сначала поработайте в шахте!",
+            reply_markup=get_work_keyboard()
         )
         return
-
-    await callback.answer()
-    
-    # Убираем кнопки у сообщения, где была нажата кнопка "trading_enter"
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
-
-    await callback.message.answer("📉 Вы вошли в режим трейдинга!")
-    
+    await message.answer("📈 Трейдинг открыт!", reply_markup=ReplyKeyboardRemove())
+    sent = await message.answer(
+        f"💰 Ваш баланс: {balance:,} ₽\n"
+        "Введите сумму ставки (целое число больше 0):",
+        reply_markup=get_trading_result_keyboard2()
+    )
+    await state.update_data(amount_msg_id=sent.message_id)
     await state.set_state(TradingForm.waiting_for_amount)
-    await callback.message.answer("Введите сумму ставки:")
 
 @router.message(TradingForm.waiting_for_amount)
 async def process_trading_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
     amount_msg_id = data.get("amount_msg_id")
-
     try:
         amount = int(message.text)
         if amount <= 0:
@@ -1063,81 +1048,67 @@ async def process_trading_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("Пожалуйста, введите целое число (например, 100):")
         return
-
     balance = await get_balance(user_id)
     if amount > balance:
         await message.answer(f"Недостаточно средств! Ваш баланс: {balance:,} ₽\nВведите меньшую сумму:")
         return
-
     if amount_msg_id:
         try:
             await message.bot.edit_message_reply_markup(
-                chat_id=message.chat.id,
-                message_id=amount_msg_id,
-                reply_markup=None
+                chat_id=message.chat.id, message_id=amount_msg_id, reply_markup=None
             )
         except TelegramBadRequest:
             pass
-
     await state.update_data(amount=amount)
     caption_text = f"📊 График актива\nСтавка: {amount:,} ₽\nКуда пойдёт график?"
     photo_path = "images/graph.png"
-
     if not os.path.exists(photo_path):
         logger.warning(f"Файл {photo_path} не найден. Отправляем только текст.")
-        await message.answer(
-            text=caption_text,
-            reply_markup=get_trading_direction_keyboard()
-        )
+        await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
     else:
         try:
             photo = FSInputFile(photo_path)
-            await message.answer_photo(
-                photo=photo,
-                caption=caption_text,
-                reply_markup=get_trading_direction_keyboard()
-            )
+            await message.answer_photo(photo=photo, caption=caption_text, reply_markup=get_trading_direction_keyboard())
         except Exception as e:
             logger.error(f"Ошибка отправки фото: {e}")
-            # Отправляем текст с клавиатурой, если фото не удалось отправить
-            await message.answer(
-                text=caption_text,
-                reply_markup=get_trading_direction_keyboard()
-            )
-
-    # Переходим к следующему состоянию — ожидание выбора направления
+            await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
     await state.set_state(TradingForm.waiting_for_direction)
 
-@router.callback_query(F.data.in_({"trade_up", "trade_down"}), TradingForm.waiting_for_direction)
+@router.callback_query(F.data.in_({"trade_up", "trade_down"}))
 async def process_trading_direction(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     user_id = callback.from_user.id
     data = await state.get_data()
     amount = data.get("amount")
-
     if not amount:
-        await callback.answer("Ошибка: сумма ставки не найдена.", show_alert=True)
+        await callback.message.edit_text("Сессия истекла. Начните заново.")
+        await state.clear()
         return
-
-    # Здесь должна быть логика расчёта результата (случайный исход, коэффициенты и т.д.)
-    # Пример простой логики:
-    is_win = random.choice([True, False])
-    multiplier = 1.8 if is_win else -1.0
-    result_amount = int(amount * multiplier)
-
-    if is_win:
-        new_balance = await add_to_balance(user_id, amount)
-        text = f"🎉 Вы угадали! Выигрыш: {amount:,} ₽\nВаш баланс: {new_balance:,} ₽"
+    actual_direction = "up" if random.random() < 0.5 else "down"
+    user_direction = "up" if callback.data == "trade_up" else "down"
+    if user_direction == actual_direction:
+        await add_to_balance(user_id, amount)
+        balance_after = await get_balance(user_id)
+        result_text = (
+            f"🎉 Победа! График пошёл {'вверх' if actual_direction == 'up' else 'вниз'}.\n"
+            f"Вы выиграли {amount:,} ₽!\n"
+            f"Ваш баланс: {balance_after:,} ₽"
+        )
     else:
-        new_balance = await add_to_balance(user_id, -amount)
-        text = f"😞 Не угадали. Потеряно: {amount:,} ₽\nВаш баланс: {new_balance:,} ₽"
-
-    await callback.answer()
-    await callback.message.edit_text(
-        text=text,
-        reply_markup=get_trading_result_keyboard()
-    )
-
-    await state.clear()
+        await add_to_balance(user_id, -amount)
+        balance_after = await get_balance(user_id)
+        result_text = (
+            f"😕 Проигрыш. График пошёл {'вверх' if actual_direction == 'up' else 'вниз'}.\n"
+            f"Ваша ставка {amount:,} ₽ сгорела.\n"
+            f"Ваш баланс: {balance_after:,} ₽"
+        )
+    try:
+        await callback.message.edit_text(text=result_text, reply_markup=get_trading_result_keyboard())
+    except TelegramBadRequest as e:
+        logger.warning(f"Не удалось отредактировать сообщение: {e}. Отправляем новое.")
+        await callback.message.answer(text=result_text, reply_markup=get_trading_result_keyboard())
+        await callback.message.delete()
+    await state.update_data(amount=None)
 
 @router.callback_query(F.data == "trade_continue")
 async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
