@@ -112,7 +112,7 @@ class AdminForm(StatesGroup):
     waiting_for_amount = State()
 
 # ============================================================
-# КОНСТАНТЫ
+# КОНСТАНТЫ HELP
 # ============================================================
 HELP_TEXT_MAIN = (
     "бот коммерсант - тут можно зарабатывать деньги, торговать, делать бизнес(и многое другое)\n\n"
@@ -120,7 +120,7 @@ HELP_TEXT_MAIN = (
 )
 
 HELP_TEXT_TRADING = (
-    "Трейдинг — это торговля на рынке криптовалюты с разной степенью риска.\n\n"
+    "Трейдинг — это торговля на рынке криптовалюты с разной степенью риска.\n\n"
     "Как это работает:\n"
     "1. Выбираешь риск: низкий (высокий шанс победы, но выйгрыш небольшой), средний (шанс 50на50, выйгрыш х2), высокий (маленький шанс, но выйгрыш х5 от ставки!!).\n"
     "2. Вводи сумму ставки\n"
@@ -128,18 +128,28 @@ HELP_TEXT_TRADING = (
 )
 
 HELP_TEXT_MINE = (
-    "Шахта — самый простой способ заработать первые деньги.\n"
+    "Шахта — самый простой способ заработать первые деньги.\n"
     "Нажал = получил деньги."
 )
 
 HELP_TEXT_MATH = (
-    "Математика — решил пример = получил деньги.\n\n"
+    "Математика — решил пример = получил деньги.\n\n"
 )
 
 HELP_TEXT_BUSINESS = (
-    "Бизнесы — это пассивный доход: ты покупаешь бизнес, и он приносит деньги каждую минуту.\n\n"
+    "Бизнесы — это пассивный доход: ты покупаешь бизнес, и он приносит деньги каждую минуту.\n\n"
     "Бизнесу нужно сырьё. Если оно заканчивается, бизнес перестаёт работать и доход останавливается.\n\n"
 )
+
+# ============================================================
+# КОНСТАНТЫ ЕЖЕДНЕВНОГО БОНУСА
+# ============================================================
+DAILY_BONUS_BASE = 5000          # базовая награда
+DAILY_BONUS_STREAK_MULT = 0.2    # +20% за каждый день стрика
+DAILY_BONUS_MAX_STREAK = 100     # потолок множителя
+DAILY_BONUS_RANDOM_MIN = 1000    # случайная прибавка — минимум
+DAILY_BONUS_RANDOM_MAX = 3000    # случайная прибавка — максимум
+DAILY_BONUS_COOLDOWN = 86400     # 24 часа
 
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
@@ -593,6 +603,76 @@ async def get_user_id_by_name_direct(name: str) -> int | None:
     if value:
         return int(value)
     return None
+
+# --- ЕЖЕДНЕВНЫЙ БОНУС: хелперы ---
+async def get_daily_streak(user_id: int) -> int:
+    """Возвращает текущий стрик ежедневных бонусов."""
+    data = await redis_client.hgetall(f"user:{user_id}")
+    streak_str = data.get("daily_streak", "0")
+    try:
+        return int(streak_str)
+    except ValueError:
+        return 0
+
+async def get_daily_last_claim(user_id: int) -> float:
+    """Возвращает timestamp последнего получения бонуса."""
+    data = await redis_client.hgetall(f"user:{user_id}")
+    last_str = data.get("daily_last_claim", "0")
+    try:
+        return float(last_str)
+    except ValueError:
+        return 0.0
+
+async def can_claim_daily(user_id: int) -> tuple[bool, int]:
+    """Проверяет, можно ли забрать ежедневный бонус.
+    Возвращает (можно, осталось_секунд)."""
+    last_claim = await get_daily_last_claim(user_id)
+    if last_claim == 0.0:
+        return True, 0
+    now = time.time()
+    elapsed = now - last_claim
+    if elapsed >= DAILY_BONUS_COOLDOWN:
+        return True, 0
+    remaining = DAILY_BONUS_COOLDOWN - int(elapsed)
+    return False, max(remaining, 0)
+
+async def daily_bonus_amount(streak: int) -> int:
+    """Считает сумму бонуса: база * (1 + 0.2 * стрик) + случайная прибавка."""
+    effective_streak = min(streak, DAILY_BONUS_MAX_STREAK)
+    base = DAILY_BONUS_BASE * (1 + DAILY_BONUS_STREAK_MULT * effective_streak)
+    random_bonus = random.randint(DAILY_BONUS_RANDOM_MIN, DAILY_BONUS_RANDOM_MAX)
+    return int(base + random_bonus)
+
+async def claim_daily_bonus(user_id: int) -> tuple[int, int]:
+    """Начисляет бонус, обновляет стрик.
+    Возвращает (сумма_бонуса, новый_стрик)."""
+    now = time.time()
+    last_claim = await get_daily_last_claim(user_id)
+    current_streak = await get_daily_streak(user_id)
+
+    if last_claim == 0.0:
+        new_streak = 1
+    elif (now - last_claim) >= 86400 * 2:
+        # Пропустил больше 48 часов — стрик обнуляется
+        new_streak = 1
+    else:
+        new_streak = current_streak + 1
+
+    amount = await daily_bonus_amount(new_streak - 1)
+    await add_to_balance(user_id, amount)
+    await redis_client.hset(f"user:{user_id}", mapping={
+        "daily_streak": str(new_streak),
+        "daily_last_claim": str(now),
+    })
+    return amount, new_streak
+
+def get_daily_bonus_keyboard(can_claim: bool):
+    """Клавиатура окна ежедневного бонуса."""
+    rows = []
+    if can_claim:
+        rows.append([InlineKeyboardButton(text="🎁 Забрать бонус", callback_data="daily_claim")])
+    rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="daily_back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 # --- Фарм ---
 async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple[bool, int]:
@@ -1148,7 +1228,7 @@ def get_trading_confirm_keyboard(amount: int, mode: str):
         "high": "Высокий риск"
     }
     text = f"Ставка: {amount:,} ₽\nРиск: {modes_text.get(mode, 'Неизвестен')}"
-    
+
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить ставку", callback_data=f"trade_confirm:{amount}")],
         [InlineKeyboardButton(text="❌ Отменить", callback_data="trade_cancel")],
@@ -1339,7 +1419,7 @@ async def process_name(message: Message, state: FSMContext):
 
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
-    await state.clear()  # ← добавить
+    await state.clear()
     await message.answer("Выбирай, чем займешься:", reply_markup=get_work_keyboard())
 
 @router.message(F.text == "🛒 Магаз")
@@ -1375,10 +1455,90 @@ async def show_top(message: Message):
 
     await message.answer(text)
 
+# ============================================================
+# ЕЖЕДНЕВНЫЙ БОНУС — ХЕНДЛЕРЫ
+# ============================================================
+
+@router.message(F.text == "🎁 Ежедневный бонус")
+async def handle_daily_bonus(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    await state.clear()
+
+    can, remaining = await can_claim_daily(user_id)
+    streak = await get_daily_streak(user_id)
+
+    if can:
+        preview_amount = await daily_bonus_amount(streak)
+        text = (
+            f"🎁 Ежедневный бонус\n\n"
+            f"🔥 Серия: {streak} дн. подряд\n"
+            f"💰 Сегодня получишь: ~{preview_amount:,} ₽\n\n"
+            f"Жми «Забрать», чтобы забрать награду!"
+        )
+        kb = get_daily_bonus_keyboard(True)
+    else:
+        hours = remaining // 3600
+        mins = (remaining % 3600) // 60
+        secs = remaining % 60
+        timer_str = f"{hours} ч {mins} мин {secs} сек"
+        text = (
+            f"🎁 Ежедневный бонус\n\n"
+            f"🔥 Серия: {streak} дн. подряд\n"
+            f"⏳ Бонус уже забран. Приходи через:\n"
+            f"⏰ {timer_str}"
+        )
+        kb = get_daily_bonus_keyboard(False)
+
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "daily_claim")
+async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    await callback.answer()
+
+    can, remaining = await can_claim_daily(user_id)
+    if not can:
+        hours = remaining // 3600
+        mins = (remaining % 3600) // 60
+        secs = remaining % 60
+        await callback.message.edit_text(
+            f"⏳ Бонус уже забран. Приходи через {hours} ч {mins} мин {secs} сек.",
+            reply_markup=get_daily_bonus_keyboard(False)
+        )
+        return
+
+    amount, new_streak = await claim_daily_bonus(user_id)
+    new_balance = await get_balance(user_id)
+
+    text = (
+        f"🎁 Ежедневный бонус забран!\n\n"
+        f"💰 Получено: +{amount:,} ₽\n"
+        f"🔥 Серия: {new_streak} дн. подряд\n"
+        f"💳 Баланс: {new_balance:,} ₽\n\n"
+        f"Возвращайся завтра — серия продолжится!"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=get_daily_bonus_keyboard(False))
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=get_daily_bonus_keyboard(False))
+
+
+@router.callback_query(F.data == "daily_back_to_menu")
+async def handle_daily_back_to_menu(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await send_main_menu(callback, user_id)
+
+
 # --- ВОЗВРАТЫ ---
 @router.message(F.text == "🔙 Назад")
 async def handle_back(message: Message, state: FSMContext):
-    await state.clear()  # ← добавить
+    await state.clear()
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text.in_({"🔙 В главное меню", "🔙 В меню"}))
@@ -1536,7 +1696,7 @@ async def handle_trading(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("trade_mode:"))
 async def choose_risk(callback: CallbackQuery, state: FSMContext):
-    mode = callback.data.split(":")[1]  # ИСПРАВЛЕНО: берём [1], а не весь список
+    mode = callback.data.split(":")[1]
     await state.update_data(trade_mode=mode)
     await callback.answer()
 
@@ -2173,19 +2333,15 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🎡 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
-    
-    # 2. Создаем объект файла. Укажи правильный путь к своей картинке!
-    # Если картинка лежит в папке images рядом со скриптом: "images/roulette.jpg"
-    photo = FSInputFile("images/roulette_table.png") 
-    
-    # 3. Используем answer_photo вместо answer. 
-    # Текст "Рулетка открыта" теперь идет в caption.
+
+    photo = FSInputFile("images/roulette_table.png")
+
     await message.answer_photo(
         photo=photo,
         caption="🎡 Рулетка открывается..",
         reply_markup=ReplyKeyboardRemove()
     )
-    
+
     await roulette_show_amount(message, state)
 
 @router.callback_query(F.data == "roulette_amount_noop")
