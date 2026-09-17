@@ -943,19 +943,46 @@ async def show_mine_menu(message: Message):
     )
 
 @router.callback_query(F.data == "mine_farm")
-async def handle_farm(callback: CallbackQuery):
+async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
+
     allowed, remaining = await can_farm(user_id, cooldown_seconds=MINE_COOLDOWN)
     if not allowed:
-        await callback.answer(f"⏳ Шахта восстанавливается. Осталось: {remaining} сек.", show_alert=True)
+        await callback.answer(f"⏳ Осталось: {remaining} сек.", show_alert=True)
         return
 
     await callback.answer()
     new_balance = await add_to_balance(user_id, MINE_REWARD)
-    await callback.message.answer(
+
+    text = (
         f"⛏ Красава, ты заработал {MINE_REWARD:,} ₽!\n"
         f"Твой баланс: {new_balance:,} ₽"
     )
+    kb = get_mine_keyboard()
+
+    data = await state.get_data()
+    farm_msg_id = data.get("farm_msg_id")
+
+    # Если уже есть сохранённое сообщение — редактируем его
+    if farm_msg_id:
+        try:
+            await callback.bot.edit_message_text(
+                text=text,
+                chat_id=callback.message.chat.id,
+                message_id=farm_msg_id,
+                reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            pass  # сообщение удалили — создадим новое
+
+    # Первый раз: редактируем само меню шахты
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+        await state.update_data(farm_msg_id=callback.message.message_id)
+    except TelegramBadRequest:
+        sent = await callback.message.answer(text, reply_markup=kb)
+        await state.update_data(farm_msg_id=sent.message_id)
 
 @router.callback_query(F.data == "mine_exit")
 async def handle_mine_exit(callback: CallbackQuery, state: FSMContext):
