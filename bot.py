@@ -107,14 +107,18 @@ class RouletteForm(StatesGroup):
 class MineForm(StatesGroup):
     in_mine = State()
 
+class AdminForm(StatesGroup):
+    waiting_for_search = State()
+    waiting_for_amount = State()
+
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
 
 MINE_REWARD = 200
-MINE_COOLDOWN = 10
+MINE_COOLDOWN = 5
 MATH_REWARD = 400
-MATH_COOLDOWN = 15
+MATH_COOLDOWN = 10
 RAW_PRICE = 1
 
 TRADING_MIN_BALANCE = 25000
@@ -648,6 +652,254 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
         else:
             await target.answer(text, reply_markup=get_main_keyboard())
 
+
+# ============================================================
+# АДМИН-ПАНЕЛЬ
+# ============================================================
+
+def get_admin_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Найти игрока", callback_data="admin_find")],
+        [InlineKeyboardButton(text="📊 Топ по балансу", callback_data="admin_top")],
+    ])
+
+def get_admin_player_keyboard(player_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Задать баланс", callback_data=f"admin_act:set:{player_id}")],
+        [InlineKeyboardButton(text="➕ Добавить", callback_data=f"admin_act:add:{player_id}")],
+        [InlineKeyboardButton(text="➖ Вычесть", callback_data=f"admin_act:sub:{player_id}")],
+        [InlineKeyboardButton(text="🔙 К меню", callback_data="admin_main")],
+    ])
+
+def get_admin_confirm_keyboard(action: str, player_id: int, amount: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_do:{action}:{player_id}:{amount}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_back:{player_id}")],
+    ])
+
+def get_admin_back_keyboard(player_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К игроку", callback_data=f"admin_back:{player_id}")],
+        [InlineKeyboardButton(text="🏠 В меню админа", callback_data="admin_main")],
+    ])
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещён.")
+        return
+    await state.clear()
+    await message.answer(
+        "🛡 Админ-панель\n\nВыберите действие:",
+        reply_markup=get_admin_keyboard()
+    )
+
+@router.callback_query(F.data == "admin_main")
+async def admin_main(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+    await state.clear()
+    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            "🛡 Админ-панель\n\nВыберите действие:",
+            reply_markup=get_admin_keyboard()
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            "🛡 Админ-панель\n\nВыберите действие:",
+            reply_markup=get_admin_keyboard()
+        )
+
+@router.callback_query(F.data == "admin_find")
+async def admin_find(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminForm.waiting_for_search)
+    await callback.message.answer(
+        "🔍 Введите ник игрока или @username:\n"
+        "Например: Alex123 или @someuser"
+    )
+
+@router.message(AdminForm.waiting_for_search)
+async def admin_search(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    query = message.text.strip()
+
+    # Сначала ищем по нику, потом по @username
+    player_id = await get_user_id_by_name_direct(query)
+    if not player_id:
+        player_id = await get_user_id_by_username(query)
+
+    if not player_id:
+        await message.answer(f"❌ Игрок «{query}» не найден. Попробуйте ещё раз:")
+        return
+
+    await _show_admin_player(message, state, player_id)
+
+async def _show_admin_player(target, state: FSMContext, player_id: int):
+    balance = await get_balance(player_id)
+    name = await get_user_name(player_id) or "без ника"
+    username = await get_username(player_id)
+
+    text = (
+        f"👤 Игрок #{player_id}\n\n"
+        f"📝 Ник: {name}\n"
+        f"👤 Username: @{username}\n"
+        f"💰 Баланс: {balance:,} ₽"
+    )
+    kb = get_admin_player_keyboard(player_id)
+
+    await state.update_data(admin_player_id=player_id)
+
+    if isinstance(target, CallbackQuery):
+        try:
+            await target.message.edit_text(text, reply_markup=kb)
+        except TelegramBadRequest:
+            await target.message.answer(text, reply_markup=kb)
+    else:
+        await target.answer(text, reply_markup=kb)
+
+@router.callback_query(F.data.startswith("admin_act:"))
+async def admin_action_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    action = parts[1]   # 'set' | 'add' | 'sub'
+    player_id = int(parts[2])
+
+    await callback.answer()
+
+    action_names = {
+        "set": "задать новый баланс",
+        "add": "добавить к балансу",
+        "sub": "вычесть из баланса",
+    }
+
+    await state.update_data(admin_action=action, admin_player_id=player_id)
+    await state.set_state(AdminForm.waiting_for_amount)
+
+    current_balance = await get_balance(player_id)
+    await callback.message.answer(
+        f"💰 Текущий баланс: {current_balance:,} ₽\n\n"
+        f"Введите сумму для «{action_names[action]}»:"
+    )
+
+@router.message(AdminForm.waiting_for_amount)
+async def admin_enter_amount(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    try:
+        amount = int(message.text.strip())
+        if amount < 0:
+            await message.answer("❌ Сумма не может быть отрицательной. Введите число:")
+            return
+    except ValueError:
+        await message.answer("❌ Введите целое число:")
+        return
+
+    data = await state.get_data()
+    action = data.get("admin_action")
+    player_id = data.get("admin_player_id")
+
+    if not action or not player_id:
+        await message.answer("❌ Сессия истекла. Начните заново через /admin")
+        await state.clear()
+        return
+
+    current_balance = await get_balance(player_id)
+    name = await get_user_name(player_id) or "без ника"
+
+    action_texts = {
+        "set": f"Задать баланс = {amount:,} ₽",
+        "add": f"Добавить {amount:,} ₽ (станет {current_balance + amount:,} ₽)",
+        "sub": f"Вычесть {amount:,} ₽ (станет {current_balance - amount:,} ₽)",
+    }
+
+    text = (
+        f"⚠️ Подтвердите действие:\n\n"
+        f"👤 Игрок: {name} (#{player_id})\n"
+        f"💰 Текущий баланс: {current_balance:,} ₽\n"
+        f"📋 {action_texts[action]}"
+    )
+
+    kb = get_admin_confirm_keyboard(action, player_id, amount)
+    await message.answer(text, reply_markup=kb)
+    await state.set_state(None)
+
+@router.callback_query(F.data.startswith("admin_do:"))
+async def admin_do_action(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    action = parts[1]
+    player_id = int(parts[2])
+    amount = int(parts[3])
+
+    await callback.answer()
+
+    if action == "set":
+        await set_balance(player_id, amount)
+    elif action == "add":
+        await add_to_balance(player_id, amount)
+    elif action == "sub":
+        await add_to_balance(player_id, -amount)
+
+    new_balance = await get_balance(player_id)
+    name = await get_user_name(player_id) or "без ника"
+
+    await callback.message.edit_text(
+        f"✅ Готово!\n\n"
+        f"👤 Игрок: {name} (#{player_id})\n"
+        f"💰 Новый баланс: {new_balance:,} ₽",
+        reply_markup=get_admin_back_keyboard(player_id)
+    )
+
+@router.callback_query(F.data.startswith("admin_back:"))
+async def admin_back_to_player(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    player_id = int(callback.data.split(":")[1])
+    await callback.answer()
+    await _show_admin_player(callback, state, player_id)
+
+@router.callback_query(F.data == "admin_top")
+async def admin_top(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    await callback.answer()
+    balances = await get_all_balances()
+    if not balances:
+        await callback.message.answer("Нет данных.")
+        return
+
+    text = "📊 Топ игроков (админ-режим):\n\n"
+    for i, (uid, name, balance) in enumerate(balances[:20], 1):
+        text += f"{i}. {name} (#{uid}) — {balance:,} ₽\n"
+
+    text += f"\nВсего игроков: {len(balances)}"
+
+    await callback.message.answer(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
+        ])
+    )
+
 # --- Клавиатуры ---
 def get_main_keyboard():
     keyboard = [
@@ -1021,7 +1273,7 @@ async def handle_trading(message: Message, state: FSMContext):
     if balance < TRADING_MIN_BALANCE:
         await message.answer(
             f"❌ У вас недостаточно средств для трейдинга.\n"
-            f"Минимальный баланс для входа: {TRADING_MIN_BALANCE:,} ₽\n"
+            f"Минимальный порог входа: {TRADING_MIN_BALANCE:,} ₽\n"
             "Сначала поработайте в шахте или на других работах, чтобы накопить сумму.",
             reply_markup=get_work_keyboard()
         )
