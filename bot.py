@@ -114,7 +114,6 @@ class AdminForm(StatesGroup):
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
-
 MINE_REWARD = 200
 MINE_COOLDOWN = 5
 MATH_REWARD = 400
@@ -122,6 +121,12 @@ MATH_COOLDOWN = 10
 RAW_PRICE = 1
 
 TRADING_MIN_BALANCE = 25000
+
+TRADING_MODES = {
+    "low": {"multiplier": 1.2, "chance": 0.8},
+    "mid": {"multiplier": 2.0, "chance": 0.5},
+    "high": {"multiplier": 5.0, "chance": 0.2},
+}
 # ============================================================
 # ЭКОНОМИКА: БИЗНЕСЫ
 # ============================================================
@@ -589,6 +594,25 @@ async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple
         ttl = await redis_client.ttl(key)
         _math_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
+    
+# --- Хранение истории последних 10 сделок ---
+async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bool):
+    trade = {
+        "mode": mode,
+        "amount": amount,
+        "result": result,
+        "win": win,
+        "ts": time.time(),
+    }
+    key = f"user:{user_id}:trades"
+    # Храним последние 10 сделок
+    trades = await redis_client.lrange(key, 0, -1)
+    trades = [json.loads(t) for t in trades] if trades else []
+    trades.append(trade)
+    trades = trades[-10:]  # оставляем последние 10
+    await redis_client.delete(key)
+    for t in trades:
+        await redis_client.rpush(key, json.dumps(t))
 
 # --- Топ игроков ---
 async def get_all_balances() -> list[tuple[int, str, int]]:
@@ -1059,6 +1083,17 @@ def get_trading_direction_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+def get_trading_mode_keyboard():
+    rows = [
+        [
+            InlineKeyboardButton(text="🟢 Низкий риск (x1.2, 80%)", callback_data="trade_mode:low"),
+            InlineKeyboardButton(text="🟡 Средний риск (x2.0, 50%)", callback_data="trade_mode:mid"),
+        ],
+        [InlineKeyboardButton(text="🔴 Высокий риск (x5.0, 20%)", callback_data="trade_mode:high")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def get_trading_result_keyboard():
     keyboard = [
         [
@@ -1188,6 +1223,27 @@ async def cmd_ping(message: Message):
     await message.answer(
         f"🤖 Бот работает\n{redis_ok}\n⏳ Uptime: {uptime_str}"
     )
+
+@router.message(Command("trades"))
+async def cmd_trades(message: Message):
+    user_id = message.from_user.id
+    key = f"user:{user_id}:trades"
+    trades = await redis_client.lrange(key, 0, -1)
+    if not trades:
+        await message.answer("У вас ещё нет сделок в трейдинге.")
+        return
+    trades = [json.loads(t) for t in trades]
+    text = "📜 История сделок:\n\n"
+    wins = 0
+    total_profit = 0
+    for i, t in enumerate(trades[-5:], 1):  # последние 5
+        sign = "✅" if t["win"] else "❌"
+        text += f"{i}. {sign} {t['mode']} | Ставка: {t['amount']:,} ₽ | Результат: {t['result']:+,.0f} ₽\n"
+        if t["win"]:
+            wins += 1
+        total_profit += t["result"]
+    text += f"\nВсего сделок (последние): {len(trades)}\nПобед: {wins}\nОбщий результат: {total_profit:+,.0f} ₽"
+    await message.answer(text)
 
 @router.message(NameForm.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
@@ -1366,6 +1422,20 @@ async def handle_trading(message: Message, state: FSMContext):
     await state.update_data(amount_msg_id=sent.message_id)
     await state.set_state(TradingForm.waiting_for_amount)
 
+@router.callback_query(F.data.startswith("trade_mode:"))
+async def handle_trade_mode(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data.split(":")[1]
+    info = TRADING_MODES[mode]
+    await state.update_data(trade_mode=mode)
+    await callback.message.edit_text(
+        f"📈 Трейдинг: выбран режим «{mode}»\n"
+        f"Множитель: x{info['multiplier']}\n"
+        f"Шанс успеха: {info['chance']*100:.0f}%\n\n"
+        "Введите сумму ставки:",
+        reply_markup=None
+    )
+    await state.set_state(TradingForm.waiting_for_amount)
+
 @router.message(TradingForm.waiting_for_amount)
 async def process_trading_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1406,40 +1476,42 @@ async def process_trading_amount(message: Message, state: FSMContext):
     await state.set_state(TradingForm.waiting_for_direction)
 
 @router.callback_query(F.data.in_({"trade_up", "trade_down"}))
-async def process_trading_direction(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    user_id = callback.from_user.id
+async def handle_trade_confirm(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    amount = data.get("amount")
-    if not amount:
-        await callback.message.edit_text("Сессия истекла. Начните заново.")
-        await state.clear()
-        return
-    actual_direction = "up" if random.random() < 0.5 else "down"
-    user_direction = "up" if callback.data == "trade_up" else "down"
-    if user_direction == actual_direction:
-        await add_to_balance(user_id, amount)
-        balance_after = await get_balance(user_id)
+    amount = data["amount"]
+    mode = data["trade_mode"]
+    user_id = callback.from_user.id
+
+    msg = await callback.message.answer("🎲 Идёт расчёт сделки…")
+
+    await asyncio.sleep(random.uniform(1.0, 1.5))
+
+    info = TRADING_MODES[mode]
+    won = random.random() < info["chance"]
+    multiplier = info["multiplier"]
+
+    if won:
+        profit = int(amount * multiplier) - amount
+        await add_to_balance(user_id, profit)
         result_text = (
-            f"🎉 Победа! График пошёл {'вверх' if actual_direction == 'up' else 'вниз'}.\n"
-            f"Вы выиграли {amount:,} ₽!\n"
-            f"Ваш баланс: {balance_after:,} ₽"
+            f"🎉 Победа!\n"
+            f"Режим: {mode}\n"
+            f"Ставка: {amount:,} ₽\n"
+            f"Выигрыш: {profit:,} ₽ (x{multiplier})"
         )
     else:
-        await add_to_balance(user_id, -amount)
-        balance_after = await get_balance(user_id)
+        # комиссия всё равно может списываться
         result_text = (
-            f"😕 Проигрыш. График пошёл {'вверх' if actual_direction == 'up' else 'вниз'}.\n"
-            f"Ваша ставка {amount:,} ₽ сгорела.\n"
-            f"Ваш баланс: {balance_after:,} ₽"
+            f"💥 Неудача…\n"
+            f"Режим: {mode}\n"
+            f"Ставка: {amount:,} ₽\n"
+            f"Вы ничего не получили."
         )
-    try:
-        await callback.message.edit_text(text=result_text, reply_markup=get_trading_result_keyboard())
-    except TelegramBadRequest as e:
-        logger.warning(f"Не удалось отредактировать сообщение: {e}. Отправляем новое.")
-        await callback.message.answer(text=result_text, reply_markup=get_trading_result_keyboard())
-        await callback.message.delete()
-    await state.update_data(amount=None)
+
+    await msg.edit_text(result_text)
+    # Логируем сделку
+    await log_trade(user_id, mode, amount, profit if won else -amount, won)
+    await state.clear()
 
 @router.callback_query(F.data == "trade_continue")
 async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
