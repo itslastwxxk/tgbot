@@ -341,14 +341,14 @@ def biz_manage_view(biz):
     if biz.get("raw_stock", 0) <= 0:
         text += "⚠️ Бизнес встал — сырья ноль!\nЖми «📦 Склад», затарься."
     else:
-        text += "✅ Бизнес работает, копит кэш!"
+        text += "✅ Бизнес работает!"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📦 Склад", callback_data="biz_wh"),
             InlineKeyboardButton(text="🚀 Прокачать", callback_data="biz_up"),
         ],
-        [InlineKeyboardButton(text="💰 Забрать кэш", callback_data="biz_collect")],
+        [InlineKeyboardButton(text="💰 Снять деньги", callback_data="biz_collect")],
         [InlineKeyboardButton(text="💸 Продать", callback_data="biz_sell")],
         [
             InlineKeyboardButton(text="🔄 Обновить", callback_data="biz_refresh"),
@@ -359,7 +359,7 @@ def biz_manage_view(biz):
 
 
 def biz_no_biz_view():
-    text = "<b>🏪 Бизнесы</b>\n\nУ тебя нет бизнеса.\nЖми кнопку ниже, выбери себе точку"
+    text = "🏪 Бизнесы\n\nУ тебя нет бизнеса.\nЖми кнопку ниже, выбери себе точку"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Купить бизнес", callback_data="biz_car:0")]
     ])
@@ -1036,9 +1036,11 @@ async def admin_top(callback: CallbackQuery, state: FSMContext):
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
-        [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🏆 Топ")]
+        [KeyboardButton(text="🎰 Казино")],
+        [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🏆 Топ")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
 
 def get_help_menu_keyboard():
     keyboard = [
@@ -1126,15 +1128,31 @@ def get_trading_direction_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_trading_mode_keyboard():
-    rows = [
+    """Клавиатура выбора риска"""
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🟢 Низкий риск (x1.2, 80%)", callback_data="trade_mode:low"),
-            InlineKeyboardButton(text="🟡 Средний риск (x2.0, 50%)", callback_data="trade_mode:mid"),
+            InlineKeyboardButton(text="🟢 Низкий риск (x1.3)", callback_data="trade_mode:low"),
+            InlineKeyboardButton(text="🟡 Средний риск (x2.0)", callback_data="trade_mode:mid"),
         ],
-        [InlineKeyboardButton(text="🔴 Высокий риск (x5.0, 20%)", callback_data="trade_mode:high")],
+        [
+            InlineKeyboardButton(text="🔴 Высокий риск (x5.0)", callback_data="trade_mode:high"),
+        ],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    ])
+
+def get_trading_confirm_keyboard(amount: int, mode: str):
+    """Клавиатура подтверждения ставки"""
+    modes_text = {
+        "low": "Низкий риск",
+        "mid": "Средний риск",
+        "high": "Высокий риск"
+    }
+    text = f"Ставка: {amount:,} ₽\nРиск: {modes_text.get(mode, 'Неизвестен')}"
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить ставку", callback_data=f"trade_confirm:{amount}")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="trade_cancel")],
+    ])
 
 def get_trading_result_keyboard():
     keyboard = [
@@ -1373,8 +1391,7 @@ async def show_mine_menu(message: Message):
     await message.answer(
         f"⛏ Шахта\n\n"
         f"За клик: {MINE_REWARD:,} ₽\n"
-        f"КД: {MINE_COOLDOWN} сек\n"
-        f"Жми «Фармить» — и кэш твой!",
+        f"КД: {MINE_COOLDOWN} сек\n",
         reply_markup=get_mine_keyboard()
     )
 
@@ -1511,25 +1528,24 @@ async def handle_trading(message: Message, state: FSMContext):
         return
 
     await message.answer("📈 Трейдинг открыт!", reply_markup=ReplyKeyboardRemove())
-    sent = await message.answer(
+    await message.answer(
         f"💰 Твой баланс: {balance:,} ₽\n"
-        "Введи сумму ставки (целое число больше 0):",
-        reply_markup=get_trading_result_keyboard2()
+        "Выбери уровень риска:",
+        reply_markup=get_trading_mode_keyboard()
     )
-    await state.update_data(amount_msg_id=sent.message_id)
-    await state.set_state(TradingForm.waiting_for_amount)
 
 @router.callback_query(F.data.startswith("trade_mode:"))
-async def handle_trade_mode(callback: CallbackQuery, state: FSMContext):
-    mode = callback.data.split(":")[1]
-    info = TRADING_MODES[mode]
+async def choose_risk(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data.split(":")[1]  # ИСПРАВЛЕНО: берём [1], а не весь список
     await state.update_data(trade_mode=mode)
+    await callback.answer()
+
+    balance = await get_balance(callback.from_user.id)
     await callback.message.edit_text(
-        f"📈 Режим: «{mode}»\n"
-        f"Множитель: x{info['multiplier']}\n"
-        f"Шанс на победу: {info['chance']*100:.0f}%\n\n"
-        "Введи сумму ставки:",
-        reply_markup=None
+        f"Режим: {mode}\n"
+        f"💰 Баланс: {balance:,} ₽\n"
+        "Введи сумму ставки (целое число больше 0):",
+        reply_markup=get_trading_result_keyboard2()
     )
     await state.set_state(TradingForm.waiting_for_amount)
 
@@ -1538,6 +1554,7 @@ async def process_trading_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
     amount_msg_id = data.get("amount_msg_id")
+
     try:
         amount = int(message.text)
         if amount <= 0:
@@ -1546,10 +1563,12 @@ async def process_trading_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("Введи целое число (например, 100):")
         return
+
     balance = await get_balance(user_id)
     if amount > balance:
         await message.answer(f"Не хватает денег! Баланс: {balance:,} ₽\nВведи меньше:")
         return
+
     if amount_msg_id:
         try:
             await message.bot.edit_message_reply_markup(
@@ -1557,6 +1576,7 @@ async def process_trading_amount(message: Message, state: FSMContext):
             )
         except TelegramBadRequest:
             pass
+
     await state.update_data(amount=amount)
     caption_text = f"📊 График актива\nСтавка: {amount:,} ₽\nКуда пойдёт график?"
     photo_path = "images/graph.png"
@@ -1572,15 +1592,24 @@ async def process_trading_amount(message: Message, state: FSMContext):
             await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
     await state.set_state(TradingForm.waiting_for_direction)
 
-@router.callback_query(F.data.in_({"trade_up", "trade_down"}))
-async def handle_trade_confirm(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    amount = data["amount"]
-    mode = data["trade_mode"]
+@router.callback_query(TradingForm.waiting_for_direction, F.data.in_({"trade_up", "trade_down"}))
+async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
+    data = await state.get_data()
+
+    mode = data.get("trade_mode")
+    amount = data.get("amount")
+    direction = "up" if callback.data == "trade_up" else "down"
+
+    if not mode or not amount:
+        await callback.answer("❌ Сессия истекла. Начни трейдинг заново.", show_alert=True)
+        await state.clear()
+        return
+
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
 
     msg = await callback.message.answer("🎲 Расчёт сделки...")
-
     await asyncio.sleep(random.uniform(1.0, 1.5))
 
     info = TRADING_MODES[mode]
@@ -1593,44 +1622,53 @@ async def handle_trade_confirm(callback: CallbackQuery, state: FSMContext):
         result_text = (
             f"🎉 Забрал!\n"
             f"Режим: {mode}\n"
+            f"Направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
             f"Ставка: {amount:,} ₽\n"
             f"Чистыми: +{profit:,} ₽ (x{multiplier})"
         )
+        await log_trade(user_id, mode, amount, profit, True)
     else:
+        await add_to_balance(user_id, -amount)
         result_text = (
             f"💥 Мимо...\n"
             f"Режим: {mode}\n"
+            f"Направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
             f"Ставка: {amount:,} ₽\n"
             f"Ставка сгорела."
         )
+        await log_trade(user_id, mode, amount, -amount, False)
 
-    await msg.edit_text(result_text)
-    await log_trade(user_id, mode, amount, profit if won else -amount, won)
-    await state.clear()
+    await msg.edit_text(result_text, reply_markup=get_trading_result_keyboard())
 
 @router.callback_query(F.data == "trade_continue")
 async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = callback.from_user.id
     balance = await get_balance(user_id)
-    if balance <= 0:
+
+    if balance < TRADING_MIN_BALANCE:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
-        await callback.message.answer("❌ Денег не хватает на новую ставку.", reply_markup=get_work_keyboard())
+        await callback.message.answer(
+            f"❌ Не хватает денег для трейдинга (нужно {TRADING_MIN_BALANCE:,} ₽).",
+            reply_markup=get_work_keyboard()
+        )
         await state.clear()
         return
+
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
-    sent = await callback.message.answer(
-        f"💰 Твой баланс: {balance:,} ₽\nВведи сумму ставки (целое число больше 0):",
-        reply_markup=get_trading_result_keyboard2()
+
+    await callback.message.answer(
+        f"💰 Твой баланс: {balance:,} ₽\n"
+        "Выбери уровень риска:",
+        reply_markup=get_trading_mode_keyboard()
     )
-    await state.update_data(amount_msg_id=sent.message_id)
-    await state.set_state(TradingForm.waiting_for_amount)
+    await state.clear()
 
 @router.callback_query(F.data == "trade_exit")
 async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
@@ -1641,6 +1679,16 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
         pass
     await state.clear()
     await callback.message.answer("🚪 Вышел из трейдинга.", reply_markup=get_work_keyboard())
+
+@router.callback_query(F.data == "trade_cancel")
+async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await state.clear()
+    await callback.message.answer("❌ Ставка отменена.", reply_markup=get_work_keyboard())
 
 # ============================================================
 # МАТЕМАТИКА
