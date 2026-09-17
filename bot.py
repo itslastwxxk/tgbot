@@ -932,7 +932,9 @@ async def handle_back_to_main(message: Message, state: FSMContext):
 
 @router.message(F.text == "⛏ Шахта")
 async def show_mine_menu(message: Message, state: FSMContext):
-    await state.set_state(MineForm.in_mine) # <-- Тут может быть ошибка, см. пункт 2
+    # MineForm не был объявлен в коде, поэтому убираем установку состояния.
+    # Логика кулдауна реализована через Redis в функции can_farm.
+    
     await message.answer(
         f"⛏ Шахта\n\n"
         f"Заработок: {MINE_REWARD:,} ₽ за клик\n"
