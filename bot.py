@@ -2121,26 +2121,14 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_casino_keyboard()
     )
 
-@router.message(F.text == "🎰 Рулетка")
+@router.message(F.text == "🎡 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
-    
-    # Путь к твоему файлу с картинкой рулетки
-    photo_path = "images/roulette_table.png" 
-    
-    try:
-        await message.answer_photo(
-            photo=FSInputFile(photo_path),
-            reply_markup=ReplyKeyboardRemove()
-        )
-    except FileNotFoundError:
-        # Если картинки нет, отправляем текст как запасной вариант, чтобы бот не молчал
-        await message.answer(
-            "🎰 Рулетка открыта (картинка временно недоступна).",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        logger.warning(f"Файл {photo_path} не найден!")
 
+    await message.answer(
+        "🎡 Рулетка открыта.",
+        reply_markup=ReplyKeyboardRemove()
+    )
     await roulette_show_amount(message, state)
 
 @router.callback_query(F.data == "roulette_amount_noop")
