@@ -1789,7 +1789,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
     random.shuffle(spin_frames)
 
     # Эффект замедления: первые кадры быстро, потом медленнее
-    delays = [0.10, 0.08, 0.07, 0.06, 0.06, 0.08, 0.12, 0.18, 0.25]
+    delays = [0.12, 0.12, 0.12, 0.13, 0.13, 0.14, 0.16, 0.20, 0.28]
 
     for i, frame in enumerate(spin_frames):
         try:
