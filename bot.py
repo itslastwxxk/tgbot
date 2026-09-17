@@ -2121,7 +2121,7 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_casino_keyboard()
     )
 
-@router.message(F.text == "🎰 Рулетка")
+@router.message(F.text == "🎡 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
     
@@ -2133,7 +2133,7 @@ async def casino_roulette(message: Message, state: FSMContext):
     # Текст "Рулетка открыта" теперь идет в caption.
     await message.answer_photo(
         photo=photo,
-        caption="🎰 Рулетка открывается..",
+        caption="🎡 Рулетка открывается..",
         reply_markup=ReplyKeyboardRemove()
     )
     
