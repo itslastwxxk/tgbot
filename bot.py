@@ -194,8 +194,8 @@ BUSINESS_LIST = [
         "name": "Гипермаркет",
         "price": 15_000_000,
         "income_per_min": 50_000,
-        "raw_consumption_per_min": 120_000,
-        "raw_capacity": 86_400_000,
+        "raw_consumption_per_min": 30_000,
+        "raw_capacity": 19_800_000,
     },
     {
         "name": "Аэропорт",
@@ -359,7 +359,7 @@ def biz_manage_view(biz):
 
 
 def biz_no_biz_view():
-    text = "🏪 Бизнесы\n\nПока пусто — бизнеса нет.\nЖми кнопку ниже, выбери себе точку."
+    text = "</b>🏪 Бизнесы</b>\n\nУ тебя нет бизнеса.\nЖми кнопку ниже, выбери себе точку"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Купить бизнес", callback_data="biz_car:0")]
     ])
