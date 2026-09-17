@@ -112,6 +112,35 @@ class AdminForm(StatesGroup):
     waiting_for_amount = State()
 
 # ============================================================
+# КОНСТАНТЫ
+# ============================================================
+HELP_TEXT_MAIN = (
+    "тут можно зарабатывать деньги, торговать, делать бизнес(и многое другое).\n\n"
+    "жми кнопки ниже, расскажу про каждый раздел."
+)
+
+HELP_TEXT_TRADING = (
+    "Трейдинг — это торговля на рынке криптовалюты с разной степенью риска.\n\n"
+    "Как это работает:\n"
+    "1. Выбираешь риск: низкий (высокий шанс победы, но выйгрыш небольшой), средний (шанс 50на50, выйгрыш х2), высокий (маленький шанс, но выйгрыш х5 от ставки!!).\n"
+    "2. Вводи сумму ставки\n"
+    "3. Бот проверяет рынок и показывает результат.\n\n"
+)
+
+HELP_TEXT_MINE = (
+    "Шахта — самый простой способ заработать первые деньги. Нажал = получил деньги.\n\n"
+)
+
+HELP_TEXT_MATH = (
+    "Математика — решил пример = получил деньги.\n\n"
+)
+
+HELP_TEXT_BUSINESS = (
+    "Бизнесы — это пассивный доход: ты покупаешь бизнес, и он приносит деньги каждую минуту.\n\n"
+    "Бизнесу нужно сырьё. Если оно заканчивается, бизнес перестаёт работать и доход останавливается.\n\n"
+)
+
+# ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
 MINE_REWARD = 200
@@ -123,14 +152,14 @@ RAW_PRICE = 1
 TRADING_MIN_BALANCE = 25000
 
 TRADING_MODES = {
-    "low": {"multiplier": 1.2, "chance": 0.8},
+    "low": {"multiplier": 1.3, "chance": 0.7},
     "mid": {"multiplier": 2.0, "chance": 0.5},
     "high": {"multiplier": 5.0, "chance": 0.2},
 }
-# ============================================================
-# ЭКОНОМИКА: БИЗНЕСЫ
-# ============================================================
 
+# ============================================================
+# БИЗНЕСЫ: КОНСТАНТЫ
+# ============================================================
 BUSINESS_LIST = [
     {
         "name": "Маленький ларёк",
@@ -299,26 +328,26 @@ def biz_manage_view(biz):
     net_profit = biz_net_profit_per_min(biz)
     time_left = biz_time_until_empty(biz)
     text = (
-        f"🏪 Ваш бизнес: «{biz['name']}»\n\n"
-        f"📈 Уровень: {biz.get('level', 1)}/3\n"
-        f"💰 Доход: {biz.get('income_per_min', 0):,} ₽/мин\n"
-        f"📦 Расход сырья: {consumption:,}/мин\n"
-        f"💵 Чистая прибыль: {net_profit:,} ₽/мин\n"
-        f"📦 Сырьё: {biz.get('raw_stock', 0):,}/{biz.get('raw_capacity', 30000):,}\n"
+        f"🏪 Твой бизнес: «{biz['name']}»\n\n"
+        f"🚀 Уровень: {biz.get('level', 1)}/3\n"
+        f"💰 Капает: {biz.get('income_per_min', 0):,} ₽/мин\n"
+        f"📦 Сырьё уходит: {consumption:,}/мин\n"
+        f"💸 Чистыми: {net_profit:,} ₽/мин — в плюсах\n"
+        f"📦 Склад: {biz.get('raw_stock', 0):,}/{biz.get('raw_capacity', 30000):,}\n"
         f"⏳ Хватит на: {format_time(time_left)}\n"
-        f"🏦 Баланс бизнеса: {biz_balance:,} ₽\n\n"
+        f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
     )
     if biz.get("raw_stock", 0) <= 0:
-        text += "⚠️ Бизнес не работает — нет сырья!\nНажмите «📦 Склад» чтобы закупить."
+        text += "⚠️ Бизнес встал — сырья ноль!\nЖми «📦 Склад», затарься."
     else:
-        text += "✅ Бизнес работает!"
+        text += "✅ Бизнес работает, копит кэш!"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📦 Склад", callback_data="biz_wh"),
-            InlineKeyboardButton(text="📈 Уровень", callback_data="biz_up"),
+            InlineKeyboardButton(text="🚀 Прокачать", callback_data="biz_up"),
         ],
-        [InlineKeyboardButton(text="💰 Собрать доход", callback_data="biz_collect")],
+        [InlineKeyboardButton(text="💰 Забрать кэш", callback_data="biz_collect")],
         [InlineKeyboardButton(text="💸 Продать", callback_data="biz_sell")],
         [
             InlineKeyboardButton(text="🔄 Обновить", callback_data="biz_refresh"),
@@ -327,12 +356,14 @@ def biz_manage_view(biz):
     ])
     return text, kb
 
+
 def biz_no_biz_view():
-    text = "🏪 Мои бизнесы\n\nУ вас нет бизнеса.\nНажмите кнопку ниже чтобы выбрать."
+    text = "🏪 Мои бизнесы\n\nПока пусто — бизнеса нет.\nЖми кнопку ниже, выбери себе точку."
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Купить бизнес", callback_data="biz_car:0")]
+        [InlineKeyboardButton(text="🛒 Взять бизнес", callback_data="biz_car:0")]
     ])
     return text, kb
+
 
 def biz_carousel_view(idx, balance):
     biz = BUSINESS_LIST[idx]
@@ -343,17 +374,17 @@ def biz_carousel_view(idx, balance):
     run_time = biz["raw_capacity"] / consumption if consumption > 0 else 0
     payback_min = biz["price"] / net if net > 0 else 0
     text = (
-        f"🏪 Покупка бизнеса\n\n"
+        f"🏪 Берём бизнес\n\n"
         f"🏗 {biz['name']}\n"
-        f"💰 Стоимость: {biz['price']:,} ₽\n"
-        f"📈 Доход: {biz['income_per_min']:,} ₽/мин\n"
-        f"📦 Расход сырья: {consumption:,}/мин\n"
-        f"💵 Чистая прибыль: {net:,} ₽/мин\n"
+        f"💸 Цена: {biz['price']:,} ₽\n"
+        f"💰 Капает: {biz['income_per_min']:,} ₽/мин\n"
+        f"📦 Сырьё уходит: {consumption:,}/мин\n"
+        f"💸 Чистыми: {net:,} ₽/мин\n"
         f"📦 Склад: {biz['raw_capacity']:,}\n"
-        f"💸 Заполнить склад: {full_stock_cost:,} ₽\n"
-        f"⏳ Полный склад хватит на: {format_time(run_time)}\n"
-        f"📊 Окупаемость: {format_time(payback_min)}\n\n"
-        f"Ваш баланс: {balance:,} ₽"
+        f"💸 Затарить склад: {full_stock_cost:,} ₽\n"
+        f"⏳ Полного склада хватит на: {format_time(run_time)}\n"
+        f"📊 Окупится за: {format_time(payback_min)}\n\n"
+        f"Твой баланс: {balance:,} ₽"
     )
     nav = []
     if idx > 0:
@@ -363,11 +394,12 @@ def biz_carousel_view(idx, balance):
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"biz_car:{idx+1}"))
     rows = [nav]
     if can_buy:
-        rows.append([InlineKeyboardButton(text=f"✅ Купить за {biz['price']:,} ₽", callback_data=f"biz_buy:{idx}")])
+        rows.append([InlineKeyboardButton(text=f"✅ Взять за {biz['price']:,} ₽", callback_data=f"biz_buy:{idx}")])
     else:
         rows.append([InlineKeyboardButton(text=f"❌ Не хватает {biz['price']:,} ₽", callback_data="biz_noop")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 def biz_warehouse_view(biz):
     stock = biz.get("raw_stock", 0)
@@ -377,24 +409,25 @@ def biz_warehouse_view(biz):
     text = (
         f"📦 Склад «{biz['name']}»\n\n"
         f"Сырьё: {stock:,}/{capacity:,}\n"
-        f"Цена: {RAW_PRICE} ₽ за единицу\n"
-        f"📦 Расход: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
+        f"Цена: {RAW_PRICE} ₽ за штуку\n"
+        f"📦 Уходит: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
         f"⏳ Хватит на: {format_time(time_left)}\n"
-        f"🏦 Баланс бизнеса: {biz_balance:,} ₽\n\n"
-        f"Выберите источник оплаты:"
+        f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
+        f"Откуда скидываем?"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Пополнить с основного баланса", callback_data="biz_wh:user")],
-        [InlineKeyboardButton(text="🏪 Пополнить с баланса бизнеса", callback_data="biz_wh:biz")],
+        [InlineKeyboardButton(text="🛒 С основного баланса", callback_data="biz_wh:user")],
+        [InlineKeyboardButton(text="🏪 Со счёта бизнеса", callback_data="biz_wh:biz")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")],
     ])
     return text, kb
+
 
 def biz_upgrade_view(biz):
     level = biz.get("level", 1)
     cost = biz_upgrade_cost(biz)
     if cost is None:
-        text = f"📈 «{biz['name']}»\n\nУровень: {level}/3 — максимальный!"
+        text = f"🚀 «{biz['name']}»\n\nУровень: {level}/3 — потолок, выше не прыгнешь!"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")]
         ])
@@ -411,18 +444,18 @@ def biz_upgrade_view(biz):
     current_net = biz_net_profit_per_min(biz)
 
     text = (
-        f"📈 Улучшение «{biz['name']}»\n\n"
-        f"Текущий уровень: {level}/3\n"
-        f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
-        f"📦 Расход сырья: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
-        f"💵 Чистая прибыль: {current_net:,} ₽/мин\n"
+        f"🚀 Прокачка «{biz['name']}»\n\n"
+        f"Сейчас уровень: {level}/3\n"
+        f"💰 Капает: {biz['income_per_min']:,} ₽/мин\n"
+        f"📦 Сырьё уходит: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
+        f"💸 Чистыми: {current_net:,} ₽/мин\n"
         f"📦 Склад: {biz.get('raw_capacity', 30000):,}\n\n"
-        f"⬆️ Уровень {new_level}:\n"
-        f"💰 Доход: {new_income:,} ₽/мин\n"
-        f"📦 Расход сырья: {new_consumption:,}/мин\n"
-        f"💵 Чистая прибыль: {new_net:,} ₽/мин\n"
+        f"⬆️ После прокачки (уровень {new_level}):\n"
+        f"💰 Капает: {new_income:,} ₽/мин\n"
+        f"📦 Сырьё уходит: {new_consumption:,}/мин\n"
+        f"💸 Чистыми: {new_net:,} ₽/мин\n"
         f"📦 Склад: {new_capacity:,}\n"
-        f"Стоимость: {cost:,} ₽"
+        f"💸 Стоит: {cost:,} ₽"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -433,19 +466,21 @@ def biz_upgrade_view(biz):
     ])
     return text, kb
 
+
 def biz_sell_view(biz):
     sell_price = biz_sell_price(biz)
     text = (
-        f"💸 Продажа «{biz['name']}»\n\n"
-        f"Вы получите: {sell_price:,} ₽\n"
-        f"(50% стоимости + 50% сырья + баланс бизнеса)\n\n"
-        f"Нажмите «Подтвердить продажу», чтобы продолжить."
+        f"💸 Продаём «{biz['name']}»\n\n"
+        f"На руки получишь: {sell_price:,} ₽\n"
+        f"(50% цены + 50% сырья + баланс бизнеса)\n\n"
+        f"Жми «Подтвердить», если реально готов продать."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить продажу", callback_data="biz_sell_confirm")],
+        [InlineKeyboardButton(text="✅ Подтверждаю", callback_data="biz_sell_confirm")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="biz_manage")],
     ])
     return text, kb
+
 
 async def biz_edit(callback, text, kb):
     try:
@@ -594,7 +629,7 @@ async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple
         ttl = await redis_client.ttl(key)
         _math_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
-    
+
 # --- Хранение истории последних 10 сделок ---
 async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bool):
     trade = {
@@ -605,11 +640,10 @@ async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bo
         "ts": time.time(),
     }
     key = f"user:{user_id}:trades"
-    # Храним последние 10 сделок
     trades = await redis_client.lrange(key, 0, -1)
     trades = [json.loads(t) for t in trades] if trades else []
     trades.append(trade)
-    trades = trades[-10:]  # оставляем последние 10
+    trades = trades[-10:]
     await redis_client.delete(key)
     for t in trades:
         await redis_client.rpush(key, json.dumps(t))
@@ -662,7 +696,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             if name:
                 _name_cache[user_id] = name
     display_name = name or "Игрок"
-    text = f"🏙 Главное меню\n{display_name}, ваш баланс: {balance:,} ₽\nВыберите раздел:"
+    text = f"🏙 Главное меню\n{display_name}, твой баланс: {balance:,} ₽\nКуда залетаем?"
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
@@ -721,18 +755,17 @@ async def _edit_or_answer(bot_obj, chat_id: int, msg_id: int | None, text: str, 
             return
         except TelegramBadRequest:
             pass
-    # Фолбэк: отправить новое
     await bot_obj.send_message(chat_id, text, reply_markup=kb)
 
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("⛔ Доступ запрещён.")
+        await message.answer("⛔ Доступ закрыт, ты не админ.")
         return
     await state.clear()
     sent = await message.answer(
-        "🛡 Админ-панель\n\nВыберите действие:",
+        "🛡 Админ-панель\n\nВыбирай действие:",
         reply_markup=get_admin_keyboard()
     )
     await state.update_data(admin_msg_id=sent.message_id)
@@ -741,13 +774,13 @@ async def cmd_admin(message: Message, state: FSMContext):
 @router.callback_query(F.data == "admin_main")
 async def admin_main(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
         return
     await state.clear()
     await callback.answer()
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        "🛡 Админ-панель\n\nВыберите действие:",
+        "🛡 Админ-панель\n\nВыбирай действие:",
         get_admin_keyboard(),
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
@@ -756,13 +789,13 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "admin_find")
 async def admin_find(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
         return
     await callback.answer()
     await state.set_state(AdminForm.waiting_for_search)
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        "🔍 Введите ник игрока или @username:\nНапример: Alex123 или @someuser",
+        "🔍 Введи ник игрока или @username:\nНапример: Alex123 или @someuser",
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
 
@@ -775,7 +808,6 @@ async def admin_search(message: Message, state: FSMContext):
     query = message.text.strip()
     chat_id = message.chat.id
 
-    # Удаляем сообщение пользователя, чтобы не засорять чат
     try:
         await message.delete()
     except TelegramBadRequest:
@@ -784,7 +816,6 @@ async def admin_search(message: Message, state: FSMContext):
     data = await state.get_data()
     msg_id = data.get("admin_msg_id")
 
-    # Сначала по нику, потом по @username
     player_id = await get_user_id_by_name_direct(query)
     if not player_id:
         player_id = await get_user_id_by_username(query)
@@ -792,7 +823,7 @@ async def admin_search(message: Message, state: FSMContext):
     if not player_id:
         await _edit_or_answer(
             message.bot, chat_id, msg_id,
-            f"❌ Игрок «{query}» не найден.\n\nПопробуйте ещё раз — введите ник или @username:",
+            f"❌ Игрок «{query}» не найден.\n\nПопробуй ещё раз — введи ник или @username:",
         )
         return
 
@@ -821,11 +852,11 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
 @router.callback_query(F.data.startswith("admin_act:"))
 async def admin_action_start(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
         return
 
     parts = callback.data.split(":")
-    action = parts[1]   # 'set' | 'add' | 'sub'
+    action = parts[1]
     player_id = int(parts[2])
 
     await callback.answer()
@@ -847,8 +878,8 @@ async def admin_action_start(callback: CallbackQuery, state: FSMContext):
 
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        f"💰 Текущий баланс: {current_balance:,} ₽\n\n"
-        f"Введите сумму для «{action_names[action]}»:",
+        f"💰 Сейчас на балансе: {current_balance:,} ₽\n\n"
+        f"Введи сумму для «{action_names[action]}»:",
     )
 
 
@@ -868,7 +899,7 @@ async def admin_enter_amount(message: Message, state: FSMContext):
                 pass
             await _edit_or_answer(
                 message.bot, chat_id, (await state.get_data()).get("admin_msg_id"),
-                "❌ Сумма не может быть отрицательной. Введите число:",
+                "❌ Минус нельзя. Введи нормальное число:",
             )
             return
     except ValueError:
@@ -878,11 +909,10 @@ async def admin_enter_amount(message: Message, state: FSMContext):
             pass
         await _edit_or_answer(
             message.bot, chat_id, (await state.get_data()).get("admin_msg_id"),
-            "❌ Введите целое число:",
+            "❌ Введи целое число:",
         )
         return
 
-    # Удаляем сообщение пользователя
     try:
         await message.delete()
     except TelegramBadRequest:
@@ -896,7 +926,7 @@ async def admin_enter_amount(message: Message, state: FSMContext):
     if not action or not player_id:
         await _edit_or_answer(
             message.bot, chat_id, msg_id,
-            "❌ Сессия истекла. Начните заново через /admin",
+            "❌ Сессия истекла. Начни заново через /admin",
         )
         await state.clear()
         return
@@ -911,9 +941,9 @@ async def admin_enter_amount(message: Message, state: FSMContext):
     }
 
     text = (
-        f"⚠️ Подтвердите действие:\n\n"
+        f"⚠️ Подтверди действие:\n\n"
         f"👤 Игрок: {name} (#{player_id})\n"
-        f"💰 Текущий баланс: {current_balance:,} ₽\n"
+        f"💰 Сейчас на балансе: {current_balance:,} ₽\n"
         f"📋 {action_texts[action]}"
     )
 
@@ -925,7 +955,7 @@ async def admin_enter_amount(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("admin_do:"))
 async def admin_do_action(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
         return
 
     parts = callback.data.split(":")
@@ -957,7 +987,7 @@ async def admin_do_action(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("admin_back:"))
 async def admin_back_to_player(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
         return
 
     player_id = int(callback.data.split(":")[1])
@@ -971,7 +1001,7 @@ async def admin_back_to_player(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "admin_top")
 async def admin_top(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
         return
 
     await callback.answer()
@@ -979,7 +1009,7 @@ async def admin_top(callback: CallbackQuery, state: FSMContext):
     if not balances:
         await _edit_or_answer(
             callback.bot, callback.message.chat.id, callback.message.message_id,
-            "Нет данных.",
+            "Пока пусто — нет данных.",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
             ]),
@@ -1010,6 +1040,19 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
+def get_help_menu_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton(text="📈 Трейдинг", callback_data="help_trading"),
+            InlineKeyboardButton(text="⛏ Шахта", callback_data="help_mine"),
+        ],
+        [
+            InlineKeyboardButton(text="🧮 Математика", callback_data="help_math"),
+            InlineKeyboardButton(text="🏪 Бизнесы", callback_data="help_business"),
+        ],
+        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_casino_keyboard():
     return ReplyKeyboardMarkup(
@@ -1029,7 +1072,6 @@ def get_roulette_amount_keyboard(amount: int):
 
 
 def get_roulette_bet_keyboard(amount: int = 0):
-    # Европейская рулетка: 0 + 1..36, с логикой цвета через эмодзи.
     rows = [
         [
             InlineKeyboardButton(text="➗ 0.5", callback_data="roulette_mul:0.5"),
@@ -1062,7 +1104,7 @@ def get_work_keyboard():
     keyboard = [
         [KeyboardButton(text="🔗 Реф"), KeyboardButton(text="⛏ Шахта")],
         [KeyboardButton(text="📈 Трейдинг"), KeyboardButton(text="🧮 Математика")],
-        [KeyboardButton(text="🏪 Мои бизнесы")],
+        [KeyboardButton(text="🏪 Бизнесы")],
         [KeyboardButton(text="🔙 В главное меню")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -1097,7 +1139,7 @@ def get_trading_mode_keyboard():
 def get_trading_result_keyboard():
     keyboard = [
         [
-            InlineKeyboardButton(text="🎮 Продолжить играть", callback_data="trade_continue"),
+            InlineKeyboardButton(text="🎮 Ещё раз", callback_data="trade_continue"),
             InlineKeyboardButton(text="🚪 Выйти", callback_data="trade_exit"),
         ]
     ]
@@ -1110,7 +1152,7 @@ def get_trading_result_keyboard2():
 def get_math_keyboard():
     keyboard = [
         [
-            InlineKeyboardButton(text="➡ Следующий пример", callback_data="math_next"),
+            InlineKeyboardButton(text="➡ Следующий", callback_data="math_next"),
             InlineKeyboardButton(text="🚪 Выйти", callback_data="math_exit"),
         ]
     ]
@@ -1156,7 +1198,6 @@ def _generate_image_in_memory(problem_text: str) -> bytes:
     text_w = right - left
     text_h = bottom - top
 
-    # Центрируем текст
     x = (img.width - text_w) // 2
     y = (img.height - text_h) // 2
 
@@ -1199,21 +1240,28 @@ async def cmd_start(message: Message, state: FSMContext):
     if not name:
         await message.answer(
             "👋 Привет! Как тебя зовут?\n"
-            "Введи имя — русские или английские буквы и цифры (от 3 до 10 символов).\n"
+            "Введи ник — буквы (русские или английские) и цифры, от 3 до 10 символов.\n"
             "Например: Alex123, Иван4, Макс777\n\n"
-            "⚠️ Имя должно быть уникальным — если оно уже занято, придётся выбрать другое."
+            "⚠️ Ник должен быть уникальным — если занят, придётся придумать другой."
         )
         await state.set_state(NameForm.waiting_for_name)
         return
     await send_main_menu(message, user_id)
 
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(
+        HELP_TEXT_MAIN,
+        reply_markup=get_help_menu_keyboard()
+    )
+
 @router.message(Command("ping"))
 async def cmd_ping(message: Message):
     try:
         await redis_client.ping()
-        redis_ok = "✅ Redis OK"
+        redis_ok = "✅ Redis ок"
     except Exception as e:
-        redis_ok = f"❌ Redis ERROR: {e}"
+        redis_ok = f"❌ Redis лёг: {e}"
         logger.error(f"Redis healthcheck failed: {e}")
     uptime = int(time.time() - start_time)
     days, rem = divmod(uptime, 86400)
@@ -1221,7 +1269,7 @@ async def cmd_ping(message: Message):
     mins, secs = divmod(rem, 60)
     uptime_str = f"{days} дн {hours} ч {mins} мин"
     await message.answer(
-        f"🤖 Бот работает\n{redis_ok}\n⏳ Uptime: {uptime_str}"
+        f"🤖 Бот жив\n{redis_ok}\n⏳ В строю уже: {uptime_str}"
     )
 
 @router.message(Command("trades"))
@@ -1230,19 +1278,19 @@ async def cmd_trades(message: Message):
     key = f"user:{user_id}:trades"
     trades = await redis_client.lrange(key, 0, -1)
     if not trades:
-        await message.answer("У вас ещё нет сделок в трейдинге.")
+        await message.answer("Сделок пока ноль — ты ещё не заходил в трейдинг.")
         return
     trades = [json.loads(t) for t in trades]
-    text = "📜 История сделок:\n\n"
+    text = "📜 Твои сделки:\n\n"
     wins = 0
     total_profit = 0
-    for i, t in enumerate(trades[-5:], 1):  # последние 5
+    for i, t in enumerate(trades[-5:], 1):
         sign = "✅" if t["win"] else "❌"
         text += f"{i}. {sign} {t['mode']} | Ставка: {t['amount']:,} ₽ | Результат: {t['result']:+,.0f} ₽\n"
         if t["win"]:
             wins += 1
         total_profit += t["result"]
-    text += f"\nВсего сделок (последние): {len(trades)}\nПобед: {wins}\nОбщий результат: {total_profit:+,.0f} ₽"
+    text += f"\nВсего: {len(trades)} | Побед: {wins} | Общий результат: {total_profit:+,.0f} ₽"
     await message.answer(text)
 
 @router.message(NameForm.waiting_for_name)
@@ -1252,32 +1300,32 @@ async def process_name(message: Message, state: FSMContext):
     if not is_admin(user_id):
         if not is_valid_name(name):
             await message.answer(
-                "❌ Имя должно содержать только русские или английские буквы и цифры (от 3 до 10 символов).\n"
-                "Без пробелов и спецсимволов. Попробуй ещё раз:"
+                "❌ Ник — только буквы и цифры, 3–10 символов. Без пробелов и всякой дичи.\n"
+                "Попробуй ещё раз:"
             )
             return
         if await is_name_taken(name):
-            await message.answer(f"❌ Ник «{name}» уже занят. Выбери другой:")
+            await message.answer(f"❌ Ник «{name}» уже занят. Придумай другой:")
             return
     else:
         if not is_valid_name(name):
-            await message.answer("⚠️ Админ: имя должно быть 3–10 символов, буквы и цифры. Исправь:")
+            await message.answer("⚠️ Админ: ник 3–10 символов, буквы и цифры. Исправь:")
             return
         existing_id = await get_user_id_by_name_direct(name)
         if existing_id and existing_id != user_id:
-            await message.answer(f"⚠️ Ник «{name}» уже используется игроком {existing_id}. Он будет перезаписан.")
+            await message.answer(f"⚠️ Ник «{name}» уже у игрока {existing_id}. Перезапишу.")
     await save_user_name(user_id, name)
     await state.clear()
-    await message.answer(f"👍 Приятно познакомиться, {name}!")
+    await message.answer(f"👍 База, {name}! Ты в игре.")
     await send_main_menu(message, user_id)
 
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message):
-    await message.answer("Выберите направление в работе:", reply_markup=get_work_keyboard())
+    await message.answer("Выбирай, чем займешься:", reply_markup=get_work_keyboard())
 
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message):
-    await message.answer("Раздел «Магаз» пока в разработке.")
+    await message.answer("Раздел «Магаз» пока в разработке — скоро зальём.")
 
 @router.message(F.text == "🏆 Топ")
 async def show_top(message: Message):
@@ -1288,24 +1336,23 @@ async def show_top(message: Message):
         if not ok:
             ttl = await redis_client.ttl(cooldown_key)
             if ttl > 0:
-                await message.answer(f"⏳ Топ можно будет посмотреть через {ttl} сек.")
+                await message.answer(f"⏳ Топ можно глянуть через {ttl} сек.")
             else:
                 await redis_client.set(cooldown_key, "1", nx=True, ex=60)
-                await message.answer("⏳ Топ можно проверять раз в минуту. Подожди немного.")
+                await message.answer("⏳ Топ раз в минуту. Подожди чуток.")
             return
 
     balances = await get_all_balances()
     if not balances:
-        await message.answer("🏆 Топ игроков\n\nПока нет данных.")
+        await message.answer("🏆 Топ игроков\n\nПока пусто — никто не играл.")
         return
 
-    text = "🏆 Топ игроков по балансу:\n\n"
+    text = "🏆 Топ по балансу:\n\n"
     for i, (uid, name, balance) in enumerate(balances[:10], 1):
-        # Убрали uid — показываем только позицию, имя и баланс
         text += f"{i}. {name} — {balance:,} ₽\n"
 
     if len(balances) > 10:
-        text += f"\n...и ещё {len(balances) - 10} игроков"
+        text += f"\n...и ещё {len(balances) - 10} челиков"
 
     await message.answer(text)
 
@@ -1323,11 +1370,68 @@ async def handle_back_to_main(message: Message, state: FSMContext):
 async def show_mine_menu(message: Message):
     await message.answer(
         f"⛏ Шахта\n\n"
-        f"Заработок: {MINE_REWARD:,} ₽ за клик\n"
-        f"Кулдаун: {MINE_COOLDOWN} сек\n"
-        f"Нажмите «Фармить», чтобы заработать!",
+        f"За клик: {MINE_REWARD:,} ₽\n"
+        f"КД: {MINE_COOLDOWN} сек\n"
+        f"Жми «Фармить» — и кэш твой!",
         reply_markup=get_mine_keyboard()
     )
+
+@router.callback_query(F.data == "help_trading")
+async def handle_help_trading(callback: CallbackQuery):
+    try:
+        await callback.message.edit_text(
+            HELP_TEXT_TRADING,
+            reply_markup=get_help_menu_keyboard()
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            HELP_TEXT_TRADING,
+            reply_markup=get_help_menu_keyboard()
+        )
+
+@router.callback_query(F.data == "help_mine")
+async def handle_help_mine(callback: CallbackQuery):
+    try:
+        await callback.message.edit_text(
+            HELP_TEXT_MINE,
+            reply_markup=get_help_menu_keyboard()
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            HELP_TEXT_MINE,
+            reply_markup=get_help_menu_keyboard()
+        )
+
+@router.callback_query(F.data == "help_math")
+async def handle_help_math(callback: CallbackQuery):
+    try:
+        await callback.message.edit_text(
+            HELP_TEXT_MATH,
+            reply_markup=get_help_menu_keyboard()
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            HELP_TEXT_MATH,
+            reply_markup=get_help_menu_keyboard()
+        )
+
+@router.callback_query(F.data == "help_business")
+async def handle_help_business(callback: CallbackQuery):
+    try:
+        await callback.message.edit_text(
+            HELP_TEXT_BUSINESS,
+            reply_markup=get_help_menu_keyboard()
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            HELP_TEXT_BUSINESS,
+            reply_markup=get_help_menu_keyboard()
+        )
+
+@router.callback_query(F.data == "main_menu")
+async def handle_main_menu_from_help(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await send_main_menu(callback, user_id)
 
 @router.callback_query(F.data == "mine_farm")
 async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
@@ -1335,67 +1439,59 @@ async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
 
     allowed, remaining = await can_farm(user_id, cooldown_seconds=MINE_COOLDOWN)
     if not allowed:
-        await callback.answer(f"⏳ Осталось: {remaining} сек.", show_alert=True)
+        await callback.answer(f"⏳ Осталось {remaining} сек.", show_alert=True)
         return
 
     await callback.answer()
     new_balance = await add_to_balance(user_id, MINE_REWARD)
 
     text = (
-        f"⛏ Красава, ты заработал {MINE_REWARD:,} ₽!\n"
-        f"Твой баланс: {new_balance:,} ₽"
+        f"⛏ Красава, +{MINE_REWARD:,} ₽!\n"
+        f"Баланс: {new_balance:,} ₽"
     )
 
     data = await state.get_data()
     farm_msg_id = data.get("farm_msg_id")
 
     if farm_msg_id:
-        # Последующие клики — редактируем сообщение с результатом
         try:
             await callback.bot.edit_message_text(
                 text=(
-        f"⛏ Красава, ты заработал еще {MINE_REWARD:,} ₽!\n"
-        f"Твой баланс: {new_balance:,} ₽"
-    ),
+                    f"⛏ Красава, +{MINE_REWARD:,} ₽!\n"
+                    f"Баланс: {new_balance:,} ₽"
+                ),
                 chat_id=callback.message.chat.id,
                 message_id=farm_msg_id,
                 reply_markup=None,
             )
             return
         except TelegramBadRequest:
-            pass  # сообщение удалили — отправим новое ниже
+            pass
 
-    # Первый клик — отправляем новое сообщение, меню не трогаем
     sent = await callback.message.answer(text, reply_markup=None)
     await state.update_data(farm_msg_id=sent.message_id)
 
 @router.callback_query(F.data == "mine_exit")
 async def handle_mine_exit(callback: CallbackQuery, state: FSMContext):
-    # 1. Подтверждаем нажатие (убираем часики загрузки у кнопки)
     await callback.answer()
-    
-    # 2. Очищаем состояние (в том числе farm_msg_id, чтобы при новом входе начать заново)
     await state.clear()
-    
-    # 3. РЕДАКТИРУЕМ старое сообщение с меню шахты: оставляем текст, но убираем кнопки
+
     try:
         await callback.message.edit_text(
-            text=callback.message.text,  # оставляем тот же текст меню
-            reply_markup=None            # это убирает все inline-кнопки
+            text=callback.message.text,
+            reply_markup=None
         )
     except Exception:
-        # Если сообщение нельзя отредактировать (например, слишком старое), просто игнорируем
         pass
 
-    # 4. Отправляем новое сообщение с выбором работы
     await callback.message.answer(
-        "Выберите направление в работе:", 
+        "Выбирай, чем займешься:",
         reply_markup=get_work_keyboard()
     )
 
 @router.message(F.text == "🔗 Реф")
 async def handle_ref(message: Message):
-    await message.answer("Вы выбрали «Реф».")
+    await message.answer("Раздел «Реф» скоро зальём.")
 
 # --- ТРЕЙДИНГ ---
 @router.message(F.text == "📈 Трейдинг")
@@ -1403,20 +1499,19 @@ async def handle_trading(message: Message, state: FSMContext):
     user_id = message.from_user.id
     balance = await get_balance(user_id)
 
-    # Проверка минимального порога
     if balance < TRADING_MIN_BALANCE:
         await message.answer(
-            f"❌ У вас недостаточно средств для трейдинга.\n"
-            f"Минимальный порог входа: {TRADING_MIN_BALANCE:,} ₽\n"
-            "Сначала поработайте в шахте или на других работах, чтобы накопить сумму.",
+            f"❌ Не хватает денег для трейдинга.\n"
+            f"Минимум на вход: {TRADING_MIN_BALANCE:,} ₽\n"
+            "Сначала пофарми в шахте — накопишь нужную сумму.",
             reply_markup=get_work_keyboard()
         )
         return
 
     await message.answer("📈 Трейдинг открыт!", reply_markup=ReplyKeyboardRemove())
     sent = await message.answer(
-        f"💰 Ваш баланс: {balance:,} ₽\n"
-        "Введите сумму ставки (целое число больше 0):",
+        f"💰 Твой баланс: {balance:,} ₽\n"
+        "Введи сумму ставки (целое число больше 0):",
         reply_markup=get_trading_result_keyboard2()
     )
     await state.update_data(amount_msg_id=sent.message_id)
@@ -1428,10 +1523,10 @@ async def handle_trade_mode(callback: CallbackQuery, state: FSMContext):
     info = TRADING_MODES[mode]
     await state.update_data(trade_mode=mode)
     await callback.message.edit_text(
-        f"📈 Трейдинг: выбран режим «{mode}»\n"
+        f"📈 Режим: «{mode}»\n"
         f"Множитель: x{info['multiplier']}\n"
-        f"Шанс успеха: {info['chance']*100:.0f}%\n\n"
-        "Введите сумму ставки:",
+        f"Шанс на победу: {info['chance']*100:.0f}%\n\n"
+        "Введи сумму ставки:",
         reply_markup=None
     )
     await state.set_state(TradingForm.waiting_for_amount)
@@ -1444,14 +1539,14 @@ async def process_trading_amount(message: Message, state: FSMContext):
     try:
         amount = int(message.text)
         if amount <= 0:
-            await message.answer("Сумма должна быть больше 0. Попробуйте ещё раз:")
+            await message.answer("Сумма должна быть больше 0. Попробуй ещё раз:")
             return
     except ValueError:
-        await message.answer("Пожалуйста, введите целое число (например, 100):")
+        await message.answer("Введи целое число (например, 100):")
         return
     balance = await get_balance(user_id)
     if amount > balance:
-        await message.answer(f"Недостаточно средств! Ваш баланс: {balance:,} ₽\nВведите меньшую сумму:")
+        await message.answer(f"Не хватает денег! Баланс: {balance:,} ₽\nВведи меньше:")
         return
     if amount_msg_id:
         try:
@@ -1482,7 +1577,7 @@ async def handle_trade_confirm(callback: CallbackQuery, state: FSMContext):
     mode = data["trade_mode"]
     user_id = callback.from_user.id
 
-    msg = await callback.message.answer("🎲 Идёт расчёт сделки…")
+    msg = await callback.message.answer("🎲 Расчёт сделки...")
 
     await asyncio.sleep(random.uniform(1.0, 1.5))
 
@@ -1494,22 +1589,20 @@ async def handle_trade_confirm(callback: CallbackQuery, state: FSMContext):
         profit = int(amount * multiplier) - amount
         await add_to_balance(user_id, profit)
         result_text = (
-            f"🎉 Победа!\n"
+            f"🎉 Забрал!\n"
             f"Режим: {mode}\n"
             f"Ставка: {amount:,} ₽\n"
-            f"Выигрыш: {profit:,} ₽ (x{multiplier})"
+            f"Чистыми: +{profit:,} ₽ (x{multiplier})"
         )
     else:
-        # комиссия всё равно может списываться
         result_text = (
-            f"💥 Неудача…\n"
+            f"💥 Мимо...\n"
             f"Режим: {mode}\n"
             f"Ставка: {amount:,} ₽\n"
-            f"Вы ничего не получили."
+            f"Ставка сгорела."
         )
 
     await msg.edit_text(result_text)
-    # Логируем сделку
     await log_trade(user_id, mode, amount, profit if won else -amount, won)
     await state.clear()
 
@@ -1523,7 +1616,7 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
-        await callback.message.answer("❌ У вас недостаточно средств для новой ставки.", reply_markup=get_work_keyboard())
+        await callback.message.answer("❌ Денег не хватает на новую ставку.", reply_markup=get_work_keyboard())
         await state.clear()
         return
     try:
@@ -1531,7 +1624,7 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     sent = await callback.message.answer(
-        f"💰 Ваш баланс: {balance:,} ₽\nВведите сумму ставки (целое число больше 0):",
+        f"💰 Твой баланс: {balance:,} ₽\nВведи сумму ставки (целое число больше 0):",
         reply_markup=get_trading_result_keyboard2()
     )
     await state.update_data(amount_msg_id=sent.message_id)
@@ -1545,7 +1638,7 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("🚪 Вы вышли из трейдинга.", reply_markup=get_work_keyboard())
+    await callback.message.answer("🚪 Вышел из трейдинга.", reply_markup=get_work_keyboard())
 
 # ============================================================
 # МАТЕМАТИКА
@@ -1559,11 +1652,11 @@ async def handle_math(message: Message, state: FSMContext):
     await state.set_state(MathForm.waiting_for_answer)
 
     await message.answer(
-        f"🧮 Математика началась! За правильный ответ: {MATH_REWARD:,} ₽",
+        f"🧮 Математика! За правильный ответ: {MATH_REWARD:,} ₽",
         reply_markup=ReplyKeyboardRemove()
     )
     sent = await message.answer(
-        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nНапиши ответ числом:",
+        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nПиши ответ числом:",
         parse_mode="HTML",
         reply_markup=get_math_keyboard()
     )
@@ -1576,12 +1669,12 @@ async def process_math_answer(message: Message, state: FSMContext):
     correct_answer = data.get("math_answer")
     problem_msg_id = data.get("problem_msg_id")
     if correct_answer is None:
-        await message.answer("Этот пример уже решён. Нажми «Следующий пример»!")
+        await message.answer("Этот пример уже решён. Жми «Следующий»!")
         return
     try:
         user_answer = int(message.text.strip())
     except ValueError:
-        await message.answer("❌ Введи число — ответ примера:")
+        await message.answer("❌ Пиши число — ответ примера:")
         return
     if problem_msg_id:
         try:
@@ -1592,9 +1685,9 @@ async def process_math_answer(message: Message, state: FSMContext):
             pass
     if user_answer == correct_answer:
         new_balance = await add_to_balance(user_id, MATH_REWARD)
-        result_text = f"✅ Верно! +{MATH_REWARD:,} ₽!\nТвой баланс: {new_balance:,} ₽"
+        result_text = f"✅ Точно! +{MATH_REWARD:,} ₽!\nБаланс: {new_balance:,} ₽"
     else:
-        result_text = f"❌ Неверно! Правильный ответ: {correct_answer}"
+        result_text = f"❌ Мимо. Правильный ответ: {correct_answer}"
     await message.answer(result_text, reply_markup=get_math_keyboard())
     await state.update_data(math_answer=None)
 
@@ -1619,7 +1712,7 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MathForm.waiting_for_answer)
 
     sent = await callback.message.answer(
-        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nНапиши ответ числом:",
+        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nПиши ответ числом:",
         parse_mode="HTML",
         reply_markup=get_math_keyboard()
     )
@@ -1633,7 +1726,7 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("🚪 Вы вышли из математики.", reply_markup=get_work_keyboard())
+    await callback.message.answer("🚪 Вышел из математики.", reply_markup=get_work_keyboard())
 
 # ============================================================
 # БИЗНЕС
@@ -1680,7 +1773,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         except TelegramBadRequest:
             pass
         await callback.message.answer(
-            "Выберите направление в работе:",
+            "Выбирай, чем займешься:",
             reply_markup=get_work_keyboard()
         )
         return
@@ -1716,11 +1809,11 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         biz_def = BUSINESS_LIST[idx]
         existing = await get_biz(user_id)
         if existing:
-            await callback.answer("У вас уже есть бизнес! Сначала продайте его.", show_alert=True)
+            await callback.answer("У тебя уже есть бизнес! Сначала продай его.", show_alert=True)
             return
         balance = await get_balance(user_id)
         if balance < biz_def["price"]:
-            await callback.answer("Недостаточно средств!", show_alert=True)
+            await callback.answer("Не хватает денег!", show_alert=True)
             return
         await callback.answer()
         await add_to_balance(user_id, -biz_def["price"])
@@ -1738,7 +1831,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, new_biz)
         text, kb = biz_manage_view(new_biz)
         await callback.message.edit_text(
-            f"✅ Вы купили «{biz_def['name']}» за {biz_def['price']:,} ₽!\n\n" + text,
+            f"✅ Взял «{biz_def['name']}» за {biz_def['price']:,} ₽!\n\n" + text,
             reply_markup=kb
         )
         return
@@ -1766,12 +1859,12 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         stock = biz.get("raw_stock", 0)
         capacity = biz.get("raw_capacity", 30000)
         space = capacity - stock
-        source_text = "основного баланса" if source == "user" else "баланса бизнеса"
+        source_text = "основного баланса" if source == "user" else "со счёта бизнеса"
         await callback.message.answer(
-            f"Введите количество сырья для покупки.\n"
-            f"Цена: {RAW_PRICE} ₽ за единицу\n"
+            f"Введи количество сырья для закупки.\n"
+            f"Цена: {RAW_PRICE} ₽ за штуку\n"
             f"Свободно на складе: {space:,}\n"
-            f"Оплата с: {source_text}"
+            f"Оплата: {source_text}"
         )
         return
 
@@ -1797,7 +1890,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         else:
             biz_balance = biz.get("balance", 0)
             if biz_balance < cost:
-                await callback.answer(f"На балансе бизнеса не хватает {cost - biz_balance:,} ₽", show_alert=True)
+                await callback.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽", show_alert=True)
                 return
             await callback.answer()
             biz["balance"] = biz_balance - cost
@@ -1822,13 +1915,13 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         sell_price = biz_sell_price(biz)
         text = (
-            f"⚠️ Вы точно хотите продать «{biz['name']}»?\n\n"
-            f"Сумма выплаты: {sell_price:,} ₽\n\n"
-            f"После продажи бизнес исчезнет, а деньги поступят на ваш баланс."
+            f"⚠️ Точно продаёшь «{biz['name']}»?\n\n"
+            f"На руки получишь: {sell_price:,} ₽\n\n"
+            f"После продажи бизнес исчезнет, бабки упадут на баланс."
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Да, продать", callback_data="biz_sell_do"),
+                InlineKeyboardButton(text="✅ Да, продаю", callback_data="biz_sell_do"),
                 InlineKeyboardButton(text="❌ Отмена", callback_data="biz_manage"),
             ],
         ])
@@ -1836,13 +1929,13 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         return
 
     if data == "biz_sell_do":
-        await callback.answer("Продажа завершена.")
+        await callback.answer("Продали.")
         sell_price = biz_sell_price(biz)
         await add_to_balance(user_id, sell_price)
         await save_biz(user_id, None)
         text, kb = biz_no_biz_view()
         await callback.message.edit_text(
-            f"✅ Бизнес продан! Вы получили {sell_price:,} ₽.\n\n" + text,
+            f"✅ Бизнес продан! На руках: {sell_price:,} ₽.\n\n" + text,
             reply_markup=kb
         )
         return
@@ -1850,10 +1943,10 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
     if data == "biz_collect":
         biz_balance = biz.get("balance", 0)
         if biz.get("raw_stock", 0) <= 0 and biz_balance <= 0:
-            await callback.answer("Бизнес не работает — нет сырья и дохода!", show_alert=True)
+            await callback.answer("Бизнес стоит — сырья и денег нет!", show_alert=True)
             return
         if biz_balance < 1:
-            await callback.answer("Доход ещё не накопился.", show_alert=True)
+            await callback.answer("Ещё не накапало.", show_alert=True)
             return
         await callback.answer()
         await add_to_balance(user_id, biz_balance)
@@ -1862,7 +1955,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, biz)
         text, kb = biz_manage_view(biz)
         await callback.message.edit_text(
-            f"💰 Вы получили {biz_balance:,} ₽!\n\n" + text,
+            f"💰 Забрал {biz_balance:,} ₽!\n\n" + text,
             reply_markup=kb
         )
         return
@@ -1875,10 +1968,10 @@ async def process_raw_amount(message: Message, state: FSMContext):
     try:
         amount = int(message.text.strip())
         if amount <= 0:
-            await message.answer("Количество должно быть больше 0. Попробуйте ещё раз:")
+            await message.answer("Количество должно быть больше 0. Попробуй ещё раз:")
             return
     except ValueError:
-        await message.answer("Введите число:")
+        await message.answer("Введи число:")
         return
 
     data = await state.get_data()
@@ -1896,7 +1989,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     space = capacity - stock
 
     if amount > space:
-        await message.answer(f"Не хватает места на складе! Свободно: {space:,}\nВведите меньшее количество:")
+        await message.answer(f"На складе не хватает места! Свободно: {space:,}\nВведи меньше:")
         return
 
     cost = amount * RAW_PRICE
@@ -1904,13 +1997,13 @@ async def process_raw_amount(message: Message, state: FSMContext):
     if source == "user":
         balance = await get_balance(user_id)
         if balance < cost:
-            await message.answer(f"Не хватает {cost - balance:,} ₽. Ваш баланс: {balance:,} ₽\nВведите меньшее количество:")
+            await message.answer(f"Не хватает {cost - balance:,} ₽. Баланс: {balance:,} ₽\nВведи меньше:")
             return
         await add_to_balance(user_id, -cost)
     else:
         biz_balance = biz.get("balance", 0)
         if biz_balance < cost:
-            await message.answer(f"На балансе бизнеса не хватает {cost - biz_balance:,} ₽. Баланс бизнеса: {biz_balance:,} ₽\nВведите меньшее количество:")
+            await message.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽. Там: {biz_balance:,} ₽\nВведи меньше:")
             return
         biz["balance"] = biz_balance - cost
 
@@ -1919,8 +2012,8 @@ async def process_raw_amount(message: Message, state: FSMContext):
     await state.clear()
 
     await message.answer(
-        f"✅ Закуплено {amount:,} единиц сырья за {cost:,} ₽\n"
-        f"Сырьё: {biz['raw_stock']:,}/{capacity:,}"
+        f"✅ Затарил {amount:,} шт. сырья за {cost:,} ₽\n"
+        f"Склад: {biz['raw_stock']:,}/{capacity:,}"
     )
 
     text, kb = biz_warehouse_view(biz)
@@ -1995,9 +2088,9 @@ async def roulette_show_amount(message: Message, state: FSMContext):
     await state.clear()
     await state.set_state(RouletteForm.waiting_for_amount)
     sent = await message.answer(
-        f"🎡 Европейская рулетка\n\n"
-        f"💰 Ваш баланс: {balance:,} ₽\n\n"
-        f"Введите сумму ставки:",
+        f"🎡 Рулетка\n\n"
+        f"💰 Твой баланс: {balance:,} ₽\n\n"
+        f"Введи сумму ставки:",
         reply_markup=get_roulette_amount_keyboard(0)
     )
     await state.update_data(amount_msg_id=sent.message_id, amount=0)
@@ -2007,24 +2100,23 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 async def show_casino(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "🎰 Казино\n\nВыберите игру:",
+        "🎰 Казино\n\nВыбирай игру:",
         reply_markup=get_casino_keyboard()
     )
 
 
 @router.callback_query(F.data == "casino_menu")
 async def casino_menu(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()  # <-- обязательно: снимает «часы» у пользователя
+    await callback.answer()
     await state.clear()
 
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
-        # Сообщение могло быть удалено/изменено — просто игнорируем
         pass
 
     await callback.message.answer(
-        "🎰 Казино\n\nВыберите игру:",
+        "🎰 Казино\n\nВыбирай игру:",
         reply_markup=get_casino_keyboard()
     )
 
@@ -2032,8 +2124,6 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
 
-    # Убираем Reply-клавиатуру, но само сообщение выбора ставки
-    # создаётся отдельно и остаётся на месте вместе с inline-кнопками.
     await message.answer(
         "🎡 Рулетка открыта.",
         reply_markup=ReplyKeyboardRemove()
@@ -2042,7 +2132,7 @@ async def casino_roulette(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "roulette_amount_noop")
 async def roulette_amount_noop(callback: CallbackQuery):
-    await callback.answer("Введите сумму сообщением.")
+    await callback.answer("Введи сумму сообщением.")
 
 
 @router.message(RouletteForm.waiting_for_amount)
@@ -2052,7 +2142,7 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     try:
         amount = int(message.text.strip())
     except (TypeError, ValueError):
-        await message.answer("❌ Введите целое число, например: 100")
+        await message.answer("❌ Введи целое число, например: 100")
         return
 
     if amount <= 0:
@@ -2062,9 +2152,9 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     balance = await get_balance(user_id)
     if amount > balance:
         await message.answer(
-            f"❌ Недостаточно средств.\n"
-            f"Ваш баланс: {balance:,} ₽\n"
-            f"Введите меньшую сумму:"
+            f"❌ Не хватает денег.\n"
+            f"Баланс: {balance:,} ₽\n"
+            f"Введи меньше:"
         )
         return
 
@@ -2084,9 +2174,9 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     await state.set_state(RouletteForm.waiting_for_bet)
 
     await message.answer(
-        f"🎡 Европейская рулетка\n\n"
+        f"🎡 Рулетка\n\n"
         f"💰 Ставка: {amount:,} ₽\n"
-        f"🎯 Выберите, на что поставить:",
+        f"🎯 На что ставим?",
         reply_markup=get_roulette_bet_keyboard(amount)
     )
 
@@ -2097,9 +2187,8 @@ async def roulette_change_amount(callback: CallbackQuery, state: FSMContext):
     current = int(data.get("amount", 0))
     multiplier = callback.data.split(":")[1]
 
-    # Если сумма ещё не введена, 0.5/2 ничего не меняет.
     if current <= 0:
-        await callback.answer("Сначала введите сумму ставки.", show_alert=True)
+        await callback.answer("Сначала введи сумму ставки.", show_alert=True)
         return
 
     new_amount = int(current * float(multiplier))
@@ -2110,7 +2199,7 @@ async def roulette_change_amount(callback: CallbackQuery, state: FSMContext):
         return
     if new_amount > balance:
         await callback.answer(
-            f"Недостаточно средств. Баланс: {balance:,} ₽",
+            f"Не хватает денег. Баланс: {balance:,} ₽",
             show_alert=True
         )
         return
@@ -2138,11 +2227,11 @@ async def roulette_change_bet_amount(callback: CallbackQuery, state: FSMContext)
         await callback.answer("Минимальная ставка — 1 ₽.", show_alert=True)
         return
     if new_amount > balance:
-        await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
+        await callback.answer(f"Не хватает денег. Баланс: {balance:,} ₽", show_alert=True)
         return
 
     await state.update_data(amount=new_amount)
-    await callback.answer(f"Ставка изменена: {new_amount:,} ₽")
+    await callback.answer(f"Ставка: {new_amount:,} ₽")
 
     try:
         await callback.message.edit_reply_markup(
@@ -2154,7 +2243,7 @@ async def roulette_change_bet_amount(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(RouletteForm.waiting_for_bet, F.data == "roulette_amount_noop")
 async def roulette_amount_noop_bet(callback: CallbackQuery):
-    await callback.answer("Используйте кнопки 0.5/2 или выберите ставку.")
+    await callback.answer("Жми 0.5/2 или выбери ставку.")
 
 
 @router.callback_query(RouletteForm.waiting_for_bet, F.data.startswith("roulette_bet:"))
@@ -2165,25 +2254,22 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
     bet = callback.data.split(":", 1)[1]
 
     if amount <= 0:
-        await callback.answer("Сначала укажите сумму ставки.", show_alert=True)
+        await callback.answer("Сначала введи сумму ставки.", show_alert=True)
         return
 
     balance = await get_balance(user_id)
     if amount > balance:
-        await callback.answer("Недостаточно средств для этой ставки.", show_alert=True)
+        await callback.answer("Не хватает денег на эту ставку.", show_alert=True)
         return
 
     await callback.answer()
     await add_to_balance(user_id, -amount)
 
-    # Для первого вращения создаём сообщение.
-    # Для всех следующих игр используем ПОСЛЕДНЕЕ сообщение результата
-    # и превращаем его обратно в прокрутку.
     last_result_message_id = state_data.get("last_result_message_id")
     chat_id = callback.message.chat.id
 
     spin_text = (
-        f"🎡 <b>РУЛЕТКА КРУТИТСЯ...</b>\n\n"
+        f"🎡 <b>КРУТИМ...</b>\n\n"
         f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
         f"💰 Сумма: <b>{amount:,} ₽</b>"
     )
@@ -2208,7 +2294,6 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML"
         )
 
-    # Запоминаем сообщение, которое сейчас используется для прокрутки.
     await state.update_data(
         last_result_message_id=spin_message.message_id,
         bet=bet
@@ -2230,10 +2315,8 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         "🎡 🔄 ⚫ 11",
     ]
 
-    # Перемешиваем кадры каждый раз — рандомный порядок
     random.shuffle(spin_frames)
 
-    # Эффект замедления: первые кадры быстро, потом медленнее
     delays = [0.8, 0.9, 0.10, 0.11, 0.11, 0.11, 0.11, 0.15, 0.16, 0.17, 0.20, 0.22, 0.23]
 
     for i, frame in enumerate(spin_frames):
@@ -2242,7 +2325,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
                 chat_id=chat_id,
                 message_id=spin_message.message_id,
                 text=(
-                    f"<b>РУЛЕТКА КРУТИТСЯ...</b>\n\n"
+                    f"<b>КРУТИМ...</b>\n\n"
                     f"{frame}\n\n"
                     f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
                     f"💰 Сумма: <b>{amount:,} ₽</b>"
@@ -2265,11 +2348,11 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         new_balance = await get_balance(user_id)
 
         result_text = (
-            f"🎡 <b>РУЛЕТКА ОСТАНОВИЛАСЬ!</b>\n\n"
+            f"🎡 <b>СТОП!</b>\n\n"
             f"Выпало: {color} <b>{number}</b>\n"
-            f"Ваша ставка: <b>{roulette_bet_name(bet)}</b>\n"
+            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n"
             f"Сумма: <b>{amount:,} ₽</b>\n\n"
-            f"✅ <b>ПРАВИЛЬНО!</b>\n"
+            f"✅ <b>ПОПАЛ!</b>\n"
             f"🎉 Выигрыш: +{amount * payout_mult:,} ₽\n"
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
@@ -2277,16 +2360,15 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         new_balance = await get_balance(user_id)
 
         result_text = (
-            f"🎡 <b>РУЛЕТКА ОСТАНОВИЛАСЬ!</b>\n\n"
+            f"🎡 <b>СТОП!</b>\n\n"
             f"Выпало: {color} <b>{number}</b>\n"
-            f"Ваша ставка: <b>{roulette_bet_name(bet)}</b>\n"
+            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n"
             f"Сумма: <b>{amount:,} ₽</b>\n\n"
-            f"❌ <b>НЕПРАВИЛЬНО!</b>\n"
+            f"❌ <b>МИМО!</b>\n"
             f"💸 Ставка сгорела.\n"
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
 
-    # После остановки оставляем только результат без inline-кнопок.
     await callback.bot.edit_message_text(
         chat_id=chat_id,
         message_id=spin_message.message_id,
@@ -2295,13 +2377,9 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         reply_markup=None
     )
 
-    # last_result_message_id остаётся в state.
-    # Поэтому следующий клик по ставке изменит ЭТО ЖЕ сообщение
-    # обратно на прокрутку, а не создаст новое.
-
 @router.callback_query(F.data.startswith("roulette_mul:"))
 async def roulette_change_amount_outside_state(callback: CallbackQuery):
-    await callback.answer("Сначала откройте рулетку и введите ставку.", show_alert=True)
+    await callback.answer("Сначала открой рулетку и введи ставку.", show_alert=True)
 
 
 # --- Универсальный хендлер ---
