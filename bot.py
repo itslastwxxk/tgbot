@@ -812,9 +812,7 @@ async def generate_math_problem(user_id: int) -> tuple[str, int]:
         b = random.randint(2, 15)
         answer = a * b
     problem_text = f"{a} {operation} {b} = ?"
-
-    image_bytes = await asyncio.to_thread(_generate_image_in_memory, problem_text)
-    return image_bytes, answer
+    return problem_text, answer
 
 # ============================================================
 # ХЕНДЛЕРЫ
@@ -931,7 +929,7 @@ async def handle_back_from_mine(message: Message, state: FSMContext):
 async def handle_back(message: Message):
     await send_main_menu(message, message.from_user.id)
 
-@router.message(F.text == "🔙 В главное меню")
+@router.message(F.text.in_({"🔙 В главное меню", "🔙 В меню"}))
 async def handle_back_to_main(message: Message, state: FSMContext):
     await state.clear()
     await send_main_menu(message, message.from_user.id)
@@ -1100,31 +1098,20 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🧮 Математика")
 async def handle_math(message: Message, state: FSMContext):
     """Вход в математику — без кулдауна, первый пример сразу."""
-    user_id = message.from_user.id
-
-    image_path, answer = await generate_math_problem(user_id)
+    problem_text, answer = await generate_math_problem(message.from_user.id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
 
-    try:
-        await message.answer(
-            f"🧮 Математика началась! За правильный ответ: {MATH_REWARD:,} ₽",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        photo = FSInputFile(image_path)
-        sent = await message.answer_photo(
-            photo=photo,
-            caption="🧮 Реши пример! Напиши ответ числом:",
-            reply_markup=get_math_keyboard()
-        )
-        await state.update_data(problem_msg_id=sent.message_id)
-        try:
-            os.remove(image_path)
-        except OSError:
-            pass
-    except Exception as e:
-        logger.error(f"Ошибка отправки фото: {e}")
-        await message.answer("🧮 Не удалось создать картинку. Попробуй ещё раз.")
+    await message.answer(
+        f"🧮 Математика началась! За правильный ответ: {MATH_REWARD:,} ₽",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    sent = await message.answer(
+        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nНапиши ответ числом:",
+        parse_mode="HTML",
+        reply_markup=get_math_keyboard()
+    )
+    await state.update_data(problem_msg_id=sent.message_id)
 
 @router.message(MathForm.waiting_for_answer)
 async def process_math_answer(message: Message, state: FSMContext):
@@ -1171,15 +1158,13 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
 
-    image_bytes, answer = await generate_math_problem(user_id)
+    problem_text, answer = await generate_math_problem(user_id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
 
-    photo = BufferedInputFile(image_bytes, filename="math_problem.png")
-
-    sent = await callback.message.answer_photo(
-        photo=photo,
-        caption="🧮 Реши пример! Напиши ответ числом:",
+    sent = await callback.message.answer(
+        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nНапиши ответ числом:",
+        parse_mode="HTML",
         reply_markup=get_math_keyboard()
     )
     await state.update_data(problem_msg_id=sent.message_id)
@@ -1793,7 +1778,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
     random.shuffle(spin_frames)
 
     # Эффект замедления: первые кадры быстро, потом медленнее
-    delays = [0.10, 0.11, 0.11, 0.12, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.20, 0.21, 0.22]
+    delays = [0.8, 0.9, 0.10, 0.11, 0.11, 0.11, 0.11, 0.15, 0.16, 0.17, 0.20, 0.22, 0.23]
 
     for i, frame in enumerate(spin_frames):
         try:
