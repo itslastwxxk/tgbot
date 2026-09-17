@@ -2127,7 +2127,7 @@ async def casino_roulette(message: Message, state: FSMContext):
     
     # 2. Создаем объект файла. Укажи правильный путь к своей картинке!
     # Если картинка лежит в папке images рядом со скриптом: "images/roulette.jpg"
-    photo = FSInputFile("images/roulette_tabl.png") 
+    photo = FSInputFile("images/roulette_table.png") 
     
     # 3. Используем answer_photo вместо answer. 
     # Текст "Рулетка открыта" теперь идет в caption.
