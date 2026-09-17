@@ -115,7 +115,7 @@ class AdminForm(StatesGroup):
 # КОНСТАНТЫ
 # ============================================================
 HELP_TEXT_MAIN = (
-    "тут можно зарабатывать деньги, торговать, делать бизнес(и многое другое).\n\n"
+    "бот коммерсант - тут можно зарабатывать деньги, торговать, делать бизнес(и многое другое)\n\n"
     "жми кнопки ниже, расскажу про каждый раздел."
 )
 
@@ -128,7 +128,8 @@ HELP_TEXT_TRADING = (
 )
 
 HELP_TEXT_MINE = (
-    "Шахта — самый простой способ заработать первые деньги. Нажал = получил деньги.\n\n"
+    "Шахта — самый простой способ заработать первые деньги.\n"
+    "Нажал = получил деньги."
 )
 
 HELP_TEXT_MATH = (
@@ -2100,7 +2101,7 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 async def show_casino(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "🎰 Казино\n\nза какой стол хочешь сесть?:",
+        "🎰 Казино\n\nза какой стол хочешь сесть?",
         reply_markup=get_casino_keyboard()
     )
 
@@ -2115,19 +2116,26 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
 
-    await callback.message.answer(
-        "🎰 Казино\n\nза какой стол хочешь сесть?:",
-        reply_markup=get_casino_keyboard()
-    )
-
-@router.message(F.text == "🎡 Рулетка")
+@router.message(F.text == "🎰 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
+    
+    # Путь к твоему файлу с картинкой рулетки
+    photo_path = "images/roulette_table.png" 
+    
+    try:
+        await message.answer_photo(
+            photo=FSInputFile(photo_path),
+            reply_markup=ReplyKeyboardRemove()
+        )
+    except FileNotFoundError:
+        # Если картинки нет, отправляем текст как запасной вариант, чтобы бот не молчал
+        await message.answer(
+            "🎰 Рулетка открыта (картинка временно недоступна).",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        logger.warning(f"Файл {photo_path} не найден!")
 
-    await message.answer(
-        "🎡 Рулетка открыта.",
-        reply_markup=ReplyKeyboardRemove()
-    )
     await roulette_show_amount(message, state)
 
 @router.callback_query(F.data == "roulette_amount_noop")
@@ -2137,47 +2145,25 @@ async def roulette_amount_noop(callback: CallbackQuery):
 
 @router.message(RouletteForm.waiting_for_amount)
 async def process_roulette_amount(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-
     try:
-        amount = int(message.text.strip())
-    except (TypeError, ValueError):
-        await message.answer("❌ Введи целое число, например: 100")
-        return
+        amount = int(message.text)
+        if amount <= 0:
+            await message.answer("Сумма должна быть больше 0!")
+            return
+        
+        balance = await get_balance(message.from_user.id)
+        if amount > balance:
+            await message.answer(f"❌ Недостаточно средств! Твой баланс: {balance:,} ₽")
+            return
 
-    if amount <= 0:
-        await message.answer("❌ Ставка должна быть больше 0.")
-        return
-
-    balance = await get_balance(user_id)
-    if amount > balance:
+        await state.update_data(bet_amount=amount)
         await message.answer(
-            f"❌ Не хватает денег.\n"
-            f"Баланс: {balance:,} ₽\n"
-            f"Введи меньше:"
+            f"✅ Ставка принята: {amount:,} ₽\n\nВыберите тип ставки:",
+            reply_markup=get_roulette_bet_keyboard(amount)
         )
-        return
-
-    data = await state.get_data()
-    amount_msg_id = data.get("amount_msg_id")
-    if amount_msg_id:
-        try:
-            await message.bot.edit_message_reply_markup(
-                chat_id=message.chat.id,
-                message_id=amount_msg_id,
-                reply_markup=None
-            )
-        except TelegramBadRequest:
-            pass
-
-    await state.update_data(amount=amount)
-    await state.set_state(RouletteForm.waiting_for_bet)
-
-    await message.answer(
-        f"🎡 Рулетка\n\n"
-        f"🎯 На что ставишь?",
-        reply_markup=get_roulette_bet_keyboard(amount)
-    )
+        await state.set_state(RouletteForm.waiting_for_bet)
+    except ValueError:
+        await message.answer("Пожалуйста, введите целое число.")
 
 
 @router.callback_query(RouletteForm.waiting_for_amount, F.data.startswith("roulette_mul:"))
