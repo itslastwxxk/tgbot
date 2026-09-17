@@ -96,9 +96,6 @@ class NameForm(StatesGroup):
 class MathForm(StatesGroup):
     waiting_for_answer = State()
 
-class MineForm(StatesGroup):
-    in_mine = State()
-
 class BusinessForm(StatesGroup):
     waiting_for_raw = State()
 
@@ -713,9 +710,10 @@ def get_work_keyboard():
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_mine_keyboard():
-    keyboard = [[KeyboardButton(text="⛏ Фармить")], [KeyboardButton(text="🔙 Назад")]]
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-
+    return InlineKeyboardMarkup(inline_keyboard=[
+        InlineKeyboardButton(text="⛏ Фармить", callback_data="mine_farm"),
+        InlineKeyboardButton(text="🔙 Назад", callback_data="mine_exit"),
+    ])
 def get_trading_direction_keyboard():
     keyboard = [
         [
@@ -920,11 +918,6 @@ async def show_top(message: Message):
     await message.answer(text)
 
 # --- ВОЗВРАТЫ ---
-@router.message(MineForm.in_mine, F.text == "🔙 Назад")
-async def handle_back_from_mine(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Выберите направление в работе:", reply_markup=get_work_keyboard())
-
 @router.message(F.text == "🔙 Назад")
 async def handle_back(message: Message):
     await send_main_menu(message, message.from_user.id)
@@ -945,18 +938,26 @@ async def show_mine_menu(message: Message, state: FSMContext):
         reply_markup=get_mine_keyboard()
     )
 
-@router.message(F.text == "⛏ Фармить")
-async def handle_farm(message: Message):
-    user_id = message.from_user.id
+@router.callback_query(F.data == "mine_farm")
+async def handle_farm(callback: CallbackQuery):
+    user_id = callback.from_user.id
     allowed, remaining = await can_farm(user_id, cooldown_seconds=MINE_COOLDOWN)
     if not allowed:
-        await message.answer(f"⏳ Шахта восстанавливается. Осталось: {remaining} сек.")
+        await callback.answer(f"⏳ Шахта восстанавливается. Осталось: {remaining} сек.", show_alert=True)
         return
+
+    await callback.answer()
     new_balance = await add_to_balance(user_id, MINE_REWARD)
-    await message.answer(
+    await callback.message.answer(
         f"⛏ Красава, ты заработал {MINE_REWARD:,} ₽!\n"
         f"Твой баланс: {new_balance:,} ₽"
     )
+
+@router.callback_query(F.data == "mine_exit")
+async def handle_mine_exit(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.answer("Выберите направление в работе:", reply_markup=get_work_keyboard())
 
 @router.message(F.text == "🔗 Реф")
 async def handle_ref(message: Message):
