@@ -1011,38 +1011,24 @@ async def handle_ref(message: Message):
     await message.answer("Вы выбрали «Реф».")
 
 # --- ТРЕЙДИНГ ---
-@router.callback_query(F.data == "📈 Трейдинг")
-async def handle_trading(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    required_balance = 25000
-
-    # 1. Получаем текущий баланс (используем твою функцию get_balance из верхнего кода)
-    current_balance = await get_balance(user_id)
-
-    # 2. Проверка условия
-    if current_balance < required_balance:
-        # Убираем индикатор загрузки с кнопки
-        await callback.answer()
-        
-        # Отправляем сообщение в чат вместо алерта
-        await callback.message.answer(
-            f"❌ Минимальный порог входа в трейдинг: {required_balance:,} ₽\n"
-            f"У вас на балансе: {current_balance:,} ₽"
+@router.message(F.text == "📈 Трейдинг")
+async def handle_trading(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    balance = await get_balance(user_id)
+    if balance <= 0:
+        await message.answer(
+            "У вас недостаточно средств для трейдинга. Сначала поработайте в шахте!",
+            reply_markup=get_work_keyboard()
         )
-        return  # Прерываем выполнение, дальше код не идет
-
-    # 3. Если баланс достаточен – продолжаем логику входа в трейдинг
-    await callback.answer()  # Убираем индикатор загрузки
-    
-    # 4. Устанавливаем состояние (используем TradingForm из твоего кода)
-    # Если тебе нужно ждать сумму ставки, используй waiting_for_amount
-    await state.set_state(TradingForm.waiting_for_amount)
-    
-    # Пример: сразу спрашиваем сумму или направление (раскомментируй нужное)
-    await callback.message.answer(
-        f"✅ Баланс достаточен! Введите сумму ставки для трейдинга:",
-        reply_markup=get_trading_direction_keyboard() # Или оставь без клавиатуры, если ждет текст
+        return
+    await message.answer("📈 Трейдинг открыт!", reply_markup=ReplyKeyboardRemove())
+    sent = await message.answer(
+        f"💰 Ваш баланс: {balance:,} ₽\n"
+        "Введите сумму ставки (целое число больше 0):",
+        reply_markup=get_trading_result_keyboard2()
     )
+    await state.update_data(amount_msg_id=sent.message_id)
+    await state.set_state(TradingForm.waiting_for_amount)
 
 @router.message(TradingForm.waiting_for_amount)
 async def process_trading_amount(message: Message, state: FSMContext):
