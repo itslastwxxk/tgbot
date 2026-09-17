@@ -2114,7 +2114,7 @@ async def casino_roulette(message: Message, state: FSMContext):
         )
     except FileNotFoundError:
         await message.answer(
-            "🎰 Рулетка открыта (картинка временно недоступна).",
+            "🎡 Рулетка открыта (картинка временно недоступна).",
             reply_markup=ReplyKeyboardRemove()
         )
         logger.warning(f"Файл {photo_path} не найден!")
