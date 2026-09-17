@@ -2101,7 +2101,7 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 async def show_casino(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "🎰 Казино\n\nза какой стол хочешь сесть?:",
+        "🎰 Казино\n\nза какой стол хочешь сесть?",
         reply_markup=get_casino_keyboard()
     )
 
@@ -2117,18 +2117,26 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
         pass
 
     await callback.message.answer(
-        "🎰 Казино\n\nза какой стол хочешь сесть?:",
+        "🎰 Казино\n\nза какой стол хочешь сесть?",
         reply_markup=get_casino_keyboard()
     )
 
-@router.message(F.text == "🎡 Рулетка")
+@router.message(F.text == "🎰 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
-
-    await message.answer(
-        "🎡 Рулетка открыта.",
+    
+    # 2. Создаем объект файла. Укажи правильный путь к своей картинке!
+    # Если картинка лежит в папке images рядом со скриптом: "images/roulette.jpg"
+    photo = FSInputFile("images/roulette_tabl.png") 
+    
+    # 3. Используем answer_photo вместо answer. 
+    # Текст "Рулетка открыта" теперь идет в caption.
+    await message.answer_photo(
+        photo=photo,
+        caption="🎰 Рулетка открывается..",
         reply_markup=ReplyKeyboardRemove()
     )
+    
     await roulette_show_amount(message, state)
 
 @router.callback_query(F.data == "roulette_amount_noop")
