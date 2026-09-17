@@ -117,6 +117,7 @@ MATH_REWARD = 400
 MATH_COOLDOWN = 15
 RAW_PRICE = 1
 
+TRADING_MIN_BALANCE = 25000
 # ============================================================
 # ЭКОНОМИКА: БИЗНЕСЫ
 # ============================================================
@@ -1015,12 +1016,17 @@ async def handle_ref(message: Message):
 async def handle_trading(message: Message, state: FSMContext):
     user_id = message.from_user.id
     balance = await get_balance(user_id)
-    if balance <= 0:
+
+    # Проверка минимального порога
+    if balance < TRADING_MIN_BALANCE:
         await message.answer(
-            "У вас недостаточно средств для трейдинга. Сначала поработайте в шахте!",
+            f"❌ У вас недостаточно средств для трейдинга.\n"
+            f"Минимальный баланс для входа: {TRADING_MIN_BALANCE:,} ₽\n"
+            "Сначала поработайте в шахте или на других работах, чтобы накопить сумму.",
             reply_markup=get_work_keyboard()
         )
         return
+
     await message.answer("📈 Трейдинг открыт!", reply_markup=ReplyKeyboardRemove())
     sent = await message.answer(
         f"💰 Ваш баланс: {balance:,} ₽\n"
