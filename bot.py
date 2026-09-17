@@ -933,14 +933,23 @@ async def handle_back_to_main(message: Message, state: FSMContext):
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text == "⛏ Шахта")
-async def show_mine_menu(message: Message):
+async def handle_work_mine(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    # 1. Убираем Reply‑клавиатуру (кнопки внизу экрана)
     await message.answer(
-        f"⛏ Шахта\n\n"
-        f"Заработок: {MINE_REWARD:,} ₽ за клик\n"
-        f"Кулдаун: {MINE_COOLDOWN} сек\n"
-        f"Нажмите «Фармить», чтобы заработать!",
+        "🏗 Вы вошли в шахту!",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    # 2. Сразу показываем Inline‑меню шахты (как у тебя в get_mine_keyboard)
+    await message.answer(
+        "⛏ Шахта — выберите действие:",
         reply_markup=get_mine_keyboard()
     )
+    
+    # 3. (Опционально) Сохраняем состояние, если нужно
+    await state.set_state(MineForm.in_mine)
 
 @router.callback_query(F.data == "mine_farm")
 async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
@@ -1015,40 +1024,37 @@ async def handle_ref(message: Message):
 async def handle_trading_enter(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     required_balance = 25000
-
-    # 1. Получаем текущий баланс (используем твою функцию get_balance из верхнего кода)
+    
+    # Используем существующую функцию get_balance, а не get_user_balance
     current_balance = await get_balance(user_id)
-
-    # 2. Проверка условия
+    
     if current_balance < required_balance:
-        # Убираем индикатор загрузки с кнопки
-        await callback.answer()
-        
-        # Отправляем сообщение в чат вместо алерта
+        await callback.answer() 
         await callback.message.answer(
             f"❌ Минимальный порог входа в трейдинг: {required_balance:,} ₽\n"
             f"У вас на балансе: {current_balance:,} ₽"
         )
-        return  # Прерываем выполнение, дальше код не идет
+        return
 
-    # 3. Если баланс достаточен – продолжаем логику входа в трейдинг
-    await callback.answer()  # Убираем индикатор загрузки
+    await callback.answer()
     
-    # 4. Устанавливаем состояние (используем TradingForm из твоего кода)
-    # Если тебе нужно ждать сумму ставки, используй waiting_for_amount
+    # Убираем кнопки у сообщения, где была нажата кнопка "trading_enter"
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+    await callback.message.answer("📉 Вы вошли в режим трейдинга!")
+    
     await state.set_state(TradingForm.waiting_for_amount)
+    await callback.message.answer("Введите сумму ставки:")
     
-    # Пример: сразу спрашиваем сумму или направление (раскомментируй нужное)
-    await callback.message.answer(
-        f"✅ Баланс достаточен! Введите сумму ставки для трейдинга:",
-        reply_markup=get_trading_direction_keyboard() # Или оставь без клавиатуры, если ждет текст
-    )
-
 @router.message(TradingForm.waiting_for_amount)
 async def process_trading_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
     amount_msg_id = data.get("amount_msg_id")
+    
     try:
         amount = int(message.text)
         if amount <= 0:
@@ -1057,31 +1063,47 @@ async def process_trading_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("Пожалуйста, введите целое число (например, 100):")
         return
+        
     balance = await get_balance(user_id)
     if amount > balance:
         await message.answer(f"Недостаточно средств! Ваш баланс: {balance:,} ₽\nВведите меньшую сумму:")
         return
+        
     if amount_msg_id:
         try:
             await message.bot.edit_message_reply_markup(
-                chat_id=message.chat.id, message_id=amount_msg_id, reply_markup=None
+                chat_id=message.chat.id, 
+                message_id=amount_msg_id, 
+                reply_markup=None
             )
         except TelegramBadRequest:
             pass
+            
     await state.update_data(amount=amount)
     caption_text = f"📊 График актива\nСтавка: {amount:,} ₽\nКуда пойдёт график?"
     photo_path = "images/graph.png"
+    
     if not os.path.exists(photo_path):
         logger.warning(f"Файл {photo_path} не найден. Отправляем только текст.")
-        await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
+        await message.answer(
+            text=caption_text, 
+            reply_markup=get_trading_direction_keyboard()
+        )
     else:
         try:
             photo = FSInputFile(photo_path)
-            await message.answer_photo(photo=photo, caption=caption_text, reply_markup=get_trading_direction_keyboard())
+            await message.answer_photo(
+                photo=photo, 
+                caption=caption_text, 
+                reply_markup=get_trading_direction_keyboard()
+            )
         except Exception as e:
             logger.error(f"Ошибка отправки фото: {e}")
-            await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
-    await state.set_state(TradingForm.waiting_for_direction)
+            # ИСПРАВЛЕНИЕ ЗДЕСЬ:
+            await message.answer(
+                text=caption_text + "\n⚠️ График временно недоступен, выберите направление:",
+                reply_markup=get_trading_direction_keyboard()
+            )
 
 @router.callback_query(F.data.in_({"trade_up", "trade_down"}))
 async def process_trading_direction(callback: CallbackQuery, state: FSMContext):
