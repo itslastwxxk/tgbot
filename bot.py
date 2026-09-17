@@ -696,7 +696,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             if name:
                 _name_cache[user_id] = name
     display_name = name or "Игрок"
-    text = f"🏙 Главное меню\n{display_name}, твой баланс: {balance:,} ₽\nКуда залетаем?"
+    text = f"вечер в хату, {display_name}. твой баланс: {balance:,} ₽"
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
@@ -2100,7 +2100,7 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 async def show_casino(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "🎰 Казино\n\nВыбирай игру:",
+        "🎰 Казино\n\nза какой стол хочешь сесть?:",
         reply_markup=get_casino_keyboard()
     )
 
@@ -2116,7 +2116,7 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
         pass
 
     await callback.message.answer(
-        "🎰 Казино\n\nВыбирай игру:",
+        "🎰 Казино\n\nза какой стол хочешь сесть?:",
         reply_markup=get_casino_keyboard()
     )
 
@@ -2175,8 +2175,7 @@ async def process_roulette_amount(message: Message, state: FSMContext):
 
     await message.answer(
         f"🎡 Рулетка\n\n"
-        f"💰 Ставка: {amount:,} ₽\n"
-        f"🎯 На что ставим?",
+        f"🎯 На что ставишь?",
         reply_markup=get_roulette_bet_keyboard(amount)
     )
 
@@ -2350,9 +2349,8 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         result_text = (
             f"🎡 <b>СТОП!</b>\n\n"
             f"Выпало: {color} <b>{number}</b>\n"
-            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n"
-            f"Сумма: <b>{amount:,} ₽</b>\n\n"
-            f"✅ <b>ПОПАЛ!</b>\n"
+            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
+            f"✅ <b>ВЫЙГРЫШ!</b>\n"
             f"🎉 Выигрыш: +{amount * payout_mult:,} ₽\n"
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
@@ -2362,10 +2360,9 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         result_text = (
             f"🎡 <b>СТОП!</b>\n\n"
             f"Выпало: {color} <b>{number}</b>\n"
-            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n"
-            f"Сумма: <b>{amount:,} ₽</b>\n\n"
-            f"❌ <b>МИМО!</b>\n"
-            f"💸 Ставка сгорела.\n"
+            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
+            f"❌ <b>ПРОИГРЫШ!</b>\n"
+            f"💸 Ставка {amount:,} ₽ сгорела.\n"
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
 
