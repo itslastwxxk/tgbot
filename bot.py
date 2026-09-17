@@ -963,8 +963,8 @@ async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     farm_msg_id = data.get("farm_msg_id")
 
-    # Если уже есть сохранённое сообщение — редактируем его
     if farm_msg_id:
+        # Последующие клики — редактируем сообщение с результатом
         try:
             await callback.bot.edit_message_text(
                 text=text,
@@ -974,15 +974,11 @@ async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
             )
             return
         except TelegramBadRequest:
-            pass  # сообщение удалили — создадим новое
+            pass  # сообщение удалили — отправим новое ниже
 
-    # Первый раз: редактируем само меню шахты
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-        await state.update_data(farm_msg_id=callback.message.message_id)
-    except TelegramBadRequest:
-        sent = await callback.message.answer(text, reply_markup=kb)
-        await state.update_data(farm_msg_id=sent.message_id)
+    # Первый клик — отправляем новое сообщение, меню не трогаем
+    sent = await callback.message.answer(text, reply_markup=kb)
+    await state.update_data(farm_msg_id=sent.message_id)
 
 @router.callback_query(F.data == "mine_exit")
 async def handle_mine_exit(callback: CallbackQuery, state: FSMContext):
