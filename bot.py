@@ -713,9 +713,9 @@ def get_work_keyboard():
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_mine_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        InlineKeyboardButton(text="⛏ Фармить", callback_data="mine_farm"),
-        InlineKeyboardButton(text="🔙 Назад", callback_data="mine_exit"),
+    buttons = [
+        [InlineKeyboardButton(text="⛏ Фармить", callback_data="mine_farm")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="mine_exit")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
