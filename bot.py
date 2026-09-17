@@ -331,8 +331,8 @@ def biz_manage_view(biz):
     text = (
         f"🏪 Твой бизнес: «{biz['name']}»\n\n"
         f"🚀 Уровень: {biz.get('level', 1)}/3\n"
-        f"💰 Капает: {biz.get('income_per_min', 0):,} ₽/мин\n"
-        f"📦 Сырьё уходит: {consumption:,}/мин\n"
+        f"💰 Доход: {biz.get('income_per_min', 0):,} ₽/мин\n"
+        f"📦 Расход сырья: {consumption:,}/мин\n"
         f"💸 Чистыми: {net_profit:,} ₽/мин — в плюсах\n"
         f"📦 Склад: {biz.get('raw_stock', 0):,}/{biz.get('raw_capacity', 30000):,}\n"
         f"⏳ Хватит на: {format_time(time_left)}\n"
@@ -378,11 +378,11 @@ def biz_carousel_view(idx, balance):
         f"🏪 Берём бизнес\n\n"
         f"🏗 {biz['name']}\n"
         f"💸 Цена: {biz['price']:,} ₽\n"
-        f"💰 Капает: {biz['income_per_min']:,} ₽/мин\n"
-        f"📦 Сырьё уходит: {consumption:,}/мин\n"
+        f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
+        f"📦 Расход сырья: {consumption:,}/мин\n"
         f"💸 Чистыми: {net:,} ₽/мин\n"
         f"📦 Склад: {biz['raw_capacity']:,}\n"
-        f"💸 Затарить склад: {full_stock_cost:,} ₽\n"
+        f"💸 Заполнить склад: {full_stock_cost:,} ₽\n"
         f"⏳ Полного склада хватит на: {format_time(run_time)}\n"
         f"📊 Окупится за: {format_time(payback_min)}\n\n"
         f"Твой баланс: {balance:,} ₽"
@@ -447,16 +447,16 @@ def biz_upgrade_view(biz):
     text = (
         f"🚀 Прокачка «{biz['name']}»\n\n"
         f"Сейчас уровень: {level}/3\n"
-        f"💰 Капает: {biz['income_per_min']:,} ₽/мин\n"
-        f"📦 Сырьё уходит: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
+        f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
+        f"📦 Расход сырья: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
         f"💸 Чистыми: {current_net:,} ₽/мин\n"
         f"📦 Склад: {biz.get('raw_capacity', 30000):,}\n\n"
         f"⬆️ После прокачки (уровень {new_level}):\n"
-        f"💰 Капает: {new_income:,} ₽/мин\n"
-        f"📦 Сырьё уходит: {new_consumption:,}/мин\n"
+        f"💰 Доход: {new_income:,} ₽/мин\n"
+        f"📦 Расход сырья: {new_consumption:,}/мин\n"
         f"💸 Чистыми: {new_net:,} ₽/мин\n"
         f"📦 Склад: {new_capacity:,}\n"
-        f"💸 Стоит: {cost:,} ₽"
+        f"💸 Цена: {cost:,} ₽"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -473,8 +473,7 @@ def biz_sell_view(biz):
     text = (
         f"💸 Продаём «{biz['name']}»\n\n"
         f"На руки получишь: {sell_price:,} ₽\n"
-        f"(50% цены + 50% сырья + баланс бизнеса)\n\n"
-        f"Жми «Подтвердить», если реально готов продать."
+        f"(50% цены + 50% сырья + баланс бизнеса)"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтверждаю", callback_data="biz_sell_confirm")],
@@ -1733,7 +1732,7 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
 # БИЗНЕС
 # ============================================================
 
-@router.message(F.text == "🏪 Мои бизнесы")
+@router.message(F.text == "🏪 Бизнесы")
 async def handle_my_businesses(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
@@ -2360,7 +2359,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             f"Выпало: {color} <b>{number}</b>\n"
             f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"✅ <b>ВЫЙГРЫШ!</b>\n"
-            f"🎉 Выигрыш: +{amount * payout_mult:,} ₽\n"
+            f"🎉 Пополнение: +{amount:,} ₽\n"
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
@@ -2371,7 +2370,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             f"Выпало: {color} <b>{number}</b>\n"
             f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"❌ <b>ПРОИГРЫШ!</b>\n"
-            f"💸 Ставка {amount:,} ₽ сгорела.\n"
+            f"💸 Списание: -{amount:,} ₽\n"
             f"💰 Баланс: <b>{new_balance:,} ₽</b>"
         )
 
