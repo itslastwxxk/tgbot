@@ -169,7 +169,7 @@ RAW_PRICE = 1
 TRADING_MIN_BALANCE = 25000
 
 TRADING_MODES = {
-    "low": {"multiplier": 1.3, "chance": 0.7},
+    "low": {"multiplier": 1.2, "chance": 0.7},
     "mid": {"multiplier": 2.0, "chance": 0.5},
     "high": {"multiplier": 5.0, "chance": 0.2},
 }
@@ -1583,33 +1583,78 @@ async def show_shop_menu(message: Message):
     await message.answer("Раздел «Магаз» пока в разработке — скоро зальём.")
 
 @router.message(F.text == "🏆 Топ")
-async def show_top(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        cooldown_key = f"cooldown:top:{user_id}"
-        ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
-        if not ok:
-            ttl = await redis_client.ttl(cooldown_key)
-            if ttl > 0:
-                await message.answer(f"⏳ Топ можно глянуть через {ttl} сек.")
-            else:
-                await redis_client.set(cooldown_key, "1", nx=True, ex=60)
-                await message.answer("⏳ Топ раз в минуту. Подожди чуток.")
-            return
+async def show_top(message: Message, state: FSMContext):
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Топ по балансу", callback_data="public_top:balance")],
+        [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="public_top:referrals")],
+    ])
+    await message.answer("🏆 Выбери рейтинг:", reply_markup=kb)
 
-    balances = await get_all_balances()
-    if not balances:
-        await message.answer("🏆 Топ игроков\n\nПока пусто — никто не играл.")
+
+async def _check_public_top_cooldown(user_id: int, message: Message) -> bool:
+    if is_admin(user_id):
+        return True
+
+    cooldown_key = f"cooldown:top:{user_id}"
+    ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
+    if ok:
+        return True
+
+    ttl = await redis_client.ttl(cooldown_key)
+    await message.answer(f"⏳ Топ можно глянуть через {max(ttl, 1)} сек.")
+    return False
+
+
+@router.callback_query(F.data.startswith("public_top:"))
+async def show_public_top(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+
+    if not await _check_public_top_cooldown(user_id, callback.message):
         return
 
-    text = "🏆 Топ по балансу:\n\n"
-    for i, (uid, name, balance) in enumerate(balances[:10], 1):
-        text += f"{i}. {name} — {balance:,} ₽\n"
+    kind = callback.data.split(":", 1)[1]
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К выбору топа", callback_data="public_top:menu")]
+    ])
 
-    if len(balances) > 10:
-        text += f"\n...и ещё {len(balances) - 10} челиков"
+    if kind == "menu":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Топ по балансу", callback_data="public_top:balance")],
+            [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="public_top:referrals")],
+        ])
+        await callback.message.edit_text("🏆 Выбери рейтинг:", reply_markup=kb)
+        return
 
-    await message.answer(text)
+    if kind == "balance":
+        balances = await get_all_balances()
+        if not balances:
+            result_text = "🏆 Топ по балансу\n\nПока пусто — никто не играл."
+        else:
+            result_text = "💰 Топ по балансу:\n\n"
+            for i, (uid, name, balance) in enumerate(balances[:10], 1):
+                result_text += f"{i}. {name} — {balance:,} ₽\\n"
+            if len(balances) > 10:
+                result_text += f"\n...и ещё {len(balances) - 10} челиков"
+    elif kind == "referrals":
+        top = await get_top_referrals(10)
+        if not top:
+            result_text = "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил."
+        else:
+            result_text = "👥 Топ по рефералам:\n\n"
+            for i, (uid, count) in enumerate(top, 1):
+                name = await get_user_name(uid) or "без ника"
+                result_text += f"{i}. {name} — {count} реф.\\n"
+    else:
+        await callback.answer("Неизвестный рейтинг.", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_text(result_text, reply_markup=back_kb)
+    except TelegramBadRequest:
+        await callback.message.answer(result_text, reply_markup=back_kb)
+
 
 # ============================================================
 # ЕЖЕДНЕВНЫЙ БОНУС — ХЕНДЛЕРЫ
