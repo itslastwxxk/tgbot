@@ -1394,7 +1394,10 @@ def get_trading_mode_keyboard():
         [
             InlineKeyboardButton(text="🔴 Высокий риск (x5.0)", callback_data="trade_mode:high"),
         ],
-        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")],
+        [
+            InlineKeyboardButton(text="📜 История сделок", callback_data="trade_history:0"),
+            InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu"),
+        ],
     ])
 
 def get_trading_confirm_keyboard(amount: int, mode: str):
