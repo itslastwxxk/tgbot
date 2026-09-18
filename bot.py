@@ -1795,7 +1795,6 @@ async def show_public_top(callback: CallbackQuery):
 # ============================================================
 # ЕЖЕДНЕВНЫЙ БОНУС — ХЕНДЛЕРЫ
 # ============================================================
-
 @router.message(F.text == "🎁 Ежедневный бонус")
 async def handle_daily_bonus(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1822,7 +1821,12 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
         )
         kb = get_daily_bonus_keyboard(False)
 
-    await message.answer(text, reply_markup=kb)
+    try:
+        photo = FSInputFile("images/daily_bonus.png")
+        await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+    except FileNotFoundError:
+        logger.warning("Файл images/daily_bonus.png не найден.")
+        await message.answer(text, reply_markup=kb)
 
 @router.callback_query(F.data == "daily_claim")
 async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
@@ -1881,12 +1885,17 @@ async def handle_back_to_main(message: Message, state: FSMContext):
 @router.message(F.text == "⛏ Шахта")
 async def show_mine_menu(message: Message, state: FSMContext):
     await state.set_state(MineForm.in_mine)
-    await message.answer(
+    text = (
         f"⛏ Шахта\n\n"
         f"За клик: {MINE_REWARD:,} ₽\n"
-        f"КД: {MINE_COOLDOWN} сек\n",
-        reply_markup=get_mine_keyboard()
+        f"КД: {MINE_COOLDOWN} сек\n"
     )
+    try:
+        photo = FSInputFile("images/mine.png")
+        await message.answer_photo(photo=photo, caption=text, reply_markup=get_mine_keyboard())
+    except FileNotFoundError:
+        logger.warning("Файл images/mine.png не найден.")
+        await message.answer(text, reply_markup=get_mine_keyboard())
 
 @router.callback_query(F.data == "help_trading")
 async def handle_help_trading(callback: CallbackQuery):
@@ -2696,10 +2705,13 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 @router.message(F.text == "🎰 Казино")
 async def show_casino(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "🎰 Казино\n\nза какой стол хочешь сесть?",
-        reply_markup=get_casino_keyboard()
-    )
+    text = "🎰 добро пожаловать в казино 'лохотрон'\n\nЗа какой стол хочешь сесть?"
+    try:
+        photo = FSInputFile("images/casino.png")
+        await message.answer_photo(photo=photo, caption=text, reply_markup=get_casino_keyboard())
+    except FileNotFoundError:
+        logger.warning("Файл images/casino.png не найден.")
+        await message.answer(text, reply_markup=get_casino_keyboard())
 
 
 @router.callback_query(F.data == "casino_menu")
@@ -2721,11 +2733,10 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
 
-    photo = FSInputFile("images/roulette_table.png")
+    photo = FSInputFile("images/roulette.png")
 
     await message.answer_photo(
         photo=photo,
-        caption="🎡 Рулетка открывается..",
         reply_markup=ReplyKeyboardRemove()
     )
 
@@ -2774,11 +2785,17 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     await state.update_data(amount=amount)
     await state.set_state(RouletteForm.waiting_for_bet)
 
-    await message.answer(
+    text = (
         f"🎡 Рулетка\n\n"
-        f"🎯 На что ставишь?",
-        reply_markup=get_roulette_bet_keyboard(amount)
+        f"🎯 На что ставишь?"
     )
+
+    try:
+        photo = FSInputFile("images/roulette_table.png")
+        await message.answer_photo(photo=photo, caption=text, reply_markup=get_roulette_bet_keyboard(amount))
+    except FileNotFoundError:
+        logger.warning("Файл images/roulette_table.png не найден.")
+        await message.answer(text, reply_markup=get_roulette_bet_keyboard(amount))
 
 
 @router.callback_query(RouletteForm.waiting_for_amount, F.data.startswith("roulette_mul:"))
