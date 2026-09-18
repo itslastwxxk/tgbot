@@ -278,6 +278,8 @@ def biz_settle(biz):
     stock = biz.get("raw_stock", 0)
 
     if stock <= 0 or income_rate <= 0:
+        if stock <= 0:
+            biz.setdefault("empty_since", last)
         biz["last_collected"] = now
         return biz
 
@@ -294,6 +296,11 @@ def biz_settle(biz):
     else:
         biz["balance"] = int(biz.get("balance", 0) + income_rate * max_run_minutes)
         biz["raw_stock"] = 0
+        biz.setdefault("empty_since", last + max_run_minutes * 60)
+
+    if biz.get("raw_stock", 0) > 0:
+        biz.pop("empty_since", None)
+        biz.pop("empty_notified", None)
 
     biz["last_collected"] = now
     return biz
@@ -1592,27 +1599,10 @@ async def show_top(message: Message, state: FSMContext):
     await message.answer("🏆 Выбери рейтинг:", reply_markup=kb)
 
 
-async def _check_public_top_cooldown(user_id: int, message: Message) -> bool:
-    if is_admin(user_id):
-        return True
-
-    cooldown_key = f"cooldown:top:{user_id}"
-    ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
-    if ok:
-        return True
-
-    ttl = await redis_client.ttl(cooldown_key)
-    await message.answer(f"⏳ Топ можно глянуть через {max(ttl, 1)} сек.")
-    return False
-
-
 @router.callback_query(F.data.startswith("public_top:"))
 async def show_public_top(callback: CallbackQuery):
     user_id = callback.from_user.id
     await callback.answer()
-
-    if not await _check_public_top_cooldown(user_id, callback.message):
-        return
 
     kind = callback.data.split(":", 1)[1]
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1634,7 +1624,7 @@ async def show_public_top(callback: CallbackQuery):
         else:
             result_text = "💰 Топ по балансу:\n\n"
             for i, (uid, name, balance) in enumerate(balances[:10], 1):
-                result_text += f"{i}. {name} — {balance:,} ₽\\n"
+                result_text += f"{i}. {name} — {balance:,} ₽\n"
             if len(balances) > 10:
                 result_text += f"\n...и ещё {len(balances) - 10} челиков"
     elif kind == "referrals":
@@ -1645,7 +1635,7 @@ async def show_public_top(callback: CallbackQuery):
             result_text = "👥 Топ по рефералам:\n\n"
             for i, (uid, count) in enumerate(top, 1):
                 name = await get_user_name(uid) or "без ника"
-                result_text += f"{i}. {name} — {count} реф.\\n"
+                result_text += f"{i}. {name} — {count} реф.\n"
     else:
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
@@ -2504,6 +2494,8 @@ async def process_raw_amount(message: Message, state: FSMContext):
         biz["balance"] = biz_balance - cost
 
     biz["raw_stock"] = stock + amount
+    biz.pop("empty_since", None)
+    biz.pop("empty_notified", None)
     await save_biz(user_id, biz)
     await state.clear()
 
@@ -2879,6 +2871,60 @@ async def roulette_change_amount_outside_state(callback: CallbackQuery):
     await callback.answer("Сначала открой рулетку и введи ставку.", show_alert=True)
 
 
+# --- Уведомления о простое бизнеса из-за пустого склада ---
+EMPTY_STOCK_NOTIFY_AFTER = 60 * 60
+EMPTY_STOCK_CHECK_INTERVAL = 5 * 60
+
+async def monitor_empty_businesses():
+    while True:
+        try:
+            async for key in redis_client.scan_iter(match="user:*", count=100):
+                if not key.startswith("user:") or key.count(":") != 1:
+                    continue
+                try:
+                    user_id = int(key.split(":", 1)[1])
+                except ValueError:
+                    continue
+
+                biz = await get_biz(user_id)
+                if not biz:
+                    continue
+
+                # Сначала начисляем доход до момента остановки.
+                await settle_and_save_biz(user_id, biz)
+                stock = int(biz.get("raw_stock", 0))
+                if stock > 0:
+                    biz.pop("empty_since", None)
+                    biz.pop("empty_notified", None)
+                    await save_biz(user_id, biz)
+                    continue
+
+                now = time.time()
+                empty_since = biz.get("empty_since")
+                if empty_since is None:
+                    # Для старых сохранений начинаем отсчёт с первого обнаружения нулевого склада.
+                    biz["empty_since"] = now
+                    await save_biz(user_id, biz)
+                    continue
+
+                if (now - float(empty_since) >= EMPTY_STOCK_NOTIFY_AFTER
+                        and not biz.get("empty_notified")):
+                    await bot.send_message(
+                        user_id,
+                        f"⚠️ Твой «{biz.get('name', 'бизнес')}» простаивает! "
+                        "Затарись сырьём, чтобы не терять прибыль!"
+                    )
+                    biz["empty_notified"] = True
+                    await save_biz(user_id, biz)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ошибка мониторинга пустого склада")
+
+        await asyncio.sleep(EMPTY_STOCK_CHECK_INTERVAL)
+
+
 # --- Универсальный хендлер ---
 @router.message(F.text)
 async def handle_unknown_text(message: Message, state: FSMContext):
@@ -2913,9 +2959,15 @@ async def main():
             os.remove(LOCK_FILE)
         return
 
+    monitor_task = asyncio.create_task(monitor_empty_businesses())
     try:
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
         if os.path.exists(LOCK_FILE):
             os.remove(LOCK_FILE)
         logger.info("Бот остановлен.")
