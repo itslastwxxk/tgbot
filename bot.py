@@ -518,6 +518,14 @@ async def init_redis():
     await redis_client.ping()
     logger.info("Redis: OK")
 
+def format_cooldown(seconds: int | float) -> str:
+    """Остаток кулдауна в формате ЧЧ:ММ:СС."""
+    total = max(0, int(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 # --- Функции работы с балансом ---
 async def get_balance(user_id: int) -> int:
     if user_id in _balance_cache:
@@ -530,11 +538,13 @@ async def get_balance(user_id: int) -> int:
 async def add_to_balance(user_id: int, amount: int) -> int:
     new_balance = await redis_client.hincrby(f"user:{user_id}", "balance", amount)
     _balance_cache[user_id] = new_balance
+    await redis_client.zadd("leaderboard:balance", {str(user_id): new_balance})
     return new_balance
 
 async def set_balance(user_id: int, amount: int):
     await redis_client.hset(f"user:{user_id}", mapping={"balance": str(amount)})
     _balance_cache[user_id] = amount
+    await redis_client.zadd("leaderboard:balance", {str(user_id): amount})
 
 # --- Функции работы с username ---
 async def save_user_info(user_id: int, username: str | None):
@@ -616,6 +626,71 @@ async def get_user_id_by_name_direct(name: str) -> int | None:
     if value:
         return int(value)
     return None
+
+# --- История действий: /history ---
+def history_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
+    rows = []
+    nav = []
+    if index > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"history:{index-1}"))
+    if index < total - 1:
+        nav.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"history:{index+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="history:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def render_history(user_id: int, index: int):
+    raw = await redis_client.lrange(f"user:{user_id}:trades", 0, -1)
+    entries = []
+    for raw_item in raw or []:
+        try:
+            entries.append(json.loads(raw_item))
+        except (TypeError, json.JSONDecodeError):
+            continue
+    entries = entries[-15:][::-1]
+    if not entries:
+        return "📜 История действий\\n\\nПока действий нет.", history_keyboard(0, 0)
+    index = max(0, min(index, len(entries)-1))
+    item = entries[index]
+    mode = item.get("mode", item.get("action", "Сделка"))
+    amount = item.get("amount", 0)
+    result = item.get("result")
+    stamp = time.strftime("%d.%m.%Y %H:%M", time.localtime(item.get("ts", time.time())))
+    text = f"📜 История — {index+1}/{len(entries)}\\n\\n🕒 {stamp}\\n📌 {mode}\\n💰 Сумма: {amount:,} ₽".replace(",", " ")
+    if result is not None:
+        text += f"\\n📊 Результат: {result:+,} ₽".replace(",", " ")
+    if item.get("win") is not None:
+        text += "\\n" + ("✅ Выигрыш" if item["win"] else "❌ Проигрыш")
+    return text, history_keyboard(index, len(entries))
+
+
+@router.message(Command("history"))
+async def command_history(message: Message, state: FSMContext):
+    await state.clear()
+    text, kb = await render_history(message.from_user.id, 0)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("history:"))
+async def history_navigation(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    value = callback.data.split(":", 1)[1]
+    if value == "menu":
+        await state.clear()
+        await send_main_menu(callback, callback.from_user.id)
+        return
+    try:
+        index = int(value)
+    except ValueError:
+        index = 0
+    text, kb = await render_history(callback.from_user.id, index)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=kb)
+
 
 # --- ЕЖЕДНЕВНЫЙ БОНУС: хелперы ---
 async def get_daily_streak(user_id: int) -> int:
@@ -784,7 +859,7 @@ async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple
         _math_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
 
-# --- Хранение истории последних 10 сделок ---
+# --- Хранение последних 15 действий ---
 async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bool):
     trade = {
         "mode": mode,
@@ -797,34 +872,41 @@ async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bo
     trades = await redis_client.lrange(key, 0, -1)
     trades = [json.loads(t) for t in trades] if trades else []
     trades.append(trade)
-    trades = trades[-10:]
+    trades = trades[-15:]
     await redis_client.delete(key)
     for t in trades:
         await redis_client.rpush(key, json.dumps(t))
 
 # --- Топ игроков ---
 async def get_all_balances() -> list[tuple[int, str, int]]:
+    rows = await redis_client.zrevrange("leaderboard:balance", 0, 9, withscores=True)
     results = []
-    async for key in redis_client.scan_iter(match="user:*", count=100):
+    for uid_raw, score in rows:
+        try:
+            uid = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+        data = await redis_client.hgetall(f"user:{uid}")
+        name = data.get("name") or data.get("username") or "Игрок"
+        results.append((uid, name, int(score)))
+    return results
+
+
+async def rebuild_balance_leaderboard():
+    async for key in redis_client.scan_iter(match="user:*", count=200):
         if not key.startswith("user:") or key.count(":") != 1:
             continue
-        _, user_id_str = key.split(":", 1)
         try:
-            user_id = int(user_id_str)
+            uid = int(key.split(":", 1)[1])
         except ValueError:
             continue
         data = await redis_client.hgetall(key)
-        if not data:
-            continue
-        balance_str = data.get("balance", "0")
         try:
-            balance = int(float(balance_str))
-        except ValueError:
+            balance = int(float(data.get("balance", "0")))
+        except (TypeError, ValueError):
             balance = 0
-        name = data.get("name") or data.get("username", "Игрок")
-        results.append((user_id, name, balance))
-    results.sort(key=lambda x: x[2], reverse=True)
-    return results
+        await redis_client.zadd("leaderboard:balance", {str(uid): balance})
+
 
 # --- Проверка имени ---
 def is_valid_name(name: str) -> bool:
@@ -2931,6 +3013,24 @@ async def handle_unknown_text(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
         await message.answer("Используй кнопки 😡")
+
+@dp.errors()
+async def global_error_handler(event, exception):
+    logger.error("Необработанная ошибка: %s", exception, exc_info=(type(exception), exception, exception.__traceback__))
+    update = event.update
+    callback = update.callback_query
+    message = update.message or update.edited_message
+    try:
+        if callback:
+            await callback.answer("Что-то пошло не так, попробуй ещё раз", show_alert=True)
+            await send_main_menu(callback, callback.from_user.id)
+        elif message and message.from_user:
+            await message.answer("Что-то пошло не так, попробуй ещё раз")
+            await send_main_menu(message, message.from_user.id)
+    except Exception:
+        logger.exception("Не удалось показать сообщение об ошибке")
+    return True
+
 
 dp.include_router(router)
 
