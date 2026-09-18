@@ -174,6 +174,8 @@ TRADING_MODES = {
     "high": {"multiplier": 5.0, "chance": 0.2},
 }
 
+ROULETTE_HOUSE_RIG = 0.18  # 25% выигрышей подменяются на проигрыш
+
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
 # ============================================================
@@ -626,6 +628,71 @@ async def get_user_id_by_name_direct(name: str) -> int | None:
     if value:
         return int(value)
     return None
+
+# --- История действий: /history ---
+def history_keyboard(index: int, total: int) -> InlineKeyboardMarkup:
+    rows = []
+    nav = []
+    if index > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"history:{index-1}"))
+    if index < total - 1:
+        nav.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"history:{index+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="history:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def render_history(user_id: int, index: int):
+    raw = await redis_client.lrange(f"user:{user_id}:trades", 0, -1)
+    entries = []
+    for raw_item in raw or []:
+        try:
+            entries.append(json.loads(raw_item))
+        except (TypeError, json.JSONDecodeError):
+            continue
+    entries = entries[-15:][::-1]
+    if not entries:
+        return "📜 История действий\\n\\nПока действий нет.", history_keyboard(0, 0)
+    index = max(0, min(index, len(entries)-1))
+    item = entries[index]
+    mode = item.get("mode", item.get("action", "Сделка"))
+    amount = item.get("amount", 0)
+    result = item.get("result")
+    stamp = time.strftime("%d.%m.%Y %H:%M", time.localtime(item.get("ts", time.time())))
+    text = f"📜 История — {index+1}/{len(entries)}\\n\\n🕒 {stamp}\\n📌 {mode}\\n💰 Сумма: {amount:,} ₽".replace(",", " ")
+    if result is not None:
+        text += f"\\n📊 Результат: {result:+,} ₽".replace(",", " ")
+    if item.get("win") is not None:
+        text += "\\n" + ("✅ Выигрыш" if item["win"] else "❌ Проигрыш")
+    return text, history_keyboard(index, len(entries))
+
+
+@router.message(Command("history"))
+async def command_history(message: Message, state: FSMContext):
+    await state.clear()
+    text, kb = await render_history(message.from_user.id, 0)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("history:"))
+async def history_navigation(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    value = callback.data.split(":", 1)[1]
+    if value == "menu":
+        await state.clear()
+        await send_main_menu(callback, callback.from_user.id)
+        return
+    try:
+        index = int(value)
+    except ValueError:
+        index = 0
+    text, kb = await render_history(callback.from_user.id, index)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=kb)
+
 
 # --- ЕЖЕДНЕВНЫЙ БОНУС: хелперы ---
 async def get_daily_streak(user_id: int) -> int:
@@ -1328,11 +1395,11 @@ def get_work_keyboard():
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_mine_keyboard():
-    buttons = [
-        [InlineKeyboardButton(text="⛏ Фармить", callback_data="mine_farm")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="mine_exit")],
+    keyboard = [
+        [KeyboardButton(text="⛏ Фармить")],
+        [KeyboardButton(text="🔙 Назад")],
     ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_trading_direction_keyboard():
     keyboard = [
@@ -1342,16 +1409,6 @@ def get_trading_direction_keyboard():
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-_trade_history_cache: dict[int, list[dict]] = {}
-def add_trade_history(user_id, trade_data):
-    if user_id not in _trade_history_cache:
-        _trade_history_cache[user_id] = []
-    _trade_history_cache[user_id].append(trade_data)
-    # Ограничиваем историю до 10 сделок
-    if len(_trade_history_cache[user_id]) > 10:
-        _trade_history_cache[user_id] = _trade_history_cache[user_id][-10:]
-
 
 def get_trading_mode_keyboard():
     """Клавиатура выбора риска"""
@@ -1363,7 +1420,6 @@ def get_trading_mode_keyboard():
         [
             InlineKeyboardButton(text="🔴 Высокий риск (x5.0)", callback_data="trade_mode:high"),
         ],
-        [InlineKeyboardButton(text="📜 История сделок", callback_data="trade_history:0")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
     ])
 
@@ -1402,101 +1458,6 @@ def get_math_keyboard():
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-# ============================================================
-# ИСТОРИЯ СДЕЛОК ТРЕЙДИНГА (пагинация 5 шт. на страницу)
-# ============================================================
-
-TRADE_HISTORY_PAGE_SIZE = 5
-TRADE_HISTORY_MAX_ITEMS = 10
-
-TRADE_MODE_NAMES = {
-    "low": "🟢 Низкий риск",
-    "mid": "🟡 Средний риск",
-    "high": "🔴 Высокий риск",
-}
-
-
-async def get_trade_history_entries(user_id: int) -> list[dict]:
-    """Последние 10 сделок пользователя, новые сверху."""
-    raw = await redis_client.lrange(f"user:{user_id}:trades", 0, -1)
-    entries = []
-    for raw_item in raw or []:
-        try:
-            entries.append(json.loads(raw_item))
-        except (TypeError, json.JSONDecodeError):
-            continue
-    entries = entries[-TRADE_HISTORY_MAX_ITEMS:][::-1]
-    return entries
-
-
-def render_trade_history_page(entries: list[dict], page: int) -> tuple[str, int]:
-    """Возвращает (текст страницы, общее число страниц)."""
-    total_pages = max(1, (len(entries) + TRADE_HISTORY_PAGE_SIZE - 1) // TRADE_HISTORY_PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-
-    if not entries:
-        return "📜 История сделок\n\nПока сделок нет — самое время попробовать!", total_pages
-
-    start = page * TRADE_HISTORY_PAGE_SIZE
-    chunk = entries[start:start + TRADE_HISTORY_PAGE_SIZE]
-
-    lines = [f"📜 История сделок (стр. {page + 1}/{total_pages})\n"]
-    for i, item in enumerate(chunk, start=start + 1):
-        mode = TRADE_MODE_NAMES.get(item.get("mode"), item.get("mode", "Сделка"))
-        amount = item.get("amount", 0)
-        result = item.get("result", 0)
-        win = item.get("win")
-        stamp = time.strftime("%d.%m %H:%M", time.localtime(item.get("ts", time.time())))
-        status = "✅" if win else "❌"
-        lines.append(
-            f"{i}. {status} {mode} | 🕒 {stamp}\n"
-            f"   Ставка: {amount:,} ₽ | Итог: {result:+,.0f} ₽"
-        )
-    return "\n".join(lines), total_pages
-
-
-def get_trade_history_keyboard(page: int, total_pages: int) -> InlineKeyboardMarkup:
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"trade_history:{page-1}"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"trade_history:{page+1}"))
-    rows = []
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🔙 К трейдингу", callback_data="trade_history_back")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-@router.callback_query(F.data.startswith("trade_history:"))
-async def handle_trade_history(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    user_id = callback.from_user.id
-    try:
-        page = int(callback.data.split(":", 1)[1])
-    except ValueError:
-        page = 0
-
-    entries = await get_trade_history_entries(user_id)
-    text, total_pages = render_trade_history_page(entries, page)
-    kb = get_trade_history_keyboard(page if entries else 0, total_pages)
-
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-    except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=kb)
-
-
-@router.callback_query(F.data == "trade_history_back")
-async def handle_trade_history_back(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    balance = await get_balance(callback.from_user.id)
-    text = f"💰 Твой баланс: {balance:,} ₽\nВыбери уровень риска:"
-    try:
-        await callback.message.edit_text(text, reply_markup=get_trading_mode_keyboard())
-    except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=get_trading_mode_keyboard())
 
 # ============================================================
 # ГЕНЕРАЦИЯ КАРТИНКИ ДЛЯ МАТЕМАТИКИ (ОПТИМИЗИРОВАНО)
@@ -1791,11 +1752,15 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
         )
         kb = get_daily_bonus_keyboard(True)
     else:
+        hours = remaining // 3600
+        mins = (remaining % 3600) // 60
+        secs = remaining % 60
+        timer_str = f"{hours} ч {mins} мин {secs} сек"
         text = (
             f"🎁 Ежедневный бонус\n\n"
             f"🔥 Серия: {streak} дн. подряд\n"
             f"⏳ Бонус уже забран. Приходи через:\n"
-            f"⏰ {format_cooldown(remaining)}"
+            f"⏰ {timer_str}"
         )
         kb = get_daily_bonus_keyboard(False)
 
@@ -1809,8 +1774,11 @@ async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
 
     can, remaining = await can_claim_daily(user_id)
     if not can:
+        hours = remaining // 3600
+        mins = (remaining % 3600) // 60
+        secs = remaining % 60
         await callback.message.edit_text(
-            f"⏳ Бонус уже забран. Приходи через {format_cooldown(remaining)}.",
+            f"⏳ Бонус уже забран. Приходи через {hours} ч {mins} мин {secs} сек.",
             reply_markup=get_daily_bonus_keyboard(False)
         )
         return
@@ -1854,7 +1822,8 @@ async def handle_back_to_main(message: Message, state: FSMContext):
     await send_main_menu(message, message.from_user.id)
 
 @router.message(F.text == "⛏ Шахта")
-async def show_mine_menu(message: Message):
+async def show_mine_menu(message: Message, state: FSMContext):
+    await state.set_state(MineForm.in_mine)
     await message.answer(
         f"⛏ Шахта\n\n"
         f"За клик: {MINE_REWARD:,} ₽\n"
@@ -1862,207 +1831,7 @@ async def show_mine_menu(message: Message):
         reply_markup=get_mine_keyboard()
     )
 
-@router.callback_query(F.data == "help_trading")
-async def handle_help_trading(callback: CallbackQuery):
-    try:
-        await callback.message.edit_text(
-            HELP_TEXT_TRADING,
-            reply_markup=get_help_menu_keyboard()
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            HELP_TEXT_TRADING,
-            reply_markup=get_help_menu_keyboard()
-        )
 
-@router.callback_query(F.data == "help_mine")
-async def handle_help_mine(callback: CallbackQuery):
-    try:
-        await callback.message.edit_text(
-            HELP_TEXT_MINE,
-            reply_markup=get_help_menu_keyboard()
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            HELP_TEXT_MINE,
-            reply_markup=get_help_menu_keyboard()
-        )
-
-@router.callback_query(F.data == "help_math")
-async def handle_help_math(callback: CallbackQuery):
-    try:
-        await callback.message.edit_text(
-            HELP_TEXT_MATH,
-            reply_markup=get_help_menu_keyboard()
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            HELP_TEXT_MATH,
-            reply_markup=get_help_menu_keyboard()
-        )
-
-@router.callback_query(F.data == "help_business")
-async def handle_help_business(callback: CallbackQuery):
-    try:
-        await callback.message.edit_text(
-            HELP_TEXT_BUSINESS,
-            reply_markup=get_help_menu_keyboard()
-        )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            HELP_TEXT_BUSINESS,
-            reply_markup=get_help_menu_keyboard()
-        )
-
-@router.callback_query(F.data == "main_menu")
-async def handle_main_menu_from_help(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    await send_main_menu(callback, user_id)
-
-@router.callback_query(F.data == "mine_farm")
-async def handle_mine_farm(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-
-    allowed, remaining = await can_farm(user_id, cooldown_seconds=MINE_COOLDOWN)
-    if not allowed:
-        await callback.answer(f"⏳ Осталось {format_cooldown(remaining)}.", show_alert=True)
-        return
-
-    await callback.answer()
-    new_balance = await add_to_balance(user_id, MINE_REWARD)
-
-    text = (
-        f"⛏ Красава, +{MINE_REWARD:,} ₽!\n"
-        f"Баланс: {new_balance:,} ₽"
-    )
-
-    data = await state.get_data()
-    farm_msg_id = data.get("farm_msg_id")
-
-    if farm_msg_id:
-        try:
-            await callback.bot.edit_message_text(
-                text=(
-                    f"⛏ Красава, +{MINE_REWARD:,} ₽!\n"
-                    f"Баланс: {new_balance:,} ₽"
-                ),
-                chat_id=callback.message.chat.id,
-                message_id=farm_msg_id,
-                reply_markup=None,
-            )
-            return
-        except TelegramBadRequest:
-            pass
-
-    sent = await callback.message.answer(text, reply_markup=None)
-    await state.update_data(farm_msg_id=sent.message_id)
-
-@router.callback_query(F.data == "mine_exit")
-async def handle_mine_exit(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.clear()
-
-    try:
-        await callback.message.edit_text(
-            text=callback.message.text,
-            reply_markup=None
-        )
-    except Exception:
-        pass
-
-    await callback.message.answer(
-        "Выбирай, чем займешься:",
-        reply_markup=get_work_keyboard()
-    )
-
-@router.message(F.text == "🔗 Реф")
-async def handle_ref(message: Message):
-    user_id = message.from_user.id
-    referral_count = await get_referral_count(user_id)
-    referral_earnings = await get_referral_earnings(user_id)
-    bot_info = await message.bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-
-    text = (
-        f"🔗 Реферальная система\n\n"
-        f"Твоя ссылка:\n`{ref_link}`\n\n"
-        f"👥 Приглашено: {referral_count} чел.\n"
-        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
-        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
-        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
-        [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
-    ])
-    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
-
-
-@router.callback_query(F.data == "ref_top")
-async def handle_ref_top(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    await callback.answer()
-
-    if not is_admin(user_id):
-        cooldown_key = f"cooldown:reftop:{user_id}"
-        ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
-        if not ok:
-            ttl = await redis_client.ttl(cooldown_key)
-            await callback.message.answer(f"⏳ Топ можно глянуть через {format_cooldown(ttl)}.")
-            return
-
-    top = await get_top_referrals(10)
-    if not top:
-        text = "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил."
-    else:
-        text = "👥 Топ по рефералам:\n\n"
-        for i, (uid, count) in enumerate(top, 1):
-            name = await get_user_name(uid) or "без ника"
-            text += f"{i}. {name} — {count} реф.\n"
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="ref_back_to_info")],
-    ])
-
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-    except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=kb)
-
-
-@router.callback_query(F.data == "ref_back")
-async def handle_ref_back(callback: CallbackQuery):
-    await callback.answer()
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
-    await send_main_menu(callback, callback.from_user.id)
-
-@router.callback_query(F.data == "ref_back_to_info")
-async def handle_ref_back_to_info(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    await callback.answer()
-    referral_count = await get_referral_count(user_id)
-    referral_earnings = await get_referral_earnings(user_id)
-    bot_info = await callback.bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-    text = (
-        f"🔗 Реферальная система\n\n"
-        f"Твоя ссылка:\n`{ref_link}`\n\n"
-        f"👥 Приглашено: {referral_count} чел.\n"
-        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
-        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
-        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
-        [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
-    ])
-    try:
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
-    except TelegramBadRequest:
-        await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
 # --- ТРЕЙДИНГ ---
 @router.message(F.text == "📈 Трейдинг")
@@ -2299,7 +2068,7 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
 
     allowed, remaining = await can_math(user_id, cooldown_seconds=MATH_COOLDOWN)
     if not allowed:
-        await callback.answer(f"⏳ КД: {format_cooldown(remaining)}.", show_alert=True)
+        await callback.answer(f"⏳ КД: {remaining} сек.", show_alert=True)
         return
 
     await callback.answer()
@@ -2946,6 +2715,12 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             break
 
     number = random.randint(0, 36)
+    won, payout_mult = roulette_bet_result(bet, number)
+
+    if won and random.random() < ROULETTE_HOUSE_RIG:
+        losing_numbers = [n for n in range(37) if not roulette_bet_result(bet, n)[0]]
+        number = random.choice(losing_numbers)
+
     color = roulette_color(number)
     won, payout_mult = roulette_bet_result(bet, number)
 
