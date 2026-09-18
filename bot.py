@@ -152,6 +152,12 @@ DAILY_BONUS_RANDOM_MAX = 3000    # случайная прибавка — ма�
 DAILY_BONUS_COOLDOWN = 86400     # 24 часа
 
 # ============================================================
+# КОНСТАНТЫ РЕФЕРАЛЬНОЙ СИСТЕМЫ
+# ============================================================
+REFERRAL_REWARD = 10000        # награда пригласившему
+REFERRAL_NEWBIE_BONUS = 5000   # бонус новичку за регистрацию по ссылке
+
+# ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
 MINE_REWARD = 200
@@ -674,6 +680,67 @@ def get_daily_bonus_keyboard(can_claim: bool):
     rows.append([InlineKeyboardButton(text="🔙 В меню", callback_data="daily_back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+# ============================================================
+# РЕФЕРАЛЬНАЯ СИСТЕМА: хелперы
+# ============================================================
+async def get_referral_count(user_id: int) -> int:
+    data = await redis_client.hgetall(f"user:{user_id}")
+    try:
+        return int(data.get("referral_count", "0"))
+    except ValueError:
+        return 0
+
+async def get_referrer(user_id: int) -> int | None:
+    data = await redis_client.hgetall(f"user:{user_id}")
+    ref = data.get("referrer", "")
+    return int(ref) if ref else None
+
+async def set_referrer(user_id: int, referrer_id: int):
+    await redis_client.hset(f"user:{user_id}", mapping={"referrer": str(referrer_id)})
+
+async def increment_referral_count(referrer_id: int) -> int:
+    new_count = await redis_client.hincrby(f"user:{referrer_id}", "referral_count", 1)
+    await redis_client.zadd("referrals_top", {str(referrer_id): new_count})
+    return new_count
+
+async def get_referral_earnings(user_id: int) -> int:
+    data = await redis_client.hgetall(f"user:{user_id}")
+    try:
+        return int(data.get("referral_earnings", "0"))
+    except ValueError:
+        return 0
+
+async def add_to_referral_earnings(user_id: int, amount: int):
+    await redis_client.hincrby(f"user:{user_id}", "referral_earnings", amount)
+
+async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str] | None:
+    """Обрабатывает реферала. Возвращает (new_count, referrer_name) или None."""
+    existing = await get_referrer(new_user_id)
+    if existing:
+        return None
+    referrer_name = await get_user_name(referrer_id)
+    if not referrer_name:
+        return None
+    await set_referrer(new_user_id, referrer_id)
+    new_count = await increment_referral_count(referrer_id)
+    await add_to_balance(referrer_id, REFERRAL_REWARD)
+    await add_to_referral_earnings(referrer_id, REFERRAL_REWARD)
+    await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"🎉 По твоей ссылке зарегистрировался {referrer_name}!\n"
+            f"💰 Награда: +{REFERRAL_REWARD:,} ₽\n"
+            f"👥 Всего рефералов: {new_count}"
+        )
+    except Exception:
+        pass
+    return new_count, referrer_name
+
+async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
+    raw = await redis_client.zrevrange("referrals_top", 0, limit - 1, withscores=True)
+    return [(int(uid), int(score)) for uid, score in raw]
+
 # --- Фарм ---
 async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
@@ -798,7 +865,10 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
 def get_admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Найти игрока", callback_data="admin_find")],
-        [InlineKeyboardButton(text="📊 Топ по балансу", callback_data="admin_top")],
+        [
+        InlineKeyboardButton(text="📊 Топ по балансу", callback_data="admin_top"),
+        InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="admin_ref_top")
+        ],
     ])
 
 def get_admin_player_keyboard(player_id: int):
@@ -915,12 +985,21 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
     balance = await get_balance(player_id)
     name = await get_user_name(player_id) or "без ника"
     username = await get_username(player_id)
+    referral_count = await get_referral_count(player_id)
+    biz = await get_biz(player_id)
+
+    if biz:
+        biz_text = f"«{biz['name']}» (ур. {biz.get('level', 1)})"
+    else:
+        biz_text = "нет"
 
     text = (
         f"👤 Игрок #{player_id}\n\n"
         f"📝 Ник: {name}\n"
         f"👤 Username: @{username}\n"
-        f"💰 Баланс: {balance:,} ₽"
+        f"💰 Баланс: {balance:,} ₽\n"
+        f"🏪 Бизнес: {biz_text}\n"
+        f"👥 Рефералов: {referral_count}"
     )
     kb = get_admin_player_keyboard(player_id)
 
@@ -1106,6 +1185,39 @@ async def admin_top(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
     ])
 
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        text, kb,
+    )
+    await state.update_data(admin_msg_id=callback.message.message_id)
+
+@router.callback_query(F.data == "admin_ref_top")
+async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
+        return
+
+    await callback.answer()
+    top = await get_top_referrals(20)
+
+    if not top:
+        await _edit_or_answer(
+            callback.bot, callback.message.chat.id, callback.message.message_id,
+            "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил.",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
+            ]),
+        )
+        return
+
+    text = "👥 Топ по рефералам (админ-режим):\n\n"
+    for i, (uid, count) in enumerate(top, 1):
+        name = await get_user_name(uid) or "без ника"
+        text += f"{i}. {name} (#{uid}) — {count} реф.\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
+    ])
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
         text, kb,
@@ -1334,8 +1446,26 @@ async def cmd_start(message: Message, state: FSMContext):
     await save_user_info(user_id, username)
     if username:
         _username_cache[user_id] = username.lstrip("@").lower()
+
+    # --- Парсим реферальный payload ---
+    referrer_id = None
+    if message.text and len(message.text.split()) > 1:
+        payload = message.text.split(maxsplit=1)[1]
+        if payload.startswith("ref_"):
+            try:
+                referrer_id = int(payload[4:])
+            except ValueError:
+                pass
+
     name = await get_user_name(user_id)
+
     if not name:
+        # Новый пользователь — сохраняем pending referrer в state
+        if referrer_id and referrer_id != user_id:
+            referrer_name = await get_user_name(referrer_id)
+            if referrer_name:
+                await state.update_data(pending_referrer=referrer_id)
+
         await message.answer(
             "👋 Привет! Как тебя зовут?\n"
             "Введи ник — буквы (русские или английские) и цифры, от 3 до 10 символов.\n"
@@ -1344,6 +1474,16 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         await state.set_state(NameForm.waiting_for_name)
         return
+
+    # Возвращающийся пользователь — обработать реферал сразу
+    if referrer_id and referrer_id != user_id:
+        result = await process_referral(user_id, referrer_id)
+        if result:
+            await message.answer(
+                f"🎁 Тебя пригласил {result[1]}! "
+                f"Бонус за регистрацию: +{REFERRAL_NEWBIE_BONUS:,} ₽"
+            )
+
     await send_main_menu(message, user_id)
 
 @router.message(Command("help"))
@@ -1412,9 +1552,25 @@ async def process_name(message: Message, state: FSMContext):
         existing_id = await get_user_id_by_name_direct(name)
         if existing_id and existing_id != user_id:
             await message.answer(f"⚠️ Ник «{name}» уже у игрока {existing_id}. Перезапишу.")
+
+    # Получаем pending_referrer ДО очистки state
+    data = await state.get_data()
+    pending_referrer = data.get("pending_referrer")
+
     await save_user_name(user_id, name)
     await state.clear()
-    await message.answer(f"👍 База, {name}! Ты в игре.")
+
+    # Обрабатываем реферал
+    ref_bonus_text = ""
+    if pending_referrer:
+        result = await process_referral(user_id, pending_referrer)
+        if result:
+            ref_bonus_text = (
+                f"\n🎁 Тебя пригласил {result[1]}! "
+                f"Бонус: +{REFERRAL_NEWBIE_BONUS:,} ₽"
+            )
+
+    await message.answer(f"👍 База, {name}! Ты в игре.{ref_bonus_text}")
     await send_main_menu(message, user_id)
 
 @router.message(F.text == "💼 Работа")
@@ -1670,7 +1826,92 @@ async def handle_mine_exit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🔗 Реф")
 async def handle_ref(message: Message):
-    await message.answer("Раздел «Реф» скоро зальём.")
+    user_id = message.from_user.id
+    referral_count = await get_referral_count(user_id)
+    referral_earnings = await get_referral_earnings(user_id)
+    bot_info = await message.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+
+    text = (
+        f"🔗 Реферальная система\n\n"
+        f"Твоя ссылка:\n`{ref_link}`\n\n"
+        f"👥 Приглашено: {referral_count} чел.\n"
+        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
+        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
+        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
+    ])
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+
+@router.callback_query(F.data == "ref_top")
+async def handle_ref_top(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+
+    if not is_admin(user_id):
+        cooldown_key = f"cooldown:reftop:{user_id}"
+        ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
+        if not ok:
+            ttl = await redis_client.ttl(cooldown_key)
+            await callback.message.answer(f"⏳ Топ можно глянуть через {ttl} сек.")
+            return
+
+    top = await get_top_referrals(10)
+    if not top:
+        text = "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил."
+    else:
+        text = "👥 Топ по рефералам:\n\n"
+        for i, (uid, count) in enumerate(top, 1):
+            name = await get_user_name(uid) or "без ника"
+            text += f"{i}. {name} — {count} реф.\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="ref_back_to_info")],
+    ])
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "ref_back")
+async def handle_ref_back(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await send_main_menu(callback, callback.from_user.id)
+
+@router.callback_query(F.data == "ref_back_to_info")
+async def handle_ref_back_to_info(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await callback.answer()
+    referral_count = await get_referral_count(user_id)
+    referral_earnings = await get_referral_earnings(user_id)
+    bot_info = await callback.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+    text = (
+        f"🔗 Реферальная система\n\n"
+        f"Твоя ссылка:\n`{ref_link}`\n\n"
+        f"👥 Приглашено: {referral_count} чел.\n"
+        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
+        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
+        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
+    ])
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
 # --- ТРЕЙДИНГ ---
 @router.message(F.text == "📈 Трейдинг")
