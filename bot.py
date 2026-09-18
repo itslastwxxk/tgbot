@@ -1332,7 +1332,7 @@ def get_work_keyboard():
 def get_mine_keyboard():
     keyboard = [
         [KeyboardButton(text="⛏ Фармить")],
-        [KeyboardButton(text="🔙 Назад")],
+        [KeyboardButton(text="🔙 В меню")],
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -1364,7 +1364,7 @@ def get_trading_mode_keyboard():
         [
             InlineKeyboardButton(text="🔴 Высокий риск (x5.0)", callback_data="trade_mode:high"),
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")],
     ])
 
 def get_trading_confirm_keyboard(amount: int, mode: str):
@@ -1706,7 +1706,7 @@ async def process_name(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
-    text = "Выбирай, чем займешься:"
+    text = f"выбирай, где хочешь работать:"
     try:
         photo = FSInputFile("images/work.png")
         await message.answer_photo(photo=photo, caption=text, reply_markup=get_work_keyboard())
