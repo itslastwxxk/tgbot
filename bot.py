@@ -111,6 +111,9 @@ class AdminForm(StatesGroup):
     waiting_for_search = State()
     waiting_for_amount = State()
 
+class DuelForm(StatesGroup):
+    waiting_for_target = State()
+
 # ============================================================
 # КОНСТАНТЫ HELP
 # ============================================================
@@ -174,8 +177,8 @@ TRADING_MODES = {
     "high": {"multiplier": 5.0, "chance": 0.2},
 }
 
-ROULETTE_HOUSE_RIG = 0.10
-
+ROULETTE_HOUSE_RIG = 0.05
+DUEL_TIMEOUT = 3600 # 60 минут на принятие вызова
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
 # ============================================================
@@ -760,6 +763,33 @@ async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
     raw = await redis_client.zrevrange("referrals_top", 0, limit - 1, withscores=True)
     return [(int(uid), int(score)) for uid, score in raw]
 
+# --- Дуэли: хелперы ---
+async def create_duel(challenger_id: int, target_id: int, amount: int) -> str:
+    duel_id = uuid.uuid4().hex[:8]
+    await redis_client.hset(f"duel:{duel_id}", mapping={
+        "challenger_id": str(challenger_id),
+        "target_id": str(target_id),
+        "amount": str(amount),
+        "status": "pending",
+        "created_at": str(time.time()),
+    })
+    await redis_client.expire(f"duel:{duel_id}", DUEL_TIMEOUT)
+    return duel_id
+
+async def get_duel(duel_id: str) -> dict | None:
+    data = await redis_client.hgetall(f"duel:{duel_id}")
+    if not data:
+        return None
+    return {
+        "challenger_id": int(data["challenger_id"]),
+        "target_id": int(data["target_id"]),
+        "amount": int(data["amount"]),
+        "status": data.get("status", "pending"),
+    }
+
+async def update_duel_status(duel_id: str, status: str):
+    await redis_client.hset(f"duel:{duel_id}", "status", status)
+
 # --- Фарм ---
 async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
@@ -1254,7 +1284,7 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
-        [KeyboardButton(text="🎰 Казино")],
+        [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🥊 Дуэли")],
         [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🏆 Топ")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -3002,6 +3032,246 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 async def roulette_change_amount_outside_state(callback: CallbackQuery):
     await callback.answer("Сначала открой рулетку и введи ставку.", show_alert=True)
 
+# ============================================================
+# ДУЭЛИ
+# ============================================================
+
+DICE_EMOJIS = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+
+
+@router.message(F.text == "🥊 Дуэли")
+async def show_duel_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🥊 Дуэли\n\n"
+        "Напиши ник и сумму, кому хочешь кинуть дуэль.\n"
+        "Формат: `ник сумма`\n"
+        "Например: `Alex123 10000`",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(DuelForm.waiting_for_target)
+
+
+@router.message(DuelForm.waiting_for_target)
+async def process_duel_challenge(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    parts = text.rsplit(maxsplit=1)
+    if len(parts) != 2:
+        await message.answer(
+            "❌ Неверный формат. Пример: `Alex123 10000`\n"
+            "Или нажми «🔙 Назад» для выхода.",
+            parse_mode="Markdown"
+        )
+        return
+
+    nick_str, amount_str = parts
+    try:
+        amount = int(amount_str)
+    except ValueError:
+        await message.answer("❌ Сумма должна быть числом. Пример: `Alex123 10000`", parse_mode="Markdown")
+        return
+
+    if amount <= 0:
+        await message.answer("❌ Сумма должна быть больше 0.")
+        return
+
+    balance = await get_balance(user_id)
+    if balance < amount:
+        await message.answer(f"❌ Не хватает денег. Баланс: {balance:,} ₽")
+        return
+
+    target_id = await get_user_id_by_name_direct(nick_str)
+    if not target_id:
+        target_id = await get_user_id_by_username(nick_str)
+
+    if not target_id:
+        await message.answer(f"❌ Игрок «{nick_str}» не найден.")
+        return
+
+    if target_id == user_id:
+        await message.answer("❌ Нельзя вызвать самого себя на дуэль!")
+        return
+
+    target_balance = await get_balance(target_id)
+    if target_balance < amount:
+        target_name = await get_user_name(target_id) or "Игрок"
+        await message.answer(f"❌ У {target_name} недостаточно денег для этой ставки.")
+        return
+
+    duel_id = await create_duel(user_id, target_id, amount)
+    challenger_name = await get_user_name(user_id) or "Игрок"
+    target_name = await get_user_name(target_id) or "Игрок"
+
+    await message.answer(
+        f"🥊 Ты вызвал {target_name} на дуэль на {amount:,} ₽.\n"
+        f"Ждём ответ..."
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Принять", callback_data=f"duel_accept:{duel_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"duel_decline:{duel_id}"),
+        ]
+    ])
+
+    try:
+        await bot.send_message(
+            target_id,
+            f"🥊 {challenger_name} вызывает тебя на дуэль на {amount:,} ₽.\n"
+            f"Принять?",
+            reply_markup=kb
+        )
+    except Exception:
+        await message.answer("❌ Не удалось отправить вызов. Возможно, игрок заблокировал бота.")
+        await redis_client.delete(f"duel:{duel_id}")
+
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("duel_accept:"))
+async def duel_accept(callback: CallbackQuery, state: FSMContext):
+    duel_id = callback.data.split(":", 1)[1]
+    duel = await get_duel(duel_id)
+
+    if not duel:
+        await callback.answer("⏰ Дуэль истекла.", show_alert=True)
+        return
+
+    if callback.from_user.id != duel["target_id"]:
+        await callback.answer("Это не твой вызов!", show_alert=True)
+        return
+
+    if duel["status"] != "pending":
+        await callback.answer("Дуэль уже обработана.", show_alert=True)
+        return
+
+    await callback.answer()
+
+    ch_balance = await get_balance(duel["challenger_id"])
+    tg_balance = await get_balance(duel["target_id"])
+
+    if ch_balance < duel["amount"]:
+        await callback.message.edit_text("❌ У вызывающего недостаточно денег. Дуэль отменена.")
+        await update_duel_status(duel_id, "cancelled")
+        try:
+            await bot.send_message(duel["challenger_id"], "❌ У тебя недостаточно денег на дуэль. Вызов отменён.")
+        except Exception:
+            pass
+        return
+
+    if tg_balance < duel["amount"]:
+        await callback.message.edit_text("❌ У тебя недостаточно денег. Дуэль отменена.")
+        await update_duel_status(duel_id, "cancelled")
+        return
+
+    await update_duel_status(duel_id, "active")
+
+    await add_to_balance(duel["challenger_id"], -duel["amount"])
+    await add_to_balance(duel["target_id"], -duel["amount"])
+
+    ch_name = await get_user_name(duel["challenger_id"]) or "Игрок"
+    tg_name = await get_user_name(duel["target_id"]) or "Игрок"
+
+    spin_text = (
+        f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
+        f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+        f"🎲 Бросаем кости..."
+    )
+
+    try:
+        await callback.message.edit_text(spin_text)
+    except TelegramBadRequest:
+        await callback.message.answer(spin_text)
+
+    await asyncio.sleep(1.5)
+
+    ch_dice = [random.randint(1, 6), random.randint(1, 6)]
+    tg_dice = [random.randint(1, 6), random.randint(1, 6)]
+    ch_sum = sum(ch_dice)
+    tg_sum = sum(tg_dice)
+
+    ch_dice_text = " ".join(DICE_EMOJIS[d - 1] for d in ch_dice)
+    tg_dice_text = " ".join(DICE_EMOJIS[d - 1] for d in tg_dice)
+
+    if ch_sum > tg_sum:
+        await add_to_balance(duel["challenger_id"], duel["amount"] * 2)
+        result_text = (
+            f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
+            f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+            f"🎲 {ch_name}: {ch_dice_text} = {ch_sum}\n"
+            f"🎲 {tg_name}: {tg_dice_text} = {tg_sum}\n\n"
+            f"🎉 Победил {ch_name}!\n"
+            f"💰 Выигрыш: +{duel['amount']:,} ₽"
+        )
+    elif tg_sum > ch_sum:
+        await add_to_balance(duel["target_id"], duel["amount"] * 2)
+        result_text = (
+            f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
+            f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+            f"🎲 {ch_name}: {ch_dice_text} = {ch_sum}\n"
+            f"🎲 {tg_name}: {tg_dice_text} = {tg_sum}\n\n"
+            f"🎉 Победил {tg_name}!\n"
+            f"💰 Выигрыш: +{duel['amount']:,} ₽"
+        )
+    else:
+        await add_to_balance(duel["challenger_id"], duel["amount"])
+        await add_to_balance(duel["target_id"], duel["amount"])
+        result_text = (
+            f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
+            f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+            f"🎲 {ch_name}: {ch_dice_text} = {ch_sum}\n"
+            f"🎲 {tg_name}: {tg_dice_text} = {tg_sum}\n\n"
+            f"🤝 Ничья! Деньги возвращены."
+        )
+
+    await update_duel_status(duel_id, "finished")
+
+    try:
+        await callback.message.edit_text(result_text)
+    except TelegramBadRequest:
+        await callback.message.answer(result_text)
+
+    try:
+        await bot.send_message(duel["challenger_id"], result_text)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("duel_decline:"))
+async def duel_decline(callback: CallbackQuery, state: FSMContext):
+    duel_id = callback.data.split(":", 1)[1]
+    duel = await get_duel(duel_id)
+
+    if not duel:
+        await callback.answer("⏰ Дуэль истекла.", show_alert=True)
+        return
+
+    if callback.from_user.id != duel["target_id"]:
+        await callback.answer("Это не твой вызов!", show_alert=True)
+        return
+
+    if duel["status"] != "pending":
+        await callback.answer("Дуэль уже обработана.", show_alert=True)
+        return
+
+    await callback.answer()
+    await update_duel_status(duel_id, "declined")
+
+    ch_name = await get_user_name(duel["challenger_id"]) or "Игрок"
+    tg_name = await get_user_name(duel["target_id"]) or "Игрок"
+
+    try:
+        await callback.message.edit_text(f"❌ {tg_name} отклонил дуэль от {ch_name}.")
+    except TelegramBadRequest:
+        await callback.message.answer(f"❌ {tg_name} отклонил дуэль от {ch_name}.")
+
+    try:
+        await bot.send_message(duel["challenger_id"], f"❌ {tg_name} отклонил твою дуэль.")
+    except Exception:
+        pass
 
 # --- Уведомления о простое бизнеса из-за пустого склада ---
 EMPTY_STOCK_NOTIFY_AFTER = 60 * 60
