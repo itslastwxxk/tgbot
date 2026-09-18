@@ -1601,7 +1601,7 @@ async def generate_math_problem(user_id: int) -> tuple[str, int]:
 # ХЕНДЛЕРЫ
 # ============================================================
 
-@router.message(Command("start"))
+@router.message(Command("menu"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
