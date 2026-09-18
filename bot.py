@@ -179,6 +179,11 @@ TRADING_MODES = {
 
 ROULETTE_HOUSE_RIG = 0.05
 DUEL_TIMEOUT = 3600 # 60 минут на принятие вызова
+DUEL_COOLDOWN = 30       # кулдаун дуэли в секундах
+
+XP_PER_MINE = 10         # XP за фарм в шахте
+XP_PER_TRADE = 25        # XP за сделку в трейдинге
+XP_PER_DUEL = 40         # XP за участие в дуэли
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
 # ============================================================
@@ -230,6 +235,26 @@ BUSINESS_LIST = [
 UPGRADE_INCOME_MULT = {2: 1.5, 3: 2.0}
 UPGRADE_CONSUMPTION_MULT = {2: 1.2, 3: 1.4}
 UPGRADE_CAPACITY_MULT = {2: 2.0, 3: 1.5}
+
+# --- Функции расчёта уровня ---
+def total_xp_for_level(level: int) -> int:
+    """Сколько суммарно XP нужно для достижения уровня."""
+    return 100 * level * (level + 1) // 2
+
+def xp_to_level(total_xp: int) -> int:
+    """Возвращает уровень по суммарному XP."""
+    level = 0
+    while total_xp >= total_xp_for_level(level + 1):
+        level += 1
+    return level
+
+def xp_for_next_level(level: int) -> int:
+    """Сколько XP нужно для перехода на следующий уровень."""
+    return 100 * (level + 1)
+
+def xp_in_current_level(total_xp: int, level: int) -> int:
+    """XP, заработанный в текущем уровне (не суммарный)."""
+    return total_xp - total_xp_for_level(level)
 
 # --- Вспомогательная функция: форматирование времени ---
 def format_time(minutes: float | None) -> str:
@@ -826,6 +851,56 @@ async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple
         _math_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
 
+# --- XP и уровни ---
+async def get_user_stats(user_id: int) -> dict:
+    data = await redis_client.hgetall(f"user:{user_id}:stats")
+    if not data:
+        return {"xp": 0, "level": 0}
+    return {
+        "xp": int(data.get("xp", 0)),
+        "level": int(data.get("level", 0)),
+    }
+
+async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
+    """Добавляет XP, обновляет уровень. Возвращает (новый_xp, новый_уровень, был_левелап)."""
+    stats = await get_user_stats(user_id)
+    old_level = stats["level"]
+    new_xp = stats["xp"] + amount
+    new_level = xp_to_level(new_xp)
+    leveled_up = new_level > old_level
+
+    await redis_client.hset(f"user:{user_id}:stats", mapping={
+        "xp": str(new_xp),
+        "level": str(new_level),
+    })
+    await redis_client.zadd("leaderboard:level", {str(user_id): new_level})
+    return new_xp, new_level, leveled_up
+
+async def notify_level_up(user_id: int, new_level: int):
+    """Отправляет сообщение о новом уровне."""
+    try:
+        await bot.send_message(
+            user_id,
+            f"🎉 LEVEL UP! Ты достиг {new_level} уровня!"
+        )
+    except Exception:
+        pass
+
+async def get_top_levels(limit: int = 10) -> list[tuple[int, int]]:
+    raw = await redis_client.zrevrange("leaderboard:level", 0, limit - 1, withscores=True)
+    return [(int(uid), int(score)) for uid, score in raw]
+
+# --- Кулдаун дуэлей ---
+async def check_duel_cooldown(user_id: int) -> tuple[bool, int]:
+    key = f"cooldown:duel:{user_id}"
+    ttl = await redis_client.ttl(key)
+    if ttl > 0:
+        return False, ttl
+    return True, 0
+
+async def set_duel_cooldown(user_id: int):
+    await redis_client.set(f"cooldown:duel:{user_id}", "1", ex=DUEL_COOLDOWN)
+
 # --- Хранение последних 15 действий ---
 async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bool):
     trade = {
@@ -1285,7 +1360,8 @@ def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🥊 Дуэли")],
-        [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🏆 Топ")]
+        [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🏆 Топ")],
+        [KeyboardButton(text="📋 Профиль")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -1736,6 +1812,38 @@ async def process_name(message: Message, state: FSMContext):
     await message.answer(f"👍 База, {name}! Ты в игре.{ref_bonus_text}")
     await send_main_menu(message, user_id)
 
+@router.message(F.text == "📋 Профиль")
+async def show_profile(message: Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    balance = await get_balance(user_id)
+    stats = await get_user_stats(user_id)
+    name = await get_user_name(user_id) or "Игрок"
+
+    level = stats["level"]
+    total_xp = stats["xp"]
+    xp_needed = xp_for_next_level(level)
+    xp_earned = xp_in_current_level(total_xp, level)
+    percent = min(100, int((xp_earned / xp_needed) * 100)) if xp_needed > 0 else 100
+
+    bar_len = 15
+    filled = percent * bar_len // 100
+    bar = "█" * filled + "░" * (bar_len - filled)
+
+    text = (
+        f"📋 Профиль: {name}\n\n"
+        f"💰 Баланс: {balance:,} ₽\n"
+        f"📈 Уровень: {level}\n"
+        f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
+        f"📊 [{bar}] {percent}%"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
+    ])
+
+    await message.answer(text, reply_markup=kb)
+
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
@@ -1757,6 +1865,7 @@ async def show_top(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Топ по балансу", callback_data="public_top:balance")],
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="public_top:referrals")],
+        [InlineKeyboardButton(text="📈 Топ по уровню", callback_data="public_top:level")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="public_top:back_to_main")],
     ])
     try:
@@ -1786,6 +1895,7 @@ async def show_public_top(callback: CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💰 Топ по балансу", callback_data="public_top:balance")],
             [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="public_top:referrals")],
+            [InlineKeyboardButton(text="📈 Топ по уровню", callback_data="public_top:level")],
             [InlineKeyboardButton(text="🔙 В меню", callback_data="public_top:back_to_main")],
         ])
         await callback.message.edit_text("🏆 Выбери рейтинг:", reply_markup=kb)
@@ -1815,6 +1925,16 @@ async def show_public_top(callback: CallbackQuery):
             for i, (uid, count) in enumerate(top, 1):
                 name = await get_user_name(uid) or "без ника"
                 result_text += f"{i}. {name} — {count} реф.\n"
+    elif kind == "level":
+        top = await get_top_levels(10)
+        if not top:
+            result_text = "📈 Топ по уровням\n\nПока пусто — никто не получил XP."
+        else:
+            result_text = "📈 Топ по уровням:\n\n"
+            for i, (uid, lvl) in enumerate(top, 1):
+                name = await get_user_name(uid) or "без ника"
+                result_text += f"{i}. {name} — {lvl} ур.\n"
+
     else:
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
@@ -1997,10 +2117,16 @@ async def handle_mine_farm(message: Message, state: FSMContext):
         return
 
     new_balance = await add_to_balance(user_id, MINE_REWARD)
-    await message.answer(
+    _, new_level, leveled_up = await add_xp(user_id, XP_PER_MINE)
+
+    text = (
         f"⛏ Красава, +{MINE_REWARD:,} ₽!\n"
         f"Баланс: {new_balance:,} ₽"
     )
+    await message.answer(text)
+
+    if leveled_up:
+        await notify_level_up(user_id, new_level)
 
 @router.message(MineForm.in_mine, F.text == "🔙 Назад")
 async def handle_mine_exit(message: Message, state: FSMContext):
@@ -2225,7 +2351,10 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
         )
         await log_trade(user_id, mode, amount, -amount, False)
 
+    _, new_level, leveled_up = await add_xp(user_id, XP_PER_TRADE)
     await msg.edit_text(result_text, reply_markup=get_trading_result_keyboard())
+    if leveled_up:
+        await notify_level_up(user_id, new_level)
 
 @router.callback_query(F.data == "trade_continue")
 async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
@@ -3045,13 +3174,17 @@ DICE_EMOJIS = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
 @router.message(F.text == "🥊 Дуэли")
 async def show_duel_menu(message: Message, state: FSMContext):
     await state.clear()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
+    ])
+
     await message.answer(
         "🥊 Дуэли\n\n"
         "Напиши ник и сумму, кому хочешь кинуть дуэль.\n"
-        "Формат: `ник сумма`\n"
-        "Например: `Alex123 10000`",
+        "Формат: `ник сумма`\n",
         parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=kb
     )
     await state.set_state(DuelForm.waiting_for_target)
 
@@ -3060,6 +3193,12 @@ async def show_duel_menu(message: Message, state: FSMContext):
 async def process_duel_challenge(message: Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text.strip()
+
+    # --- Проверка кулдауна ---
+    can_duel, remaining = await check_duel_cooldown(user_id)
+    if not can_duel:
+        await message.answer(f"⏳ Дуэль можно кинуть через {remaining} сек.")
+        return
 
     parts = text.rsplit(maxsplit=1)
     if len(parts) != 2:
@@ -3153,6 +3292,12 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
+ # --- Проверка кулдауна у принимающего ---
+    can_duel, remaining = await check_duel_cooldown(callback.from_user.id)
+    if not can_duel:
+        await callback.answer(f"⏳ Дуэль можно принять через {remaining} сек.", show_alert=True)
+        return
+    
     ch_balance = await get_balance(duel["challenger_id"])
     tg_balance = await get_balance(duel["target_id"])
 
@@ -3251,7 +3396,16 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
             f"🤝 Ничья! Деньги возвращены."
         )
 
+# --- XP и кулдаун для обоих ---
+    _, ch_new_level, ch_up = await add_xp(duel["challenger_id"], XP_PER_DUEL)
+    _, tg_new_level, tg_up = await add_xp(duel["target_id"], XP_PER_DUEL)
+
+    await set_duel_cooldown(duel["challenger_id"])
+    await set_duel_cooldown(duel["target_id"])
+
     await update_duel_status(duel_id, "finished")
+
+    # ... отправка result_text обоим игрокам ...
 
     try:
         await callback.message.answer(result_text)
@@ -3262,6 +3416,11 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         await bot.send_message(duel["challenger_id"], result_text)
     except Exception:
         pass
+
+    if ch_up:
+        await notify_level_up(duel["challenger_id"], ch_new_level)
+    if tg_up:
+        await notify_level_up(duel["target_id"], tg_new_level)
 
 
 @router.callback_query(F.data.startswith("duel_decline:"))
