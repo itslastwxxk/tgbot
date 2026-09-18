@@ -3175,44 +3175,65 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     ch_name = await get_user_name(duel["challenger_id"]) or "Игрок"
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
-    spin_text = (
+    start_text = (
         f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
         f"💰 Ставка: {duel['amount']:,} ₽\n\n"
         f"🎲 Бросаем кости..."
     )
 
     try:
-        await callback.message.edit_text(spin_text)
+        await callback.message.edit_text(start_text)
     except TelegramBadRequest:
-        await callback.message.answer(spin_text)
+        await callback.message.answer(start_text)
 
-    await asyncio.sleep(1.5)
+    try:
+        await bot.send_message(duel["challenger_id"], start_text)
+    except Exception:
+        pass
 
-    ch_dice = [random.randint(1, 6), random.randint(1, 6)]
-    tg_dice = [random.randint(1, 6), random.randint(1, 6)]
-    ch_sum = sum(ch_dice)
-    tg_sum = sum(tg_dice)
+    # Отправляем кубик обоим игрокам
+    ch_msg = None
+    tg_msg = None
 
-    ch_dice_text = " ".join(DICE_EMOJIS[d - 1] for d in ch_dice)
-    tg_dice_text = " ".join(DICE_EMOJIS[d - 1] for d in tg_dice)
+    try:
+        ch_msg = await bot.send_dice(duel["challenger_id"], emoji="🎲")
+    except Exception:
+        pass
 
-    if ch_sum > tg_sum:
+    try:
+        tg_msg = await bot.send_dice(duel["target_id"], emoji="🎲")
+    except Exception:
+        pass
+
+    # Ждём завершение анимации кубика (~4 сек)
+    await asyncio.sleep(4)
+
+    ch_value = ch_msg.dice.value if ch_msg and ch_msg.dice else 0
+    tg_value = tg_msg.dice.value if tg_msg and tg_msg.dice else 0
+
+    # Если кому-то кубик не отправился — бросаем фолбэк-рандом
+    if ch_value == 0:
+        ch_value = random.randint(1, 6)
+    if tg_value == 0:
+        tg_value = random.randint(1, 6)
+
+    if ch_value > tg_value:
         await add_to_balance(duel["challenger_id"], duel["amount"] * 2)
         result_text = (
             f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
             f"💰 Ставка: {duel['amount']:,} ₽\n\n"
-            f"🎲 {ch_name}: {ch_dice_text} = {ch_sum}\n"
-            f"🎲 {tg_name}: {tg_dice_text} = {tg_sum}\n\n"
+            f"🎲 {ch_name}: {ch_value}\n"
+            f"🎲 {tg_name}: {tg_value}\n\n"
             f"🎉 Победил {ch_name}!\n"
             f"💰 Выигрыш: +{duel['amount']:,} ₽"
         )
-    elif tg_sum > ch_sum:
+    elif tg_value > ch_value:
         await add_to_balance(duel["target_id"], duel["amount"] * 2)
         result_text = (
             f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
             f"💰 Ставка: {duel['amount']:,} ₽\n\n"
-            f"🎲 {ch_name}: {ch_dice_text} = {ch_sum}\n"
-            f"🎲 {tg_name}: {tg_dice_text} = {tg_sum}\n\n"
+            f"🎲 {ch_name}: {ch_value}\n"
+            f"🎲 {tg_name}: {tg_value}\n\n"
             f"🎉 Победил {tg_name}!\n"
             f"💰 Выигрыш: +{duel['amount']:,} ₽"
         )
@@ -3222,17 +3243,17 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         result_text = (
             f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
             f"💰 Ставка: {duel['amount']:,} ₽\n\n"
-            f"🎲 {ch_name}: {ch_dice_text} = {ch_sum}\n"
-            f"🎲 {tg_name}: {tg_dice_text} = {tg_sum}\n\n"
+            f"🎲 {ch_name}: {ch_value}\n"
+            f"🎲 {tg_name}: {tg_value}\n\n"
             f"🤝 Ничья! Деньги возвращены."
         )
 
     await update_duel_status(duel_id, "finished")
 
     try:
-        await callback.message.edit_text(result_text)
-    except TelegramBadRequest:
         await callback.message.answer(result_text)
+    except TelegramBadRequest:
+        pass
 
     try:
         await bot.send_message(duel["challenger_id"], result_text)
