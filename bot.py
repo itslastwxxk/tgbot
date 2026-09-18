@@ -1706,7 +1706,13 @@ async def process_name(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Выбирай, чем займешься:", reply_markup=get_work_keyboard())
+    text = "Выбирай, чем займешься:"
+    try:
+        photo = FSInputFile("images/work.png")
+        await message.answer_photo(photo=photo, caption=text, reply_markup=get_work_keyboard())
+    except FileNotFoundError:
+        logger.warning("Файл images/work.png не найден.")
+        await message.answer(text, reply_markup=get_work_keyboard())
 
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message):
