@@ -59,6 +59,10 @@ _username_to_id_cache: dict[str, int] = {}
 _name_to_id_cache: dict[str, int] = {}
 _farm_cooldown_cache: dict[int, float] = {}
 _math_cooldown_cache: dict[int, float] = {}
+_pickaxe_cache: dict[int, int] = {}
+_stats_cache: dict[int, dict] = {}
+_daily_streak_cache: dict[int, int] = {}
+_daily_last_claim_cache: dict[int, float] = {}
 
 TOKEN = os.getenv("TG_BOT_TOKEN")
 REDIS_URL = os.getenv("REDIS_URL")
@@ -591,7 +595,26 @@ def format_cooldown(seconds: int | float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-# --- Функции работы с балансом ---
+# --- Атомарные операции с балансом ---
+_deduct_sha: str | None = None
+
+DEDUCT_LUA = """
+local balance = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+local amount = tonumber(ARGV[1])
+if balance >= amount then
+    redis.call('HINCRBY', KEYS[1], 'balance', -amount)
+    return 1
+else
+    return 0
+end
+"""
+
+async def _ensure_deduct_script():
+    """Загружает Lua-скрипт в Redis (кешируется SHA)."""
+    global _deduct_sha
+    if _deduct_sha is None:
+        _deduct_sha = await redis_client.script_load(DEDUCT_LUA)
+
 async def get_balance(user_id: int) -> int:
     if user_id in _balance_cache:
         return _balance_cache[user_id]
@@ -601,10 +624,23 @@ async def get_balance(user_id: int) -> int:
     return balance
 
 async def add_to_balance(user_id: int, amount: int) -> int:
+    """Атомарно начисляет деньги (через HINCRBY). Возвращает новый баланс."""
     new_balance = await redis_client.hincrby(f"user:{user_id}", "balance", amount)
     _balance_cache[user_id] = new_balance
     await redis_client.zadd("leaderboard:balance", {str(user_id): new_balance})
     return new_balance
+
+async def deduct_balance(user_id: int, amount: int) -> bool:
+    """Атомарно списывает деньги через Lua-скрипт.
+    True — успешно, False — не хватает баланса."""
+    await _ensure_deduct_script()
+    result = await redis_client.evalsha(_deduct_sha, 1, f"user:{user_id}", amount)
+    if int(result) == 1:
+        new_balance = await get_balance(user_id)
+        _balance_cache[user_id] = new_balance
+        await redis_client.zadd("leaderboard:balance", {str(user_id): new_balance})
+        return True
+    return False
 
 async def set_balance(user_id: int, amount: int):
     await redis_client.hset(f"user:{user_id}", mapping={"balance": str(amount)})
@@ -694,22 +730,28 @@ async def get_user_id_by_name_direct(name: str) -> int | None:
 
 # --- ЕЖЕДНЕВНЫЙ БОНУС: хелперы ---
 async def get_daily_streak(user_id: int) -> int:
-    """Возвращает текущий стрик ежедневных бонусов."""
+    if user_id in _daily_streak_cache:
+        return _daily_streak_cache[user_id]
     data = await redis_client.hgetall(f"user:{user_id}")
     streak_str = data.get("daily_streak", "0")
     try:
-        return int(streak_str)
+        streak = int(streak_str)
     except ValueError:
-        return 0
+        streak = 0
+    _daily_streak_cache[user_id] = streak
+    return streak
 
 async def get_daily_last_claim(user_id: int) -> float:
-    """Возвращает timestamp последнего получения бонуса."""
+    if user_id in _daily_last_claim_cache:
+        return _daily_last_claim_cache[user_id]
     data = await redis_client.hgetall(f"user:{user_id}")
     last_str = data.get("daily_last_claim", "0")
     try:
-        return float(last_str)
+        last = float(last_str)
     except ValueError:
-        return 0.0
+        last = 0.0
+    _daily_last_claim_cache[user_id] = last
+    return last
 
 async def can_claim_daily(user_id: int) -> tuple[bool, int]:
     """Проверяет, можно ли забрать ежедневный бонус.
@@ -752,6 +794,8 @@ async def claim_daily_bonus(user_id: int) -> tuple[int, int]:
         "daily_streak": str(new_streak),
         "daily_last_claim": str(now),
     })
+    _daily_streak_cache[user_id] = new_streak
+    _daily_last_claim_cache[user_id] = now
     return amount, new_streak
 
 def get_daily_bonus_keyboard(can_claim: bool):
@@ -871,14 +915,19 @@ async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple
 # --- Кирка ---
 async def get_pickaxe_level(user_id: int) -> int:
     """Возвращает уровень кирки (0 = деревянная)."""
+    if user_id in _pickaxe_cache:
+        return _pickaxe_cache[user_id]
     data = await redis_client.hgetall(f"user:{user_id}")
     try:
-        return int(data.get("pickaxe_level", "0"))
+        level = int(data.get("pickaxe_level", "0"))
     except (TypeError, ValueError):
-        return 0
+        level = 0
+    _pickaxe_cache[user_id] = level
+    return level
 
 async def set_pickaxe_level(user_id: int, level: int):
     await redis_client.hset(f"user:{user_id}", "pickaxe_level", str(level))
+    _pickaxe_cache[user_id] = level
 
 def get_mine_reward_for_pickaxe(level: int) -> int:
     """Доход за клик в зависимости от уровня кирки."""
@@ -950,13 +999,18 @@ async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple
 
 # --- XP и уровни ---
 async def get_user_stats(user_id: int) -> dict:
+    if user_id in _stats_cache:
+        return _stats_cache[user_id]
     data = await redis_client.hgetall(f"user:{user_id}:stats")
     if not data:
-        return {"xp": 0, "level": 0}
-    return {
-        "xp": int(data.get("xp", 0)),
-        "level": int(data.get("level", 0)),
-    }
+        stats = {"xp": 0, "level": 0}
+    else:
+        stats = {
+            "xp": int(data.get("xp", 0)),
+            "level": int(data.get("level", 0)),
+        }
+    _stats_cache[user_id] = stats
+    return stats
 
 async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
     """Добавляет XP, обновляет уровень. Возвращает (новый_xp, новый_уровень, был_левелап)."""
@@ -971,6 +1025,11 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
         "level": str(new_level),
     })
     await redis_client.zadd("leaderboard:level", {str(user_id): new_level})
+
+    # Обновляем кэш
+    new_stats = {"xp": new_xp, "level": new_level}
+    _stats_cache[user_id] = new_stats
+
     return new_xp, new_level, leveled_up
 
 async def notify_level_up(user_id: int, new_level: int):
@@ -2323,7 +2382,10 @@ async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Не хватает денег!", show_alert=True)
         return
 
-    await add_to_balance(user_id, -nxt["cost"])
+    ok = await deduct_balance(user_id, nxt["cost"])
+    if not ok:
+        await callback.answer("Не хватает денег!", show_alert=True)
+        return
     new_lvl = pickaxe_lvl + 1
     await set_pickaxe_level(user_id, new_lvl)
 
@@ -2576,7 +2638,7 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
         )
         await log_trade(user_id, mode, amount, profit, True)
     else:
-        await add_to_balance(user_id, -amount)
+        await deduct_balance(user_id, amount)
         result_text = (
             f"💥 Мимо...\n"
             f"Режим: {mode}\n"
@@ -2812,12 +2874,12 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         if existing:
             await callback.answer("У тебя уже есть бизнес! Сначала продай его.", show_alert=True)
             return
-        balance = await get_balance(user_id)
-        if balance < biz_def["price"]:
+        ok = await deduct_balance(user_id, biz_def["price"])
+        if not ok:
             await callback.answer("Не хватает денег!", show_alert=True)
             return
         await callback.answer()
-        await add_to_balance(user_id, -biz_def["price"])
+        await deduct_balance(user_id, -biz_def["price"])
         new_biz = {
             "name": biz_def["name"],
             "price": biz_def["price"],
@@ -2881,18 +2943,14 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         if cost is None:
             await callback.answer("Максимальный уровень!", show_alert=True)
             return
-        if source == "user":
-            balance = await get_balance(user_id)
-            if balance < cost:
-                await callback.answer(f"Не хватает {cost - balance:,} ₽", show_alert=True)
-                return
-            await callback.answer()
-            await add_to_balance(user_id, -cost)
-        else:
-            biz_balance = biz.get("balance", 0)
-            if biz_balance < cost:
-                await callback.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽", show_alert=True)
-                return
+        if balance < cost:
+            await callback.answer(f"Не хватает {cost - balance:,} ₽", show_alert=True)
+            return
+        await callback.answer()
+        ok = await deduct_balance(user_id, cost)
+        if not ok:
+            await callback.answer("Не хватает денег!", show_alert=True)
+            return
             await callback.answer()
             biz["balance"] = biz_balance - cost
         biz["level"] = biz.get("level", 1) + 1
@@ -3000,7 +3058,10 @@ async def process_raw_amount(message: Message, state: FSMContext):
         if balance < cost:
             await message.answer(f"Не хватает {cost - balance:,} ₽. Баланс: {balance:,} ₽\nВведи меньше:")
             return
-        await add_to_balance(user_id, -cost)
+        ok = await deduct_balance(user_id, cost)
+        if not ok:
+            await message.answer("Не хватает денег! Попробуй меньше:")
+            return
     else:
         biz_balance = biz.get("balance", 0)
         if biz_balance < cost:
@@ -3271,13 +3332,13 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала введи сумму ставки.", show_alert=True)
         return
 
-    balance = await get_balance(user_id)
-    if amount > balance:
-        await callback.answer("Не хватает денег на эту ставку.", show_alert=True)
+    ok = await deduct_balance(user_id, amount)
+    if not ok:
+        await callback.answer("Не хватает денег на эту ставку!", show_alert=True)
         return
 
     await callback.answer()
-    await add_to_balance(user_id, -amount)
+    await deduct_balance(user_id, -amount)
 
     last_result_message_id = state_data.get("last_result_message_id")
     chat_id = callback.message.chat.id
@@ -3552,8 +3613,27 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     await update_duel_status(duel_id, "active")
 
-    await add_to_balance(duel["challenger_id"], -duel["amount"])
-    await add_to_balance(duel["target_id"], -duel["amount"])
+    ok_ch = await deduct_balance(duel["challenger_id"], duel["amount"])
+    ok_tg = await deduct_balance(duel["target_id"], duel["amount"])
+
+    if not ok_ch:
+        # Возвращаем деньги второму, если первому не хватило
+        if ok_tg:
+            await add_to_balance(duel["target_id"], duel["amount"])
+        await callback.message.edit_text("❌ У вызывающего недостаточно денег. Дуэль отменена.")
+        await update_duel_status(duel_id, "cancelled")
+        try:
+            await bot.send_message(duel["challenger_id"], "❌ У тебя недостаточно денег на дуэль. Вызов отменён.")
+        except Exception:
+            pass
+        return
+
+    if not ok_tg:
+        # Первому уже списали — возвращаем
+        await add_to_balance(duel["challenger_id"], duel["amount"])
+        await callback.message.edit_text("❌ У тебя недостаточно денег. Дуэль отменена.")
+        await update_duel_status(duel_id, "cancelled")
+        return
 
     ch_name = await get_user_name(duel["challenger_id"]) or "Игрок"
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
@@ -3779,6 +3859,7 @@ dp.include_router(router)
 LOCK_FILE = "bot.lock"
 
 async def main():
+    # --- Lock-файл (защита от двойного запуска) ---
     if os.path.exists(LOCK_FILE):
         logger.warning("Lock-файл существует. Возможно, бот уже запущен.")
         with open(LOCK_FILE, "r") as f:
@@ -3789,6 +3870,8 @@ async def main():
         f.write(str(os.getpid()))
 
     logger.info("Запуск бота...")
+
+    # --- Redis ---
     try:
         await init_redis()
     except Exception as e:
@@ -3797,8 +3880,21 @@ async def main():
             os.remove(LOCK_FILE)
         return
 
-    monitor_task = asyncio.create_task(monitor_empty_businesses())
+    # --- Загрузка Lua-скрипта для атомарного списания ---
     try:
+        await _ensure_deduct_script()
+        logger.info("Lua-скрипт deduct_balance загружен.")
+    except Exception as e:
+        logger.error(f"Не удалось загрузить Lua-скрипт: {e}")
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+        return
+
+    # --- Фоновый мониторинг простаивающих бизнесов ---
+    monitor_task = asyncio.create_task(monitor_empty_businesses())
+
+    try:
+        logger.info("Бот запущен. Polling started.")
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         monitor_task.cancel()
@@ -3809,6 +3905,7 @@ async def main():
         if os.path.exists(LOCK_FILE):
             os.remove(LOCK_FILE)
         logger.info("Бот остановлен.")
+
 
 if __name__ == "__main__":
     try:
