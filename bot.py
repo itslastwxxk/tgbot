@@ -1865,9 +1865,6 @@ async def handle_start(message: Message, state: FSMContext):
     
     # Очищаем состояние, если необходимо
     await state.clear()
-    
-    # Отправляем начальное меню
-    await send_main_menu(message, user_id)
 
     # --- Парсим реферальный payload ---
     referrer_id = None
