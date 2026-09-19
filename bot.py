@@ -12,6 +12,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile
 from io import BytesIO
+from aiogram.types import ReplyKeyboardRemove, FSInputFile
+from aiogram.exceptions import TelegramBadRequest
 import asyncio
 import logging
 import os
@@ -154,17 +156,17 @@ GREETINGS = [
     "на связи, {name}.",
     "как жизнь, {name}?",
     "здорово, {name}!",
-    "рад тебя видеть, {name}."
-    "мир твоему миру, {name}."
-    "какие люди и без охраны, {name}."
-    "честь имею, {name}."
-    "здрав буде, {name}."
-    "добро пожаловать отсюда, {name}."
-    "рад снова с тобой увидится, {name}."
-    "связь, {name}."
-    "я тебя могну, {name}."
-    "ку, {name}."
-    "салам, {name}."
+    "рад тебя видеть, {name}.",
+    "мир твоему миру, {name}.",
+    "какие люди и без охраны, {name}.",
+    "честь имею, {name}.",
+    "здрав буде, {name}.",
+    "добро пожаловать отсюда, {name}.",
+    "рад снова с тобой увидится, {name}.",
+    "связь, {name}.",
+    "я тебя могну, {name}.",
+    "ку, {name}.",
+    "салам, {name}.",
     "сап, {name}."
 ]
 
@@ -192,6 +194,15 @@ MINE_COOLDOWN = 5
 MATH_REWARD = 400
 MATH_COOLDOWN = 10
 RAW_PRICE = 1
+
+PICKAXE_LEVELS = [
+    {"name": "Деревянная",  "reward": 200,   "cost": 0},
+    {"name": "Каменная",    "reward": 400,   "cost": 10_000},
+    {"name": "Железная",    "reward": 700,   "cost": 50_000},
+    {"name": "Золотая",     "reward": 1200,  "cost": 200_000},
+    {"name": "Алмазная",    "reward": 2000,  "cost": 1_000_000},
+    {"name": "Незеритовая", "reward": 3500,  "cost": 5_000_000},
+]
 
 TRADING_MIN_BALANCE = 25000
 
@@ -857,6 +868,68 @@ async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple
         _farm_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
 
+# --- Кирка ---
+async def get_pickaxe_level(user_id: int) -> int:
+    """Возвращает уровень кирки (0 = деревянная)."""
+    data = await redis_client.hgetall(f"user:{user_id}")
+    try:
+        return int(data.get("pickaxe_level", "0"))
+    except (TypeError, ValueError):
+        return 0
+
+async def set_pickaxe_level(user_id: int, level: int):
+    await redis_client.hset(f"user:{user_id}", "pickaxe_level", str(level))
+
+def get_mine_reward_for_pickaxe(level: int) -> int:
+    """Доход за клик в зависимости от уровня кирки."""
+    if 0 <= level < len(PICKAXE_LEVELS):
+        return PICKAXE_LEVELS[level]["reward"]
+    return PICKAXE_LEVELS[-1]["reward"]
+
+def get_pickaxe_upgrade_view(current_level: int, balance: int):
+    """Текст и клавиатура окна прокачки кирки."""
+    current = PICKAXE_LEVELS[current_level]
+
+    if current_level >= len(PICKAXE_LEVELS) - 1:
+        text = (
+            f"🔧 Прокачка кирки\n\n"
+            f"Твоя кирка: {current['name']} (макс. уровень!)\n"
+            f"💰 Доход: {current['reward']:,} ₽ за клик\n\n"
+            f"Выше некуда — ты на вершине ⛏"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="pickaxe_back")]
+        ])
+        return text, kb
+
+    nxt = PICKAXE_LEVELS[current_level + 1]
+    can_afford = balance >= nxt["cost"]
+
+    text = (
+        f"🔧 Прокачка кирки\n\n"
+        f"Текущая: {current['name']} — {current['reward']:,} ₽/клик\n"
+        f"Следующая: {nxt['name']} — {nxt['reward']:,} ₽/клик\n"
+        f"💸 Цена: {nxt['cost']:,} ₽\n"
+        f"💰 Баланс: {balance:,} ₽"
+    )
+
+    if can_afford:
+        btn = InlineKeyboardButton(
+            text=f"✅ Прокачать за {nxt['cost']:,} ₽",
+            callback_data="pickaxe_upgrade"
+        )
+    else:
+        btn = InlineKeyboardButton(
+            text=f"❌ Не хватает {nxt['cost'] - balance:,} ₽",
+            callback_data="pickaxe_noop"
+        )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [btn],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="pickaxe_back")],
+    ])
+    return text, kb
+
 # --- Математика: кулдаун ---
 async def can_math(user_id: int, cooldown_seconds: int = MATH_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
@@ -1473,6 +1546,7 @@ def get_work_keyboard():
 def get_mine_keyboard():
     keyboard = [
         [KeyboardButton(text="⛏ Фармить")],
+        [KeyboardButton(text="🔧 Прокачать кирку")],
         [KeyboardButton(text="🔙 В меню")],
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -2113,10 +2187,15 @@ async def handle_back_to_main(message: Message, state: FSMContext):
 @router.message(F.text == "⛏ Шахта")
 async def show_mine_menu(message: Message, state: FSMContext):
     await state.set_state(MineForm.in_mine)
+    user_id = message.from_user.id
+    pickaxe_lvl = await get_pickaxe_level(user_id)
+    pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
+    reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     text = (
         f"⛏ Шахта\n\n"
-        f"За клик: {MINE_REWARD:,} ₽\n"
-        f"КД: {MINE_COOLDOWN} сек\n"
+        f"🔧 Кирка: {pickaxe_name}\n"
+        f"💰 За клик: {reward:,} ₽\n"
+        f"⏳ КД: {MINE_COOLDOWN} сек\n"
     )
     try:
         photo = FSInputFile("images/mine.png")
@@ -2191,11 +2270,15 @@ async def handle_mine_farm(message: Message, state: FSMContext):
         await message.answer(f"⏳ Осталось {remaining} сек.")
         return
 
-    new_balance = await add_to_balance(user_id, MINE_REWARD)
+    pickaxe_lvl = await get_pickaxe_level(user_id)
+    reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
+    pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
+
+    new_balance = await add_to_balance(user_id, reward)
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_MINE)
 
     text = (
-        f"⛏ Красава, +{MINE_REWARD:,} ₽ +{XP_PER_MINE} XP!\n"
+        f"⛏ {pickaxe_name} кирка в деле! +{reward:,} ₽ +{XP_PER_MINE} XP!\n"
         f"Баланс: {new_balance:,} ₽"
     )
     await message.answer(text)
@@ -2210,6 +2293,83 @@ async def handle_mine_exit(message: Message, state: FSMContext):
         "Выбирай, чем займешься:",
         reply_markup=get_work_keyboard()
     )
+
+# --- Прокачка кирки: кнопка reply ---
+@router.message(MineForm.in_mine, F.text == "🔧 Прокачать кирку")
+async def handle_pickaxe_upgrade_menu(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    pickaxe_lvl = await get_pickaxe_level(user_id)
+    balance = await get_balance(user_id)
+    text, kb = get_pickaxe_upgrade_view(pickaxe_lvl, balance)
+    await message.answer(text, reply_markup=kb)
+
+
+# --- Прокачка кирки: кнопка inline "Прокачать" ---
+@router.callback_query(MineForm.in_mine, F.data == "pickaxe_upgrade")
+async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    await callback.answer()
+
+    pickaxe_lvl = await get_pickaxe_level(user_id)
+
+    if pickaxe_lvl >= len(PICKAXE_LEVELS) - 1:
+        await callback.answer("Уже максимальный уровень!", show_alert=True)
+        return
+
+    nxt = PICKAXE_LEVELS[pickaxe_lvl + 1]
+    balance = await get_balance(user_id)
+
+    if balance < nxt["cost"]:
+        await callback.answer("Не хватает денег!", show_alert=True)
+        return
+
+    await add_to_balance(user_id, -nxt["cost"])
+    new_lvl = pickaxe_lvl + 1
+    await set_pickaxe_level(user_id, new_lvl)
+
+    new_balance = await get_balance(user_id)
+    text, kb = get_pickaxe_upgrade_view(new_lvl, new_balance)
+
+    upgrade_msg = (
+        f"🎉 Кирка прокачана: {PICKAXE_LEVELS[pickaxe_lvl]['name']} → {nxt['name']}!\n"
+        f"Новый доход: {nxt['reward']:,} ₽/клик\n\n"
+    )
+
+    try:
+        await callback.message.edit_text(upgrade_msg + text, reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(upgrade_msg + text, reply_markup=kb)
+
+
+# --- Прокачка кирки: пустая кнопка (не хватает денег) ---
+@router.callback_query(MineForm.in_mine, F.data == "pickaxe_noop")
+async def handle_pickaxe_noop(callback: CallbackQuery):
+    await callback.answer("Не хватает денег на прокачку.", show_alert=True)
+
+
+# --- Прокачка кирки: кнопка "Назад" ---
+@router.callback_query(MineForm.in_mine, F.data == "pickaxe_back")
+async def handle_pickaxe_back(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    await callback.answer()
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+    # Возвращаем в меню шахты
+    pickaxe_lvl = await get_pickaxe_level(user_id)
+    pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
+    reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
+    text = (
+        f"⛏ Шахта\n\n"
+        f"🔧 Кирка: {pickaxe_name}\n"
+        f"💰 За клик: {reward:,} ₽\n"
+        f"⏳ КД: {MINE_COOLDOWN} сек\n"
+    )
+    await callback.message.answer(text, reply_markup=get_mine_keyboard())
 
 @router.message(F.text == "🔗 Реф")
 async def handle_ref(message: Message):
