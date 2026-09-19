@@ -1858,6 +1858,14 @@ async def cmd_start(message: Message, state: FSMContext):
     await save_user_info(user_id, username)
     if username:
         _username_cache[user_id] = username.lstrip("@").lower()
+@router.message(Command("start"))
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    username = message.from_user.username
+    await save_user_info(user_id, username)
+    if username:
+        _username_cache[user_id] = username.lstrip("@").lower()
 
     # --- Парсим реферальный payload ---
     referrer_id = None
