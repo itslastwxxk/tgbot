@@ -1850,21 +1850,32 @@ async def generate_math_problem(user_id: int) -> tuple[str, int]:
 # ХЕНДЛЕРЫ
 # ============================================================
 
-@router.message(Command("menu"))
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
+@router.message(Command("start"))
+async def handle_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     username = message.from_user.username
+    
+    # Очищаем состояние, если необходимо
+    await state.clear()
+    
+    # Сохраняем информацию о пользователе
     await save_user_info(user_id, username)
     if username:
         _username_cache[user_id] = username.lstrip("@").lower()
+    
+    # Перенаправляем на обработку команды /menu
+    await handle_menu(message, state)
 
-@router.message(Command("start"))
-async def handle_start(message: Message, state: FSMContext):
+
+@router.message(Command("menu"))
+async def handle_menu(message: Message, state: FSMContext):
     user_id = message.from_user.id
     
     # Очищаем состояние, если необходимо
     await state.clear()
+    
+    # Отправляем начальное меню
+    await send_main_menu(message, user_id)
 
     # --- Парсим реферальный payload ---
     referrer_id = None
