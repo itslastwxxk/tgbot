@@ -1816,7 +1816,6 @@ async def process_name(message: Message, state: FSMContext):
 async def show_profile(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
-
     balance = await get_balance(user_id)
     stats = await get_user_stats(user_id)
     name = await get_user_name(user_id) or "Игрок"
@@ -1843,22 +1842,20 @@ async def show_profile(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
     ])
 
-    # 1. Сразу убираем reply-клавиатуру
-    # 2. Отправляем фото с подписью (caption) — это и есть «профиль»
+    # Сначала убираем reply-клавиатуру и отправляем фото
     try:
-        photo = FSInputFile("images/profile.png")
+        photo = FSInputFile("images/profile_card.png")  # путь к твоей картинке
         await message.answer_photo(
             photo=photo,
             caption=text,
-            reply_markup=kb,
-            reply_markup_remove=True  # дублируем на всякий случай, хотя answer_photo сам не ставит reply
+            reply_markup=kb
         )
     except FileNotFoundError:
-        # Если картинки нет — отправляем текст, но reply-клавиатура всё равно убрана
+        # Если картинки нет — отправляем просто текст, но всё равно без reply-клавиатуры
         await message.answer(
             text,
             reply_markup=kb,
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup_remove=True  # это уберёт кнопки
         )
 
 @router.message(F.text == "💼 Работа")
