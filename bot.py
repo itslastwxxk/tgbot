@@ -196,7 +196,6 @@ REFERRAL_NEWBIE_BONUS = 5000   # бонус новичку за регистра
 MINE_REWARD = 100
 MINE_COOLDOWN = 3
 MATH_REWARD = 500
-MATH_XP_REWARD = 50
 MATH_COOLDOWN = 10
 RAW_PRICE = 2
 
@@ -227,12 +226,7 @@ XP_PER_TRADE = 50
 XP_PER_DUEL = 100
 
 # --- ЛВЛ РАЗБЛОКИРОВКИ ---
-PROFILE_UNLOCK_LEVEL = 1
-MATH_UNLOCK_LEVEL = 3
-DUEL_UNLOCK_LEVEL = 5
-TRADING_UNLOCK_LEVEL = 10
-BUSINESS_UNLOCK_LEVEL = 10
-CASINO_UNLOCK_LEVEL = 15
+MATH_UNLOCK_LEVEL = 2  # Математика открывается на 2 уровне
 
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
@@ -1124,27 +1118,6 @@ def is_valid_name(name: str) -> bool:
         return False
     return bool(re.match(r'^[a-zA-Zа-яА-ЯёЁ0-9]+$', name))
 
-# --- Проверка доступа по уровню ---
-UNLOCK_LEVELS = {
-    "📋 Профиль": PROFILE_UNLOCK_LEVEL,
-    "🧮 Математика": MATH_UNLOCK_LEVEL,
-    "🥊 Дуэли": DUEL_UNLOCK_LEVEL,
-    "📈 Трейдинг": TRADING_UNLOCK_LEVEL,
-    "🏪 Бизнесы": BUSINESS_UNLOCK_LEVEL,
-    "🎰 Казино": CASINO_UNLOCK_LEVEL,
-}
-
-async def check_level_access(message: Message, user_id: int, required_level: int) -> bool:
-    stats = await get_user_stats(user_id)
-    level = stats["level"]
-    if level < required_level:
-        await message.answer(
-            f"🔒 Доступ откроется с {required_level} уровня.\n"
-            f"Твой уровень: {level}."
-        )
-        return False
-    return True
-
 # --- Главное меню ---
 async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     # --- Логика получения данных (без изменений) ---
@@ -1187,7 +1160,6 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             await target.message.answer(text, reply_markup=get_main_keyboard())
         else:
             await target.answer(text, reply_markup=get_main_keyboard())
-
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -1554,7 +1526,7 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
         text, kb,
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
-    
+
 # --- Клавиатуры ---
 def get_main_keyboard():
     keyboard = [
@@ -2010,15 +1982,24 @@ async def process_name(message: Message, state: FSMContext):
                 f"Бонус: +{REFERRAL_NEWBIE_BONUS:,} ₽"
             )
 
+    # Новый игрок проходит короткое обучение; флаг сохраняется в Redis.
+    tutorial_done = await redis_client.hget(f"user:{user_id}", "tutorial_done")
+    if not tutorial_done:
+        await redis_client.hset(f"user:{user_id}", "tutorial_step", "mine")
     await message.answer(f"👍 База, {name}! Ты в игре.{ref_bonus_text}")
+    if not tutorial_done:
+        await message.answer(
+            "🎓 Обучение новичка — шаг 1/2\n\n"
+            "⛏ Начнём с шахты! Здесь можно добывать деньги и улучшать кирки. "
+            "Чем выше уровень кирки, тем больше награда за добычу.\n\n"
+            "Открой шахту и прокачай кирку до следующего уровня."
+        )
     await send_main_menu(message, user_id)
 
 @router.message(F.text == "📋 Профиль")
 async def show_profile(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
-    if not await check_level_access(message, user_id, PROFILE_UNLOCK_LEVEL):
-        return
 
     # --- БЛОК РАСЧЕТА ДАННЫХ (оставь свой код) ---
     balance = await get_balance(user_id)
@@ -2279,6 +2260,9 @@ async def handle_back_to_main(message: Message, state: FSMContext):
 async def show_mine_menu(message: Message, state: FSMContext):
     await state.set_state(MineForm.in_mine)
     user_id = message.from_user.id
+    tutorial_step = await redis_client.hget(f"user:{user_id}", "tutorial_step")
+    if tutorial_step == "mine":
+        await message.answer("⛏ Ты в шахте! Нажми «🔧 Прокачать кирку», затем подтверди улучшение.")
     pickaxe_lvl = await get_pickaxe_level(user_id)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
@@ -2424,11 +2408,20 @@ async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
     new_balance = await get_balance(user_id)
     text, kb = get_pickaxe_upgrade_view(new_lvl, new_balance)
 
+    tutorial_step = await redis_client.hget(f"user:{user_id}", "tutorial_step")
+    if tutorial_step == "mine":
+        await redis_client.hset(f"user:{user_id}", "tutorial_step", "math")
+
     upgrade_msg = (
         f"🎉 Кирка прокачана: {PICKAXE_LEVELS[pickaxe_lvl]['name']} → {nxt['name']}!\n"
         f"Новый доход: {nxt['reward']:,} ₽/клик\n\n"
     )
 
+    if tutorial_step == "mine":
+        upgrade_msg += (
+            "\n\n🎓 Шаг 1 пройден! Теперь переходи в «🧮 Математика» "
+            "и реши пример — за правильный ответ получишь награду."
+        )
     try:
         await callback.message.edit_text(upgrade_msg + text, reply_markup=kb)
     except TelegramBadRequest:
@@ -2557,8 +2550,6 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
 # --- ТРЕЙДИНГ ---
 @router.message(F.text == "📈 Трейдинг")
 async def handle_trading(message: Message, state: FSMContext):
-    if not await check_level_access(message, message.from_user.id, TRADING_UNLOCK_LEVEL):
-        return
     user_id = message.from_user.id
     balance = await get_balance(user_id)
 
@@ -2744,8 +2735,6 @@ async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🧮 Математика")
 async def handle_math(message: Message, state: FSMContext):
     """Вход в математику — без кулдауна, первый пример сразу."""
-    if not await check_level_access(message, message.from_user.id, MATH_UNLOCK_LEVEL):
-        return
     problem_text, answer = await generate_math_problem(message.from_user.id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
@@ -2784,13 +2773,13 @@ async def process_math_answer(message: Message, state: FSMContext):
             pass
     if user_answer == correct_answer:
         new_balance = await add_to_balance(user_id, MATH_REWARD)
-        _, new_level, leveled_up = await add_xp(user_id, MATH_XP_REWARD)
-        result_text = (
-            f"✅ Точно! +{MATH_REWARD:,} ₽ и +{MATH_XP_REWARD} XP!\n"
-            f"Баланс: {new_balance:,} ₽"
-        )
-        if leveled_up:
-            await notify_level_up(user_id, new_level)
+        tutorial_step = await redis_client.hget(f"user:{user_id}", "tutorial_step")
+        tutorial_message = ""
+        if tutorial_step == "math":
+            await redis_client.hset(f"user:{user_id}", mapping={"tutorial_step": "done", "tutorial_done": "1"})
+            tutorial_message = "\n\n🎓 Обучение завершено! Ты освоил шахту и математику. Дальше можешь изучать остальные разделы бота."
+
+        result_text = f"✅ Точно! +{MATH_REWARD:,} ₽!\nБаланс: {new_balance:,} ₽" + tutorial_message
     else:
         result_text = f"❌ Мимо. Правильный ответ: {correct_answer}"
     await message.answer(result_text, reply_markup=get_math_keyboard())
@@ -2839,8 +2828,6 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🏪 Бизнесы")
 async def handle_my_businesses(message: Message, state: FSMContext):
-    if not await check_level_access(message, message.from_user.id, BUSINESS_UNLOCK_LEVEL):
-        return
     await state.clear()
     user_id = message.from_user.id
     biz = await get_biz(user_id)
@@ -3216,8 +3203,6 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 
 @router.message(F.text == "🎰 Казино")
 async def show_casino(message: Message, state: FSMContext):
-    if not await check_level_access(message, message.from_user.id, CASINO_UNLOCK_LEVEL):
-        return
     await state.clear()
     text = "🎰 добро пожаловать в казино 'лохотрон'\n\nЗа какой стол хочешь сесть?"
     try:
@@ -3524,8 +3509,6 @@ DICE_EMOJIS = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
 
 @router.message(F.text == "🥊 Дуэли")
 async def show_duel_menu(message: Message, state: FSMContext):
-    if not await check_level_access(message, message.from_user.id, DUEL_UNLOCK_LEVEL):
-        return
     await state.clear()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
