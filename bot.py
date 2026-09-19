@@ -116,6 +116,7 @@ class MineForm(StatesGroup):
 class AdminForm(StatesGroup):
     waiting_for_search = State()
     waiting_for_amount = State()
+    waiting_for_level = State()
 
 class DuelForm(StatesGroup):
     waiting_for_target = State()
@@ -196,7 +197,7 @@ REFERRAL_NEWBIE_BONUS = 5000   # бонус новичку за регистра
 MINE_COOLDOWN = 3
 MATH_REWARD = 500
 MATH_COOLDOWN = 10
-RAW_PRICE = 2
+RAW_PRICE = 1
 
 PICKAXE_LEVELS = [
     {"name": "Деревянная",  "reward": 10,   "cost": 0},
@@ -1207,6 +1208,7 @@ def get_admin_player_keyboard(player_id: int):
         [InlineKeyboardButton(text="💰 Задать баланс", callback_data=f"admin_act:set:{player_id}")],
         [InlineKeyboardButton(text="➕ Добавить", callback_data=f"admin_act:add:{player_id}")],
         [InlineKeyboardButton(text="➖ Вычесть", callback_data=f"admin_act:sub:{player_id}")],
+        [InlineKeyboardButton(text="⭐ Выдать уровень", callback_data=f"admin_level:{player_id}")],
         [InlineKeyboardButton(text="🔙 К меню", callback_data="admin_main")],
     ])
 
@@ -1326,6 +1328,7 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
 
     text = (
         f"👤 Игрок #{player_id}\n\n"
+        f"⭐ Уровень: {(await get_user_stats(player_id))['level']}\n"
         f"📝 Ник: {name}\n"
         f"👤 Username: @{username}\n"
         f"💰 Баланс: {balance:,} ₽\n"
@@ -1338,6 +1341,47 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
     await _edit_or_answer(bot_obj, chat_id, msg_id, text, kb)
     await state.update_data(admin_msg_id=msg_id)
 
+
+@router.callback_query(F.data.startswith("admin_level:"))
+async def admin_level_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
+        return
+    player_id = int(callback.data.split(":")[1])
+    await state.update_data(admin_player_id=player_id, admin_msg_id=callback.message.message_id)
+    await state.set_state(AdminForm.waiting_for_level)
+    await callback.answer()
+    await _edit_or_answer(callback.bot, callback.message.chat.id, callback.message.message_id,
+                          f"⭐ Введи новый уровень игрока #{player_id} (0 или больше):",
+                          get_admin_back_keyboard(player_id))
+
+@router.message(AdminForm.waiting_for_level)
+async def admin_level_enter(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    player_id = data.get("admin_player_id")
+    msg_id = data.get("admin_msg_id")
+    try:
+        level = int((message.text or "").strip())
+        if level < 0 or level > 100000:
+            raise ValueError
+    except ValueError:
+        try: await message.delete()
+        except TelegramBadRequest: pass
+        await _edit_or_answer(message.bot, message.chat.id, msg_id, "❌ Введи целый уровень от 0 до 100000:", get_admin_back_keyboard(player_id))
+        return
+    try: await message.delete()
+    except TelegramBadRequest: pass
+    xp = total_xp_for_level(level)
+    await redis_client.hset(f"user:{player_id}:stats", mapping={"xp": str(xp), "level": str(level)})
+    _stats_cache[player_id] = {"xp": xp, "level": level}
+    await redis_client.zadd("leaderboard:level", {str(player_id): level})
+    name = await get_user_name(player_id) or "без ника"
+    await _edit_or_answer(message.bot, message.chat.id, msg_id,
+                          f"✅ Уровень выдан!\n👤 {name} (#{player_id})\n⭐ Новый уровень: {level}",
+                          get_admin_back_keyboard(player_id))
+    await state.set_state(None)
 
 @router.callback_query(F.data.startswith("admin_act:"))
 async def admin_action_start(callback: CallbackQuery, state: FSMContext):
