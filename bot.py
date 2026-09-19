@@ -1846,7 +1846,7 @@ async def show_profile(message: Message, state: FSMContext):
     # 1. Сразу убираем reply-клавиатуру
     # 2. Отправляем фото с подписью (caption) — это и есть «профиль»
     try:
-        photo = FSInputFile("images/profile_card.png")
+        photo = FSInputFile("images/profile.png")
         await message.answer_photo(
             photo=photo,
             caption=text,
