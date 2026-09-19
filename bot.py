@@ -1816,6 +1816,8 @@ async def process_name(message: Message, state: FSMContext):
 async def show_profile(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
+
+    # --- Получаем данные (оставь свой код расчёта баланса, XP и т.д.) ---
     balance = await get_balance(user_id)
     stats = await get_user_stats(user_id)
     name = await get_user_name(user_id) or "Игрок"
@@ -1844,15 +1846,24 @@ async def show_profile(message: Message, state: FSMContext):
 
     try:
         photo = FSInputFile("images/profile.png")
-        # 1. Убираем reply-клавиатуру пустым сообщением и сразу его удаляем
-        placeholder = await message.answer("⠀", reply_markup=ReplyKeyboardRemove())
-        await placeholder.delete()
-        # 2. Отправляем фото с inline-кнопкой
-        await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
     except FileNotFoundError:
-        # Если картинки нет — то же самое, но без фото
-        placeholder = await message.answer("⠀", reply_markup=ReplyKeyboardRemove())
+        photo = None
+
+    # --- ШАГ 1: Убираем reply-клавиатуру ---
+    # Отправляем сообщение с одним эмодзи (это точно не вызовет Bad Request)
+    # и сразу его удаляем. Пользователь видит только эффект исчезновения кнопок.
+    try:
+        placeholder = await message.answer("🤫")  # Эмодзи вместо пустого текста
         await placeholder.delete()
+    except TelegramBadRequest:
+        # Если вдруг не удастся удалить (редко, но бывает) — просто игнорируем,
+        # главное, что клавиатура уже убрана.
+        pass
+
+    # --- ШАГ 2: Отправляем профиль ---
+    if photo:
+        await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+    else:
         await message.answer(text, reply_markup=kb)
 
 @router.message(F.text == "💼 Работа")
