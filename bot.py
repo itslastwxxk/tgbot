@@ -2015,10 +2015,7 @@ async def process_name(message: Message, state: FSMContext):
     await message.answer(f"👋{ref_bonus_text}")
     if not tutorial_done:
         await message.answer(
-            "🎓 Обучение новичка — шаг 1/2\n\n"
-            "⛏ Начнём с шахты! Здесь можно добывать деньги и улучшать кирки. "
-            "Чем выше уровень кирки, тем больше награда за добычу.\n\n"
-            "Открой шахту и прокачай кирку до следующего уровня."
+            "🎓 быстрое введение:\nнажми 'работа', затем 'шахта'\nповышение уровня = разблокировка новых функций\nприглашение друзей по рефке = хороший буст"
         )
     await send_main_menu(message, user_id)
 
@@ -2381,7 +2378,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_MINE)
 
     text = (
-        f"⛏ {pickaxe_name} кирка в деле! +{reward:,} ₽ +{XP_PER_MINE} XP!\n"
+        f"⛏у тебя в руках {pickaxe_name}\n+{reward:,} ₽ +{XP_PER_MINE} XP!\n"
         f"Баланс: {new_balance:,} ₽"
     )
     await message.answer(text)
@@ -2805,13 +2802,13 @@ async def process_math_answer(message: Message, state: FSMContext):
             pass
     if user_answer == correct_answer:
         new_balance = await add_to_balance(user_id, MATH_REWARD)
-        tutorial_step = await redis_client.hget(f"user:{user_id}", "tutorial_step")
-        tutorial_message = ""
-        if tutorial_step == "math":
-            await redis_client.hset(f"user:{user_id}", mapping={"tutorial_step": "done", "tutorial_done": "1"})
-            tutorial_message = "\n\n🎓 Обучение завершено! Ты освоил шахту и математику. Дальше можешь изучать остальные разделы бота."
-
-        result_text = f"✅ Точно! +{MATH_REWARD:,} ₽!\nБаланс: {new_balance:,} ₽" + tutorial_message
+        _, new_level, leveled_up = await add_xp(user_id, MATH_XP_REWARD)
+        result_text = (
+            f"✅ Точно! +{MATH_REWARD:,} ₽ и +{MATH_XP_REWARD} XP!\n"
+            f"Баланс: {new_balance:,} ₽"
+        )
+        if leveled_up:
+            await notify_level_up(user_id, new_level)
     else:
         result_text = f"❌ Мимо. Правильный ответ: {correct_answer}"
     await message.answer(result_text, reply_markup=get_math_keyboard())
