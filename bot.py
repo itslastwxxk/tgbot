@@ -1844,17 +1844,17 @@ async def show_profile(message: Message, state: FSMContext):
 
     try:
         photo = FSInputFile("images/profile.png")
-        # Шаг 1: отправляем фото и убираем reply-клавиатуру
-        sent = await message.answer_photo(
-            photo=photo,
-            caption=text,
-            reply_markup=ReplyKeyboardRemove()
-        )
-        # Шаг 2: добавляем inline-кнопки к тому же сообщению
-        await sent.edit_reply_markup(reply_markup=kb)
+        # 1. Убираем reply-клавиатуру пустым сообщением и сразу его удаляем
+        placeholder = await message.answer("⠀", reply_markup=ReplyKeyboardRemove())
+        await placeholder.delete()
+        # 2. Отправляем фото с inline-кнопкой
+        await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
     except FileNotFoundError:
+        # Если картинки нет — то же самое, но без фото
+        placeholder = await message.answer("⠀", reply_markup=ReplyKeyboardRemove())
+        await placeholder.delete()
         await message.answer(text, reply_markup=kb)
-        
+
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
