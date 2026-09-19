@@ -221,9 +221,9 @@ ROULETTE_HOUSE_RIG = 0.05
 DUEL_TIMEOUT = 3600
 DUEL_COOLDOWN = 60
 
-XP_PER_MINE = 25
-XP_PER_TRADE = 50
-XP_PER_DUEL = 100
+XP_PER_MINE = 50
+XP_PER_TRADE = 100
+XP_PER_DUEL = 200
 
 # --- ЛВЛ РАЗБЛОКИРОВКИ ---
 MATH_UNLOCK_LEVEL = 2  # Математика открывается на 2 уровне
