@@ -1844,7 +1844,7 @@ async def show_profile(message: Message, state: FSMContext):
 
     # Сначала убираем reply-клавиатуру и отправляем фото
     try:
-        photo = FSInputFile("images/profile_card.png")  # путь к твоей картинке
+        photo = FSInputFile("images/profile.png")  # путь к твоей картинке
         await message.answer_photo(
             photo=photo,
             caption=text,
