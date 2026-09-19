@@ -227,6 +227,7 @@ XP_PER_DUEL = 200
 
 # --- ЛВЛ РАЗБЛОКИРОВКИ ---
 PROFILE_UNLOCK_LEVEL = 1
+BONUS_UNLOCK_LEVEL = 3
 MATH_UNLOCK_LEVEL = 3
 DUEL_UNLOCK_LEVEL = 5
 TRADING_UNLOCK_LEVEL = 10
@@ -1131,6 +1132,7 @@ UNLOCK_LEVELS = {
     "📈 Трейдинг": TRADING_UNLOCK_LEVEL,
     "🏪 Бизнесы": BUSINESS_UNLOCK_LEVEL,
     "🎰 Казино": CASINO_UNLOCK_LEVEL,
+    "🎁 Ежедневный бонус": BONUS_UNLOCK_LEVEL,
 }
 
 async def check_level_access(message: Message, user_id: int, required_level: int) -> bool:
@@ -1558,7 +1560,7 @@ def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🥊 Дуэли")],
-        [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🏆 Топ")],
+        [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
         [KeyboardButton(text="📋 Профиль")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -1905,10 +1907,8 @@ async def cmd_start(message: Message, state: FSMContext):
                 await state.update_data(pending_referrer=referrer_id)
 
         await message.answer(
-            "👋 Привет! Как тебя зовут?\n"
-            "Введи ник — буквы (русские или английские) и цифры, от 3 до 10 символов.\n"
-            "Например: Alex123, Иван4, Макс777\n\n"
-            "⚠️ Ник должен быть уникальным — если занят, придётся придумать другой."
+            "👋 дарова! напиши свой эксклюзивный ник\n"
+            "можно использовать русс/англ буквы и цифры\n"
         )
         await state.set_state(NameForm.waiting_for_name)
         return
@@ -1976,20 +1976,19 @@ async def process_name(message: Message, state: FSMContext):
     if not is_admin(user_id):
         if not is_valid_name(name):
             await message.answer(
-                "❌ Ник — только буквы и цифры, 3–10 символов. Без пробелов и всякой дичи.\n"
-                "Попробуй ещё раз:"
+                "❌ ник — только буквы и цифры, 3–10 символов. без пробелов и всякой херни."
             )
             return
         if await is_name_taken(name):
-            await message.answer(f"❌ Ник «{name}» уже занят. Придумай другой:")
+            await message.answer(f"❌ ник «{name}» уже занят. придумай другой:")
             return
     else:
         if not is_valid_name(name):
-            await message.answer("⚠️ Админ: ник 3–10 символов, буквы и цифры. Исправь:")
+            await message.answer("⚠️ коммерсант: ник 3–10 символов, буквы и цифры")
             return
         existing_id = await get_user_id_by_name_direct(name)
         if existing_id and existing_id != user_id:
-            await message.answer(f"⚠️ Ник «{name}» уже у игрока {existing_id}. Перезапишу.")
+            await message.answer(f"⚠️ ник «{name}» уже у игрока {existing_id}. Перезапишу.")
 
     # Получаем pending_referrer ДО очистки state
     data = await state.get_data()
@@ -2015,7 +2014,7 @@ async def process_name(message: Message, state: FSMContext):
     await message.answer(f"👋{ref_bonus_text}")
     if not tutorial_done:
         await message.answer(
-            "🎓 быстрое введение:\nнажми 'работа', затем 'шахта'\nповышение уровня = разблокировка новых функций\nприглашение друзей по рефке = хороший буст"
+            "🎓 быстрое введение:\nнажми 'работа', затем 'шахта', дальше разберешься\nповышение уровня = разблокировка новых функций\nприглашение друзей по рефке = хороший буст"
         )
     await send_main_menu(message, user_id)
 
@@ -2196,6 +2195,8 @@ async def show_public_top(callback: CallbackQuery):
 # ============================================================
 @router.message(F.text == "🎁 Ежедневный бонус")
 async def handle_daily_bonus(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, BONUS_UNLOCK_LEVEL):
+            return
     user_id = message.from_user.id
     await state.clear()
 
@@ -2287,7 +2288,7 @@ async def show_mine_menu(message: Message, state: FSMContext):
     user_id = message.from_user.id
     tutorial_step = await redis_client.hget(f"user:{user_id}", "tutorial_step")
     if tutorial_step == "mine":
-        await message.answer("⛏ Ты в шахте! Нажми «🔧 Прокачать кирку», затем подтверди улучшение.")
+        await message.answer("⛏ ты продвинулся, умничка")
     pickaxe_lvl = await get_pickaxe_level(user_id)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
@@ -2476,7 +2477,7 @@ async def handle_pickaxe_back(callback: CallbackQuery, state: FSMContext):
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     text = (
-        f"⛏ Шахта\n\n"
+        f"⛏ ты в шахте\n\n"
         f"🔧 Кирка: {pickaxe_name}\n"
         f"💰 За клик: {reward:,} ₽\n"
         f"⏳ КД: {MINE_COOLDOWN} сек\n"
@@ -3574,7 +3575,7 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     parts = text.rsplit(maxsplit=1)
     if len(parts) != 2:
         await message.answer(
-            "❌ Неверный формат. Пример: `Alex123 10000`\n"
+            "❌ Неверный формат. Пример: `killer 10000`\n"
             "Или нажми «🔙 Назад» для выхода.",
             parse_mode="Markdown"
         )
@@ -3584,7 +3585,7 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     try:
         amount = int(amount_str)
     except ValueError:
-        await message.answer("❌ Сумма должна быть числом. Пример: `Alex123 10000`", parse_mode="Markdown")
+        await message.answer("❌ Сумма должна быть числом. Пример: `саня67 10000`", parse_mode="Markdown")
         return
 
     if amount <= 0:
