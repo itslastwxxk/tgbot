@@ -1812,12 +1812,15 @@ async def process_name(message: Message, state: FSMContext):
     await message.answer(f"👍 База, {name}! Ты в игре.{ref_bonus_text}")
     await send_main_menu(message, user_id)
 
+from aiogram.types import ReplyKeyboardRemove, FSInputFile
+from aiogram.exceptions import TelegramBadRequest
+
 @router.message(F.text == "📋 Профиль")
 async def show_profile(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
 
-    # --- Получаем данные (оставь свой код расчёта баланса, XP и т.д.) ---
+    # --- Получаем данные ---
     balance = await get_balance(user_id)
     stats = await get_user_stats(user_id)
     name = await get_user_name(user_id) or "Игрок"
@@ -1849,21 +1852,27 @@ async def show_profile(message: Message, state: FSMContext):
     except FileNotFoundError:
         photo = None
 
-    # --- ШАГ 1: Убираем reply-клавиатуру ---
-    # Отправляем сообщение с одним эмодзи (это точно не вызовет Bad Request)
-    # и сразу его удаляем. Пользователь видит только эффект исчезновения кнопок.
-    try:
-        placeholder = await message.answer("🤫")  # Эмодзи вместо пустого текста
-        await placeholder.delete()
-    except TelegramBadRequest:
-        # Если вдруг не удастся удалить (редко, но бывает) — просто игнорируем,
-        # главное, что клавиатура уже убрана.
-        pass
-
-    # --- ШАГ 2: Отправляем профиль ---
+    # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ---
     if photo:
-        await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+        # Мы передаем ReplyKeyboardRemove() прямо в reply_markup.
+        # Telegram обработает это атомарно: уберет старые кнопки и покажет фото с новыми.
+        await message.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=ReplyKeyboardRemove() 
+            # ВАЖНО: После этого фото мы НЕ можем добавить inline кнопки в ЭТОМ же сообщении.
+            # Telegram не позволяет смешивать ReplyKeyboard и InlineKeyboard в одном сообщении.
+        )
+        
+        # Поэтому отправляем inline кнопки ОТДЕЛЬНЫМ сообщением к этому фото.
+        # Это выглядит как одно целое для пользователя, но технически это 2 сообщения.
+        await message.answer(
+            text=" ", # Пустой текст или можно продублировать кнопку, если нужно
+            reply_markup=kb
+        )
     else:
+        # Если фото нет, просто отправляем текст с Inline кнопками.
+        # ReplyKeyboard сам исчезнет, так как мы не передаем его в reply_markup.
         await message.answer(text, reply_markup=kb)
 
 @router.message(F.text == "💼 Работа")
