@@ -201,11 +201,12 @@ RAW_PRICE = 2
 
 PICKAXE_LEVELS = [
     {"name": "Деревянная",  "reward": 10,   "cost": 0},
-    {"name": "Каменная",    "reward": 50,   "cost": 500},
-    {"name": "Железная",    "reward": 150,   "cost": 3000},
-    {"name": "Золотая",     "reward": 300,  "cost": 30000},
-    {"name": "Алмазная",    "reward": 600,  "cost": 100000},
-    {"name": "Незеритовая", "reward": 1200,  "cost": 180000},
+    {"name": "Каменная",    "reward": 50,   "cost": 100},
+    {"name": "Железная",    "reward": 150,   "cost": 1000},
+    {"name": "Золотая",     "reward": 300,  "cost": 4000},
+    {"name": "Алмазная",    "reward": 600,  "cost": 12000},
+    {"name": "Незеритовая", "reward": 1200,  "cost": 36000},
+    {"name": "Аметистовая", "reward": 2400,  "cost": 84000},
 ]
 
 TRADING_MIN_BALANCE = 20000
