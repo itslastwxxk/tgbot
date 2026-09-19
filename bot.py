@@ -144,6 +144,30 @@ HELP_TEXT_BUSINESS = (
     "Бизнесу нужно сырьё. Если оно заканчивается, бизнес перестаёт работать и доход останавливается.\n\n"
 )
 
+GREETINGS = [
+    "вечер в хату, {name}.",
+    "добро пожаловать обратно, {name}!",
+    "рад видеть тебя снова, {name}.",
+    "салют, {name}! Как дела?",
+    "привет-привет, {name}.",
+    "о, {name}, давно не виделись!",
+    "на связи, {name}.",
+    "как жизнь, {name}?",
+    "здорово, {name}!",
+    "рад тебя видеть, {name}."
+    "мир твоему миру, {name}."
+    "какие люди и без охраны, {name}."
+    "честь имею, {name}."
+    "здрав буде, {name}."
+    "добро пожаловать отсюда, {name}."
+    "рад снова с тобой увидится, {name}."
+    "связь, {name}."
+    "я тебя могну, {name}."
+    "ку, {name}."
+    "салам, {name}."
+    "сап, {name}."
+]
+
 # ============================================================
 # КОНСТАНТЫ ЕЖЕДНЕВНОГО БОНУСА
 # ============================================================
@@ -959,6 +983,7 @@ def is_valid_name(name: str) -> bool:
 
 # --- Главное меню ---
 async def send_main_menu(target: Message | CallbackQuery, user_id: int):
+    # --- Логика получения данных (без изменений) ---
     if user_id in _balance_cache and user_id in _name_cache:
         balance = _balance_cache[user_id]
         name = _name_cache[user_id]
@@ -968,13 +993,24 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
         if balance is None:
             balance = int(float(data.get("balance", "0")))
             _balance_cache[user_id] = balance
+        
         name = _name_cache.get(user_id)
         if name is None:
             name = data.get("name")
             if name:
                 _name_cache[user_id] = name
+    
     display_name = name or "Игрок"
-    text = f"вечер в хату, {display_name}.\nтвой баланс: {balance:,} ₽"
+    
+    # --- ВЫБОР СЛУЧАЙНОГО ПРИВЕТСТВИЯ ---
+    # Выбираем случайную фразу из списка и подставляем имя через форматирование строки
+    greeting_template = random.choice(GREETINGS)
+    greeting_text = greeting_template.format(name=display_name)
+    
+    # Формируем полный текст сообщения
+    text = f"{greeting_text}\nтвой баланс: {balance:,} ₽\nвыбирай куда направишься"
+    # -------------------------------------
+
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
@@ -987,7 +1023,6 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             await target.message.answer(text, reply_markup=get_main_keyboard())
         else:
             await target.answer(text, reply_markup=get_main_keyboard())
-
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -1866,14 +1901,13 @@ async def show_profile(message: Message, state: FSMContext):
         # Он убирает reply-клавиатуру в момент отправки этого сообщения.
         await message.answer_photo(
             photo=photo,
-            caption="📸 Вот ваше фото профиля.", # Можно оставить пустым или с подписью
             reply_markup=ReplyKeyboardRemove()
         )
     else:
         # Если фото нет, все равно нужно убрать клавиатуру перед текстом.
         # Отправляем невидимое сообщение (с эмодзи) только для сброса кнопок.
         # Это единственный способ сбросить клавиатуру, если нет фото.
-        await message.answer("⠀", reply_markup=ReplyKeyboardRemove())
+        await message.answer(".", reply_markup=ReplyKeyboardRemove())
 
     # ==========================================
     # ШАГ 2: ОТПРАВКА ПРОФИЛЯ (ТЕКСТ + КНОПКИ)
@@ -2161,7 +2195,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_MINE)
 
     text = (
-        f"⛏ Красава, +{MINE_REWARD:,} ₽!\n"
+        f"⛏ Красава, +{MINE_REWARD:,} ₽ +{XP_PER_MINE} XP!\n"
         f"Баланс: {new_balance:,} ₽"
     )
     await message.answer(text)
