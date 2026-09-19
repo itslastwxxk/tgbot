@@ -196,6 +196,7 @@ REFERRAL_NEWBIE_BONUS = 5000   # бонус новичку за регистра
 MINE_REWARD = 100
 MINE_COOLDOWN = 3
 MATH_REWARD = 500
+MATH_XP_REWARD = 50
 MATH_COOLDOWN = 10
 RAW_PRICE = 2
 
@@ -221,9 +222,18 @@ ROULETTE_HOUSE_RIG = 0.05
 DUEL_TIMEOUT = 3600
 DUEL_COOLDOWN = 60
 
-XP_PER_MINE = 10
-XP_PER_TRADE = 20
-XP_PER_DUEL = 35
+XP_PER_MINE = 25
+XP_PER_TRADE = 50
+XP_PER_DUEL = 100
+
+# --- ЛВЛ РАЗБЛОКИРОВКИ ---
+PROFILE_UNLOCK_LEVEL = 1
+MATH_UNLOCK_LEVEL = 3
+DUEL_UNLOCK_LEVEL = 5
+TRADING_UNLOCK_LEVEL = 10
+BUSINESS_UNLOCK_LEVEL = 10
+CASINO_UNLOCK_LEVEL = 15
+
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
 # ============================================================
@@ -1114,6 +1124,27 @@ def is_valid_name(name: str) -> bool:
         return False
     return bool(re.match(r'^[a-zA-Zа-яА-ЯёЁ0-9]+$', name))
 
+# --- Проверка доступа по уровню ---
+UNLOCK_LEVELS = {
+    "📋 Профиль": PROFILE_UNLOCK_LEVEL,
+    "🧮 Математика": MATH_UNLOCK_LEVEL,
+    "🥊 Дуэли": DUEL_UNLOCK_LEVEL,
+    "📈 Трейдинг": TRADING_UNLOCK_LEVEL,
+    "🏪 Бизнесы": BUSINESS_UNLOCK_LEVEL,
+    "🎰 Казино": CASINO_UNLOCK_LEVEL,
+}
+
+async def check_level_access(message: Message, user_id: int, required_level: int) -> bool:
+    stats = await get_user_stats(user_id)
+    level = stats["level"]
+    if level < required_level:
+        await message.answer(
+            f"🔒 Доступ откроется с {required_level} уровня.\n"
+            f"Твой уровень: {level}."
+        )
+        return False
+    return True
+
 # --- Главное меню ---
 async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     # --- Логика получения данных (без изменений) ---
@@ -1156,6 +1187,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
             await target.message.answer(text, reply_markup=get_main_keyboard())
         else:
             await target.answer(text, reply_markup=get_main_keyboard())
+
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -1522,7 +1554,7 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
         text, kb,
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
-
+    
 # --- Клавиатуры ---
 def get_main_keyboard():
     keyboard = [
@@ -1985,6 +2017,8 @@ async def process_name(message: Message, state: FSMContext):
 async def show_profile(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
+    if not await check_level_access(message, user_id, PROFILE_UNLOCK_LEVEL):
+        return
 
     # --- БЛОК РАСЧЕТА ДАННЫХ (оставь свой код) ---
     balance = await get_balance(user_id)
@@ -2523,6 +2557,8 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
 # --- ТРЕЙДИНГ ---
 @router.message(F.text == "📈 Трейдинг")
 async def handle_trading(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, TRADING_UNLOCK_LEVEL):
+        return
     user_id = message.from_user.id
     balance = await get_balance(user_id)
 
@@ -2708,6 +2744,8 @@ async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🧮 Математика")
 async def handle_math(message: Message, state: FSMContext):
     """Вход в математику — без кулдауна, первый пример сразу."""
+    if not await check_level_access(message, message.from_user.id, MATH_UNLOCK_LEVEL):
+        return
     problem_text, answer = await generate_math_problem(message.from_user.id)
     await state.update_data(math_answer=answer)
     await state.set_state(MathForm.waiting_for_answer)
@@ -2746,7 +2784,13 @@ async def process_math_answer(message: Message, state: FSMContext):
             pass
     if user_answer == correct_answer:
         new_balance = await add_to_balance(user_id, MATH_REWARD)
-        result_text = f"✅ Точно! +{MATH_REWARD:,} ₽!\nБаланс: {new_balance:,} ₽"
+        _, new_level, leveled_up = await add_xp(user_id, MATH_XP_REWARD)
+        result_text = (
+            f"✅ Точно! +{MATH_REWARD:,} ₽ и +{MATH_XP_REWARD} XP!\n"
+            f"Баланс: {new_balance:,} ₽"
+        )
+        if leveled_up:
+            await notify_level_up(user_id, new_level)
     else:
         result_text = f"❌ Мимо. Правильный ответ: {correct_answer}"
     await message.answer(result_text, reply_markup=get_math_keyboard())
@@ -2795,6 +2839,8 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🏪 Бизнесы")
 async def handle_my_businesses(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, BUSINESS_UNLOCK_LEVEL):
+        return
     await state.clear()
     user_id = message.from_user.id
     biz = await get_biz(user_id)
@@ -3170,6 +3216,8 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 
 @router.message(F.text == "🎰 Казино")
 async def show_casino(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, CASINO_UNLOCK_LEVEL):
+        return
     await state.clear()
     text = "🎰 добро пожаловать в казино 'лохотрон'\n\nЗа какой стол хочешь сесть?"
     try:
@@ -3476,6 +3524,8 @@ DICE_EMOJIS = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
 
 @router.message(F.text == "🥊 Дуэли")
 async def show_duel_menu(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, DUEL_UNLOCK_LEVEL):
+        return
     await state.clear()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
