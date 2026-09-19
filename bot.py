@@ -1858,8 +1858,8 @@ async def cmd_start(message: Message, state: FSMContext):
     await save_user_info(user_id, username)
     if username:
         _username_cache[user_id] = username.lstrip("@").lower()
-        
-@router.message(F.text == "start")
+
+@router.message(Command("start"))
 async def handle_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     
