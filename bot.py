@@ -1820,57 +1820,70 @@ async def show_profile(message: Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
 
-    # ... (твой код расчета статистики) ...
-    # Для краткости я его скрыл, оставь свой блок расчета здесь
+    # --- БЛОК РАСЧЕТА ДАННЫХ (оставь свой код) ---
     balance = await get_balance(user_id)
     stats = await get_user_stats(user_id)
     name = await get_user_name(user_id) or "Игрок"
+
     level = stats["level"]
     total_xp = stats["xp"]
     xp_needed = xp_for_next_level(level)
     xp_earned = xp_in_current_level(total_xp, level)
     percent = min(100, int((xp_earned / xp_needed) * 100)) if xp_needed > 0 else 100
+
     bar_len = 15
     filled = percent * bar_len // 100
     bar = "█" * filled + "░" * (bar_len - filled)
 
-    text = (
+    profile_text = (
         f"📋 Профиль: {name}\n\n"
         f"💰 Баланс: {balance:,} ₽\n"
         f"📈 Уровень: {level}\n"
         f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
         f"📊 [{bar}] {percent}%"
     )
+    # -------------------------------------------
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
     ])
 
+    # Проверяем наличие картинки
+    photo_path = "images/profile.png"
+    has_photo = False
+    
     try:
-        photo = FSInputFile("images/profile.png")
+        photo = FSInputFile(photo_path)
+        has_photo = True
     except FileNotFoundError:
-        photo = None
+        has_photo = False
 
-    if photo:
-        # ШАГ 1: Отправляем фото. 
-        # ReplyKeyboardRemove() здесь критически важен — он убирает кнопки внизу.
-        # В ЭТОМ сообщении inline кнопок быть не может (ограничение Telegram).
+    # ==========================================
+    # ШАГ 1: ОТПРАВКА ФОТО И УДАЛЕНИЕ КЛАВИАТУРЫ
+    # ==========================================
+    if has_photo:
+        # Отправляем фото. ReplyKeyboardRemove() здесь критически важен!
+        # Он убирает reply-клавиатуру в момент отправки этого сообщения.
         await message.answer_photo(
             photo=photo,
-            caption=text,
+            caption="📸 Вот ваше фото профиля.", # Можно оставить пустым или с подписью
             reply_markup=ReplyKeyboardRemove()
         )
-        
-        # ШАГ 2: Сразу отправляем кнопки отдельным сообщением.
-        # Пользователь видит их сразу под фото.
-        await message.answer(
-            text="", 
-            reply_markup=kb
-        )
     else:
-        # Если фото нет, просто текст с кнопками. Клавиатура внизу исчезнет сама,
-        # так как мы не передаем туда ReplyKeyboardMarkup.
-        await message.answer(text, reply_markup=kb)
+        # Если фото нет, все равно нужно убрать клавиатуру перед текстом.
+        # Отправляем невидимое сообщение (с эмодзи) только для сброса кнопок.
+        # Это единственный способ сбросить клавиатуру, если нет фото.
+        await message.answer("⠀", reply_markup=ReplyKeyboardRemove())
+
+    # ==========================================
+    # ШАГ 2: ОТПРАВКА ПРОФИЛЯ (ТЕКСТ + КНОПКИ)
+    # ==========================================
+    # Отправляем текст профиля с inline-кнопками.
+    # К этому моменту reply-клавиатура уже должна быть убрана.
+    await message.answer(
+        text=profile_text,
+        reply_markup=kb
+    )
 
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
