@@ -177,11 +177,11 @@ GREETINGS = [
 # ============================================================
 # КОНСТАНТЫ ЕЖЕДНЕВНОГО БОНУСА
 # ============================================================
-DAILY_BONUS_BASE = 5000          # базовая награда
-DAILY_BONUS_STREAK_MULT = 0.2    # +20% за каждый день стрика
+DAILY_BONUS_BASE = 3000          # базовая награда
+DAILY_BONUS_STREAK_MULT = 0.20    # +20% за каждый день стрика
 DAILY_BONUS_MAX_STREAK = 100     # потолок множителя
-DAILY_BONUS_RANDOM_MIN = 1000    # случайная прибавка — минимум
-DAILY_BONUS_RANDOM_MAX = 3000    # случайная прибавка — максимум
+DAILY_BONUS_RANDOM_MIN = 500    # случайная прибавка — минимум
+DAILY_BONUS_RANDOM_MAX = 2000    # случайная прибавка — максимум
 DAILY_BONUS_COOLDOWN = 86400     # 24 часа
 
 # ============================================================
@@ -193,36 +193,36 @@ REFERRAL_NEWBIE_BONUS = 5000   # бонус новичку за регистра
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
-MINE_REWARD = 200
-MINE_COOLDOWN = 5
-MATH_REWARD = 400
+MINE_REWARD = 100
+MINE_COOLDOWN = 3
+MATH_REWARD = 500
 MATH_COOLDOWN = 10
-RAW_PRICE = 1
+RAW_PRICE = 2
 
 PICKAXE_LEVELS = [
-    {"name": "Деревянная",  "reward": 200,   "cost": 0},
-    {"name": "Каменная",    "reward": 400,   "cost": 10_000},
-    {"name": "Железная",    "reward": 700,   "cost": 50_000},
-    {"name": "Золотая",     "reward": 1200,  "cost": 200_000},
-    {"name": "Алмазная",    "reward": 2000,  "cost": 1_000_000},
-    {"name": "Незеритовая", "reward": 3500,  "cost": 5_000_000},
+    {"name": "Деревянная",  "reward": 10,   "cost": 0},
+    {"name": "Каменная",    "reward": 50,   "cost": 500},
+    {"name": "Железная",    "reward": 150,   "cost": 3000},
+    {"name": "Золотая",     "reward": 300,  "cost": 30000},
+    {"name": "Алмазная",    "reward": 600,  "cost": 100000},
+    {"name": "Незеритовая", "reward": 1200,  "cost": 180000},
 ]
 
-TRADING_MIN_BALANCE = 25000
+TRADING_MIN_BALANCE = 20000
 
 TRADING_MODES = {
-    "low": {"multiplier": 1.2, "chance": 0.7},
-    "mid": {"multiplier": 2.0, "chance": 0.5},
-    "high": {"multiplier": 5.0, "chance": 0.2},
+    "low":  {"multiplier": 1.2, "chance": 0.75},  # EV = -10% (казино в плюсе)
+    "mid":  {"multiplier": 2.0, "chance": 0.48},  # EV = -4%
+    "high": {"multiplier": 5.0, "chance": 0.18},  # EV = -10%
 }
 
 ROULETTE_HOUSE_RIG = 0.05
-DUEL_TIMEOUT = 3600 # 60 минут на принятие вызова
-DUEL_COOLDOWN = 30       # кулдаун дуэли в секундах
+DUEL_TIMEOUT = 3600
+DUEL_COOLDOWN = 60
 
-XP_PER_MINE = 10         # XP за фарм в шахте
-XP_PER_TRADE = 25        # XP за сделку в трейдинге
-XP_PER_DUEL = 40         # XP за участие в дуэли
+XP_PER_MINE = 10
+XP_PER_TRADE = 20
+XP_PER_DUEL = 35
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
 # ============================================================
@@ -1980,9 +1980,6 @@ async def process_name(message: Message, state: FSMContext):
     await message.answer(f"👍 База, {name}! Ты в игре.{ref_bonus_text}")
     await send_main_menu(message, user_id)
 
-from aiogram.types import ReplyKeyboardRemove, FSInputFile
-from aiogram.exceptions import TelegramBadRequest
-
 @router.message(F.text == "📋 Профиль")
 async def show_profile(message: Message, state: FSMContext):
     await state.clear()
@@ -2874,12 +2871,15 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         if existing:
             await callback.answer("У тебя уже есть бизнес! Сначала продай его.", show_alert=True)
             return
+        balance = await get_balance(user_id)
+        if balance < biz_def["price"]:
+            await callback.answer("Не хватает денег!", show_alert=True)
+            return
+        await callback.answer()
         ok = await deduct_balance(user_id, biz_def["price"])
         if not ok:
             await callback.answer("Не хватает денег!", show_alert=True)
             return
-        await callback.answer()
-        await deduct_balance(user_id, -biz_def["price"])
         new_biz = {
             "name": biz_def["name"],
             "price": biz_def["price"],
@@ -2943,14 +2943,21 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         if cost is None:
             await callback.answer("Максимальный уровень!", show_alert=True)
             return
-        if balance < cost:
-            await callback.answer(f"Не хватает {cost - balance:,} ₽", show_alert=True)
-            return
-        await callback.answer()
-        ok = await deduct_balance(user_id, cost)
-        if not ok:
-            await callback.answer("Не хватает денег!", show_alert=True)
-            return
+        if source == "user":
+            balance = await get_balance(user_id)
+            if balance < cost:
+                await callback.answer(f"Не хватает {cost - balance:,} ₽", show_alert=True)
+                return
+            await callback.answer()
+            ok = await deduct_balance(user_id, cost)
+            if not ok:
+                await callback.answer("Не хватает денег!", show_alert=True)
+                return
+        else:
+            biz_balance = biz.get("balance", 0)
+            if biz_balance < cost:
+                await callback.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽", show_alert=True)
+                return
             await callback.answer()
             biz["balance"] = biz_balance - cost
         biz["level"] = biz.get("level", 1) + 1
@@ -3338,7 +3345,6 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer()
-    await deduct_balance(user_id, -amount)
 
     last_result_message_id = state_data.get("last_result_message_id")
     chat_id = callback.message.chat.id
