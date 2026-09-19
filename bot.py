@@ -1858,14 +1858,16 @@ async def cmd_start(message: Message, state: FSMContext):
     await save_user_info(user_id, username)
     if username:
         _username_cache[user_id] = username.lstrip("@").lower()
-@router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
+        
+@router.message(F.text == "start")
+async def handle_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    username = message.from_user.username
-    await save_user_info(user_id, username)
-    if username:
-        _username_cache[user_id] = username.lstrip("@").lower()
+    
+    # Очищаем состояние, если необходимо
+    await state.clear()
+    
+    # Отправляем начальное меню
+    await send_main_menu(message, user_id)
 
     # --- Парсим реферальный payload ---
     referrer_id = None
@@ -1994,7 +1996,7 @@ async def process_name(message: Message, state: FSMContext):
     tutorial_done = await redis_client.hget(f"user:{user_id}", "tutorial_done")
     if not tutorial_done:
         await redis_client.hset(f"user:{user_id}", "tutorial_step", "mine")
-    await message.answer(f"👍 База, {name}! Ты в игре.{ref_bonus_text}")
+    await message.answer(f"{ref_bonus_text}")
     if not tutorial_done:
         await message.answer(
             "🎓 Обучение новичка — шаг 1/2\n\n"
