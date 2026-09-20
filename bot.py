@@ -174,6 +174,14 @@ GREETINGS = [
     "салам, {name}.",
     "сап, {name}."
 ]
+TOP_PROMPT_VARIANTS = [
+    "🏆 выбери рейтинг:",
+    "📊 посмотри топ игроков:",
+    "🔥 рейтинг ждёт твоего выбора:",
+    "⚡ кто сейчас в топе? Выбери категорию:",
+    "🎯 какой рейтинг хочешь увидеть?",
+    "🌟 выбери, кого будем сравнивать:",
+]
 
 # ============================================================
 # КОНСТАНТЫ ЕЖЕДНЕВНОГО БОНУСА
@@ -184,6 +192,60 @@ DAILY_BONUS_MAX_STREAK = 100     # потолок множителя
 DAILY_BONUS_RANDOM_MIN = 500    # случайная прибавка — минимум
 DAILY_BONUS_RANDOM_MAX = 2000    # случайная прибавка — максимум
 DAILY_BONUS_COOLDOWN = 86400     # 24 часа
+
+# ============================================================
+# КОНСТАНТЫ НАГРАД ЗА ТОП (баланс, рефералы, уровень)
+# ============================================================
+TOP_REWARD_INTERVAL = 3 * 86400   # раз в 3 дня
+TOP_REWARD_CHECK_INTERVAL = 5 * 60   # как часто проверять, не пора ли награждать
+
+BALANCE_TOP_REWARDS = {
+    1: 100000,
+    2: 60000,
+    3: 30000,
+    4: 15000,
+    5: 15000,
+}
+REFERRAL_TOP_REWARDS = {
+    1: 50000,
+    2: 30000,
+    3: 15000,
+    4: 7000,
+    5: 7000,
+}
+LEVEL_TOP_REWARDS = {
+    1: 50000,
+    2: 30000,
+    3: 15000,
+    4: 7000,
+    5: 7000,
+}
+
+# Конфиг для фоновой задачи: (название, ключ сортированного множества в Redis,
+# таблица наград, ключ хранения времени последней выдачи, подпись для сообщения)
+TOP_REWARD_CONFIGS = [
+    {
+        "key": "leaderboard:balance",
+        "rewards": BALANCE_TOP_REWARDS,
+        "last_ts_key": "top_reward:balance:last_ts",
+        "label": "балансу",
+        "emoji": "💰",
+    },
+    {
+        "key": "referrals_top",
+        "rewards": REFERRAL_TOP_REWARDS,
+        "last_ts_key": "top_reward:referrals:last_ts",
+        "label": "рефералам",
+        "emoji": "👥",
+    },
+    {
+        "key": "leaderboard:level",
+        "rewards": LEVEL_TOP_REWARDS,
+        "last_ts_key": "top_reward:level:last_ts",
+        "label": "уровню",
+        "emoji": "📈",
+    },
+]
 
 # ============================================================
 # КОНСТАНТЫ РЕФЕРАЛЬНОЙ СИСТЕМЫ
@@ -200,13 +262,13 @@ MATH_COOLDOWN = 10
 RAW_PRICE = 1
 
 PICKAXE_LEVELS = [
-    {"name": "Деревянная",  "reward": 10,   "cost": 0},
-    {"name": "Каменная",    "reward": 50,   "cost": 100},
-    {"name": "Железная",    "reward": 150,   "cost": 1000},
-    {"name": "Золотая",     "reward": 300,  "cost": 4000},
-    {"name": "Алмазная",    "reward": 600,  "cost": 12000},
-    {"name": "Незеритовая", "reward": 1200,  "cost": 36000},
-    {"name": "Аметистовая", "reward": 2400,  "cost": 84000},
+    {"name": "деревянная",  "reward": 10,   "cost": 0},
+    {"name": "каменная",    "reward": 50,   "cost": 100},
+    {"name": "железная",    "reward": 150,   "cost": 1000},
+    {"name": "золотая",     "reward": 300,  "cost": 4000},
+    {"name": "алмазная",    "reward": 600,  "cost": 12000},
+    {"name": "незеритовая", "reward": 1200,  "cost": 36000},
+    {"name": "аметистовая", "reward": 2400,  "cost": 84000},
 ]
 
 TRADING_MIN_BALANCE = 20000
@@ -439,13 +501,12 @@ def biz_manage_view(biz):
         f"📦 Расход сырья: {consumption:,}/мин\n"
         f"💸 Чистыми: {net_profit:,} ₽/мин — в плюсах\n"
         f"📦 Склад: {biz.get('raw_stock', 0):,}/{biz.get('raw_capacity', 30000):,}\n"
-        f"⏳ Хватит на: {format_time(time_left)}\n"
         f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
     )
     if biz.get("raw_stock", 0) <= 0:
-        text += "⚠️ Бизнес встал — сырья ноль!\nЖми «📦 Склад», затарься."
+        text += "⚠️ бизнес встал — сырья ноль!\nжми «📦 Склад», затарься."
     else:
-        text += "✅ Бизнес работает!"
+        text += "✅ бизнес работает!"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -463,7 +524,7 @@ def biz_manage_view(biz):
 
 
 def biz_no_biz_view():
-    text = "🏪 Бизнесы\n\nУ тебя нет бизнеса.\nЖми кнопку ниже, выбери себе точку"
+    text = "🏪 Бизнесы\n\nу тебя нет бизнеса.\nжми кнопку ниже, выбери себе точку"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Купить бизнес", callback_data="biz_car:0")]
     ])
@@ -486,9 +547,6 @@ def biz_carousel_view(idx, balance):
         f"📦 Расход сырья: {consumption:,}/мин\n"
         f"💸 Чистыми: {net:,} ₽/мин\n"
         f"📦 Склад: {biz['raw_capacity']:,}\n"
-        f"💸 Заполнить склад: {full_stock_cost:,} ₽\n"
-        f"⏳ Полного склада хватит на: {format_time(run_time)}\n"
-        f"📊 Окупится за: {format_time(payback_min)}\n\n"
         f"Твой баланс: {balance:,} ₽"
     )
     nav = []
@@ -515,8 +573,7 @@ def biz_warehouse_view(biz):
         f"📦 Склад «{biz['name']}»\n\n"
         f"Сырьё: {stock:,}/{capacity:,}\n"
         f"Цена: {RAW_PRICE} ₽ за штуку\n"
-        f"📦 Уходит: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
-        f"⏳ Хватит на: {format_time(time_left)}\n"
+        f"📦 Расход: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
         f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
         f"Откуда скидываем?"
     )
@@ -532,7 +589,7 @@ def biz_upgrade_view(biz):
     level = biz.get("level", 1)
     cost = biz_upgrade_cost(biz)
     if cost is None:
-        text = f"🚀 «{biz['name']}»\n\nУровень: {level}/3 — потолок, выше не прыгнешь!"
+        text = f"🚀 «{biz['name']}»\n\nуровень: {level}/3 — твой бизнес полностью вкачен!"
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")]
         ])
@@ -575,8 +632,8 @@ def biz_upgrade_view(biz):
 def biz_sell_view(biz):
     sell_price = biz_sell_price(biz)
     text = (
-        f"💸 Продаём «{biz['name']}»\n\n"
-        f"На руки получишь: {sell_price:,} ₽\n"
+        f"💸 Продажа «{biz['name']}»\n\n"
+        f"на руки получишь: {sell_price:,} ₽\n"
         f"(50% цены + 50% сырья + баланс бизнеса)"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -954,9 +1011,9 @@ def get_pickaxe_upgrade_view(current_level: int, balance: int):
     if current_level >= len(PICKAXE_LEVELS) - 1:
         text = (
             f"🔧 Прокачка кирки\n\n"
-            f"Твоя кирка: {current['name']} (макс. уровень!)\n"
-            f"💰 Доход: {current['reward']:,} ₽ за клик\n\n"
-            f"Выше некуда — ты на вершине ⛏"
+            f"твоя кирка: {current['name']} (макс. уровень!)\n"
+            f"💰 доход: {current['reward']:,} ₽ за клик\n\n"
+            f"поздравляю, ты достиг максимальной кирки ⛏"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="pickaxe_back")]
@@ -968,10 +1025,10 @@ def get_pickaxe_upgrade_view(current_level: int, balance: int):
 
     text = (
         f"🔧 Прокачка кирки\n\n"
-        f"Текущая: {current['name']} — {current['reward']:,} ₽/клик\n"
-        f"Следующая: {nxt['name']} — {nxt['reward']:,} ₽/клик\n"
-        f"💸 Цена: {nxt['cost']:,} ₽\n"
-        f"💰 Баланс: {balance:,} ₽"
+        f"текущая: {current['name']} — {current['reward']:,} ₽/клик\n"
+        f"следующая: {nxt['name']} — {nxt['reward']:,} ₽/клик\n"
+        f"💸 цена: {nxt['cost']:,} ₽\n"
+        f"💰 баланс: {balance:,} ₽"
     )
 
     if can_afford:
@@ -1046,11 +1103,14 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
 
 async def notify_level_up(user_id: int, new_level: int):
     """Отправляет сообщение о новом уровне."""
+    text = f"🎉 LEVEL UP! Ты достиг {new_level} уровня!"
+
+    unlocked = [name for name, lvl in UNLOCK_LEVELS.items() if lvl == new_level]
+    if unlocked:
+        text += "\n\nтеперь доступно:\n" + "\n".join(f"• {name}" for name in unlocked)
+
     try:
-        await bot.send_message(
-            user_id,
-            f"🎉 LEVEL UP! Ты достиг {new_level} уровня!"
-        )
+        await bot.send_message(user_id, text)
     except Exception:
         pass
 
@@ -1141,8 +1201,8 @@ async def check_level_access(message: Message, user_id: int, required_level: int
     level = stats["level"]
     if level < required_level:
         await message.answer(
-            f"🔒 Доступ откроется с {required_level} уровня.\n"
-            f"Твой уровень: {level}."
+            f"🔒 доступ откроется с {required_level} уровня.\n"
+            f"твой уровень: {level}."
         )
         return False
     return True
@@ -1604,7 +1664,7 @@ def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🥊 Дуэли")],
-        [KeyboardButton(text="🎁 Ежедневный бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
+        [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
         [KeyboardButton(text="📋 Профиль")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -1709,11 +1769,11 @@ def get_trading_mode_keyboard():
     """Клавиатура выбора риска"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🟢 Низкий риск (x1.3)", callback_data="trade_mode:low"),
-            InlineKeyboardButton(text="🟡 Средний риск (x2.0)", callback_data="trade_mode:mid"),
+            InlineKeyboardButton(text="🟢 Низкий (x1.2)", callback_data="trade_mode:low"),
+            InlineKeyboardButton(text="🟡 Средний (x2.0)", callback_data="trade_mode:mid"),
         ],
         [
-            InlineKeyboardButton(text="🔴 Высокий риск (x5.0)", callback_data="trade_mode:high"),
+            InlineKeyboardButton(text="🔴 Высокий (x5.0)", callback_data="trade_mode:high"),
         ],
         [
             InlineKeyboardButton(text="📜 История сделок", callback_data="trade_history:0"),
@@ -1846,7 +1906,7 @@ async def handle_trade_history(callback: CallbackQuery, state: FSMContext):
 async def handle_trade_history_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     balance = await get_balance(callback.from_user.id)
-    text = f"💰 Твой баланс: {balance:,} ₽\nВыбери уровень риска:"
+    text = f"💰 твой баланс: {balance:,} ₽\nвыбери уровень риска:"
     try:
         await callback.message.edit_text(text, reply_markup=get_trading_mode_keyboard())
     except TelegramBadRequest:
@@ -1962,8 +2022,8 @@ async def cmd_start(message: Message, state: FSMContext):
         result = await process_referral(user_id, referrer_id)
         if result:
             await message.answer(
-                f"🎁 Тебя пригласил {result[1]}! "
-                f"Бонус за регистрацию: +{REFERRAL_NEWBIE_BONUS:,} ₽"
+                f"🎁 тебя пригласил {result[1]}! "
+                f"бонус за регистрацию: +{REFERRAL_NEWBIE_BONUS:,} ₽"
             )
 
     await send_main_menu(message, user_id)
@@ -2047,8 +2107,8 @@ async def process_name(message: Message, state: FSMContext):
         result = await process_referral(user_id, pending_referrer)
         if result:
             ref_bonus_text = (
-                f"\n🎁 Тебя пригласил {result[1]}! "
-                f"Бонус: +{REFERRAL_NEWBIE_BONUS:,} ₽"
+                f"\n🎁 тебя пригласил {result[1]}! "
+                f"бонус: +{REFERRAL_NEWBIE_BONUS:,} ₽"
             )
 
     # Новый игрок проходит короткое обучение; флаг сохраняется в Redis.
@@ -2085,9 +2145,9 @@ async def show_profile(message: Message, state: FSMContext):
     bar = "█" * filled + "░" * (bar_len - filled)
 
     profile_text = (
-        f"📋 Профиль: {name}\n\n"
-        f"💰 Баланс: {balance:,} ₽\n"
-        f"📈 Уровень: {level}\n"
+        f"📋 твой профиль\n\n"
+        f"💰 баланс: {balance:,} ₽\n"
+        f"📈 уровень: {level}\n"
         f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
         f"📊 [{bar}] {percent}%"
     )
@@ -2157,12 +2217,13 @@ async def show_top(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="📈 Топ по уровню", callback_data="public_top:level")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="public_top:back_to_main")],
     ])
+    prompt_text = random.choice(TOP_PROMPT_VARIANTS)
     try:
         photo = FSInputFile("images/123.png")
         await message.answer_photo(photo=photo, reply_markup=ReplyKeyboardRemove())
     except FileNotFoundError:
         await message.answer("🏆", reply_markup=ReplyKeyboardRemove())
-    await message.answer("🏆 Выбери рейтинг:", reply_markup=kb)
+    await message.answer(prompt_text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("public_top:"))
@@ -2200,7 +2261,7 @@ async def show_public_top(callback: CallbackQuery):
         if not balances:
             result_text = "🏆 Топ по балансу\n\nПока пусто — никто не играл."
         else:
-            result_text = "💰 Топ по балансу:\n\n"
+            result_text = "💰 топ по балансу:\n\n"
             for i, (uid, name, balance) in enumerate(balances[:10], 1):
                 result_text += f"{i}. {name} — {balance:,} ₽\n"
             if len(balances) > 10:
@@ -2210,7 +2271,7 @@ async def show_public_top(callback: CallbackQuery):
         if not top:
             result_text = "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил."
         else:
-            result_text = "👥 Топ по рефералам:\n\n"
+            result_text = "👥 топ по рефералам:\n\n"
             for i, (uid, count) in enumerate(top, 1):
                 name = await get_user_name(uid) or "без ника"
                 result_text += f"{i}. {name} — {count} реф.\n"
@@ -2219,7 +2280,7 @@ async def show_public_top(callback: CallbackQuery):
         if not top:
             result_text = "📈 Топ по уровням\n\nПока пусто — никто не получил XP."
         else:
-            result_text = "📈 Топ по уровням:\n\n"
+            result_text = "📈 топ по уровням:\n\n"
             for i, (uid, lvl) in enumerate(top, 1):
                 name = await get_user_name(uid) or "без ника"
                 result_text += f"{i}. {name} — {lvl} ур.\n"
@@ -2237,7 +2298,7 @@ async def show_public_top(callback: CallbackQuery):
 # ============================================================
 # ЕЖЕДНЕВНЫЙ БОНУС — ХЕНДЛЕРЫ
 # ============================================================
-@router.message(F.text == "🎁 Ежедневный бонус")
+@router.message(F.text == "🎁 Бонус")
 async def handle_daily_bonus(message: Message, state: FSMContext):
     if not await check_level_access(message, message.from_user.id, BONUS_UNLOCK_LEVEL):
             return
@@ -2250,17 +2311,17 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
     if can:
         preview_amount = await daily_bonus_amount(streak)
         text = (
-            f"🎁 Ежедневный бонус\n\n"
-            f"🔥 Серия: {streak} дн. подряд\n"
-            f"💰 Сегодня получишь: ~{preview_amount:,} ₽\n\n"
-            f"Жми «Забрать», чтобы забрать награду!"
+            f"🎁 ежедневный бонус\n\n"
+            f"🔥 серия: {streak} дн. подряд\n"
+            f"💰 сегодня получишь: ~{preview_amount:,} ₽\n\n"
+            f"жми «забрать», чтобы получить награду!"
         )
         kb = get_daily_bonus_keyboard(True)
     else:
         text = (
-            f"🎁 Ежедневный бонус\n\n"
-            f"🔥 Серия: {streak} дн. подряд\n"
-            f"⏳ Бонус уже забран. Приходи через:\n"
+            f"🎁 ежедневный бонус\n\n"
+            f"🔥 серия: {streak} дн. подряд\n"
+            f"⏳ бонус уже забран. приходи через:\n"
             f"⏰ {format_cooldown(remaining)}"
         )
         kb = get_daily_bonus_keyboard(False)
@@ -2283,7 +2344,7 @@ async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
         mins = (remaining % 3600) // 60
         secs = remaining % 60
         await callback.message.edit_text(
-            f"⏳ Бонус уже забран. Приходи через {hours} ч {mins} мин {secs} сек.",
+            f"⏳ бонус уже забран. приходи через {hours} ч {mins} мин {secs} сек.",
             reply_markup=get_daily_bonus_keyboard(False)
         )
         return
@@ -2292,11 +2353,11 @@ async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
     new_balance = await get_balance(user_id)
 
     text = (
-        f"🎁 Ежедневный бонус забран!\n\n"
-        f"💰 Получено: +{amount:,} ₽\n"
-        f"🔥 Серия: {new_streak} дн. подряд\n"
-        f"💳 Баланс: {new_balance:,} ₽\n\n"
-        f"Возвращайся завтра — серия продолжится!"
+        f"🎁 ежедневный бонус забран!\n\n"
+        f"💰 получено: +{amount:,} ₽\n"
+        f"🔥 серия: {new_streak} дн. подряд\n"
+        f"💳 баланс: {new_balance:,} ₽\n\n"
+        f"возвращайся завтра — серия продолжится!"
     )
     try:
         await callback.message.edit_text(text, reply_markup=get_daily_bonus_keyboard(False))
@@ -2337,10 +2398,9 @@ async def show_mine_menu(message: Message, state: FSMContext):
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     text = (
-        f"⛏ Шахта\n\n"
-        f"🔧 Кирка: {pickaxe_name}\n"
-        f"💰 За клик: {reward:,} ₽\n"
-        f"⏳ КД: {MINE_COOLDOWN} сек\n"
+        f"⛏ ты в шахте\n\n"
+        f"🔧 кирка: {pickaxe_name}\n"
+        f"💰 за клик: {reward:,} ₽\n"
     )
     try:
         photo = FSInputFile("images/mine.png")
@@ -2412,7 +2472,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
 
     allowed, remaining = await can_farm(user_id, cooldown_seconds=MINE_COOLDOWN)
     if not allowed:
-        await message.answer(f"⏳ Осталось {remaining} сек.")
+        await message.answer(f"⏳ обожди {remaining} сек.")
         return
 
     pickaxe_lvl = await get_pickaxe_level(user_id)
@@ -2423,7 +2483,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_MINE)
 
     text = (
-        f"⛏у тебя в руках {pickaxe_name}\n+{reward:,} ₽ +{XP_PER_MINE} XP!\n"
+        f"⛏у тебя в руках {pickaxe_name} кирка\n+{reward:,} ₽ +{XP_PER_MINE} XP!\n"
         f"Баланс: {new_balance:,} ₽"
     )
     await message.answer(text)
@@ -2458,7 +2518,7 @@ async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
     pickaxe_lvl = await get_pickaxe_level(user_id)
 
     if pickaxe_lvl >= len(PICKAXE_LEVELS) - 1:
-        await callback.answer("Уже максимальный уровень!", show_alert=True)
+        await callback.answer("уже максимальный уровень!", show_alert=True)
         return
 
     nxt = PICKAXE_LEVELS[pickaxe_lvl + 1]
@@ -2483,14 +2543,13 @@ async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
         await redis_client.hset(f"user:{user_id}", "tutorial_step", "math")
 
     upgrade_msg = (
-        f"🎉 Кирка прокачана: {PICKAXE_LEVELS[pickaxe_lvl]['name']} → {nxt['name']}!\n"
-        f"Новый доход: {nxt['reward']:,} ₽/клик\n\n"
+        f"🎉 кирка улучшена: {PICKAXE_LEVELS[pickaxe_lvl]['name']} → {nxt['name']}!\n"
+        f"новый доход: {nxt['reward']:,} ₽/клик\n\n"
     )
 
     if tutorial_step == "mine":
         upgrade_msg += (
-            "\n\n🎓 Шаг 1 пройден! Теперь переходи в «🧮 Математика» "
-            "и реши пример — за правильный ответ получишь награду."
+            "\n\nтвоя первая прокачка кирки! дальше меньше!!"
         )
     try:
         await callback.message.edit_text(upgrade_msg + text, reply_markup=kb)
@@ -2522,9 +2581,8 @@ async def handle_pickaxe_back(callback: CallbackQuery, state: FSMContext):
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     text = (
         f"⛏ ты в шахте\n\n"
-        f"🔧 Кирка: {pickaxe_name}\n"
-        f"💰 За клик: {reward:,} ₽\n"
-        f"⏳ КД: {MINE_COOLDOWN} сек\n"
+        f"🔧 кирка: {pickaxe_name}\n"
+        f"💰 за клик: {reward:,} ₽\n"
     )
     await callback.message.answer(text, reply_markup=get_mine_keyboard())
 
@@ -2561,7 +2619,7 @@ async def handle_ref_top(callback: CallbackQuery):
         ok = await redis_client.set(cooldown_key, "1", nx=True, ex=60)
         if not ok:
             ttl = await redis_client.ttl(cooldown_key)
-            await callback.message.answer(f"⏳ Топ можно глянуть через {ttl} сек.")
+            await callback.message.answer(f"⏳ топ можно глянуть через {ttl} сек.")
             return
 
     top = await get_top_referrals(10)
@@ -2627,17 +2685,18 @@ async def handle_trading(message: Message, state: FSMContext):
 
     if balance < TRADING_MIN_BALANCE:
         await message.answer(
-            f"❌ Не хватает денег для трейдинга.\n"
-            f"Минимум на вход: {TRADING_MIN_BALANCE:,} ₽\n"
-            "Сначала пофарми в шахте — накопишь нужную сумму.",
+            f"❌ не хватает денег для трейдинга.\n"
+            f"минимальный порог входа: {TRADING_MIN_BALANCE:,} ₽\n"
+            "найди деньги и подключайся к трейдингу",
             reply_markup=get_work_keyboard()
         )
         return
 
-    await message.answer("📈 Трейдинг открыт!", reply_markup=ReplyKeyboardRemove())
+    await message.answer("💻", reply_markup=ReplyKeyboardRemove())
     await message.answer(
-        f"💰 Твой баланс: {balance:,} ₽\n"
-        "Выбери уровень риска:",
+        "курсы не продам\n"
+        f"💰 твой баланс: {balance:,} ₽\n"
+        "выбери уровень риска:",
         reply_markup=get_trading_mode_keyboard()
     )
 
@@ -2649,9 +2708,9 @@ async def choose_risk(callback: CallbackQuery, state: FSMContext):
 
     balance = await get_balance(callback.from_user.id)
     await callback.message.edit_text(
-        f"Режим: {mode}\n"
-        f"💰 Баланс: {balance:,} ₽\n"
-        "Введи сумму ставки (целое число больше 0):",
+        f"режим: {mode}\n"
+        f"💰 баланс: {balance:,} ₽\n"
+        "введи сумму ставки:",
         reply_markup=get_trading_result_keyboard2()
     )
     await state.set_state(TradingForm.waiting_for_amount)
@@ -2665,15 +2724,15 @@ async def process_trading_amount(message: Message, state: FSMContext):
     try:
         amount = int(message.text)
         if amount <= 0:
-            await message.answer("Сумма должна быть больше 0. Попробуй ещё раз:")
+            await message.answer("сумма должна быть больше 00. попробуй ещё раз:")
             return
     except ValueError:
-        await message.answer("Введи целое число (например, 100):")
+        await message.answer("введи целое число (например, 67):")
         return
 
     balance = await get_balance(user_id)
     if amount > balance:
-        await message.answer(f"Не хватает денег! Баланс: {balance:,} ₽\nВведи меньше:")
+        await message.answer(f"не хватает денег! баланс: {balance:,} ₽\nвведи меньше:")
         return
 
     if amount_msg_id:
@@ -2685,7 +2744,7 @@ async def process_trading_amount(message: Message, state: FSMContext):
             pass
 
     await state.update_data(amount=amount)
-    caption_text = f"📊 График актива\nСтавка: {amount:,} ₽\nКуда пойдёт график?"
+    caption_text = f"📊 график актива\nставка: {amount:,} ₽\nкуда пойдёт график?"
     photo_path = "images/graph.png"
     if not os.path.exists(photo_path):
         logger.warning(f"Файл {photo_path} не найден. Отправляем только текст.")
@@ -2699,6 +2758,13 @@ async def process_trading_amount(message: Message, state: FSMContext):
             await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
     await state.set_state(TradingForm.waiting_for_direction)
 
+TRADE_STEPS = [
+    "📊 анализирую рынок...",
+    "📈 читаю график...",
+    "🔍 ищу точку входа...",
+    "🧮 рассчитываю сделку...",
+]
+
 @router.callback_query(TradingForm.waiting_for_direction, F.data.in_({"trade_up", "trade_down"}))
 async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -2709,15 +2775,23 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
     direction = "up" if callback.data == "trade_up" else "down"
 
     if not mode or not amount:
-        await callback.answer("❌ Сессия истекла. Начни трейдинг заново.", show_alert=True)
+        await callback.answer("❌ сессия истекла. начни трейдить заново.", show_alert=True)
         await state.clear()
         return
 
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
 
-    msg = await callback.message.answer("🎲 Расчёт сделки...")
-    await asyncio.sleep(random.uniform(1.0, 1.5))
+    # Сначала отправляем первую фразу
+    msg = await callback.message.answer(TRADE_STEPS[0])
+
+    # Меняем фразы по очереди
+    for step in TRADE_STEPS[1:]:
+        await asyncio.sleep(random.uniform(0.6, 1.0))  # пауза между шагами
+        await msg.edit_text(step)
+
+    # Финальная пауза перед результатом (чтобы не было слишком быстро)
+    await asyncio.sleep(random.uniform(0.8, 1.2))
 
     info = TRADING_MODES[mode]
     won = random.random() < info["chance"]
@@ -2727,26 +2801,26 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
         profit = int(amount * multiplier) - amount
         await add_to_balance(user_id, profit)
         result_text = (
-            f"🎉 Забрал!\n"
-            f"Режим: {mode}\n"
-            f"Направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
-            f"Ставка: {amount:,} ₽\n"
-            f"Чистыми: +{profit:,} ₽ (x{multiplier})"
+            f"🎉 рынок на твоей стороне!\n"
+            f"режим: {mode}\n"
+            f"направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
+            f"ставка: {amount:,} ₽\n"
+            f"чистыми: +{profit:,} ₽ (x{multiplier})"
         )
         await log_trade(user_id, mode, amount, profit, True)
     else:
         await deduct_balance(user_id, amount)
         result_text = (
-            f"💥 Мимо...\n"
-            f"Режим: {mode}\n"
-            f"Направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
-            f"Ставка: {amount:,} ₽\n"
-            f"Ставка сгорела."
+            f"💥 сделка ушла в минус...\n"
+            f"режим: {mode}\n"
+            f"направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
+            f"ставка: {amount:,} ₽ сгорела\n"
         )
         await log_trade(user_id, mode, amount, -amount, False)
 
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_TRADE)
     await msg.edit_text(result_text, reply_markup=get_trading_result_keyboard())
+
     if leveled_up:
         await notify_level_up(user_id, new_level)
 
@@ -2762,7 +2836,7 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
         except TelegramBadRequest:
             pass
         await callback.message.answer(
-            f"❌ Не хватает денег для трейдинга (нужно {TRADING_MIN_BALANCE:,} ₽).",
+            f"❌ не хватает денег для трейдинга (нужно {TRADING_MIN_BALANCE:,} ₽).",
             reply_markup=get_work_keyboard()
         )
         await state.clear()
@@ -2774,8 +2848,8 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
         pass
 
     await callback.message.answer(
-        f"💰 Твой баланс: {balance:,} ₽\n"
-        "Выбери уровень риска:",
+        f"💰 твой баланс: {balance:,} ₽\n"
+        "выбери уровень риска:",
         reply_markup=get_trading_mode_keyboard()
     )
     await state.clear()
@@ -2788,7 +2862,7 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("🚪 Вышел из трейдинга.", reply_markup=get_work_keyboard())
+    await callback.message.answer("ты закончил трейдинг, надеюсь ты в плюсе", reply_markup=get_work_keyboard())
 
 @router.callback_query(F.data == "trade_cancel")
 async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
@@ -2798,7 +2872,7 @@ async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("❌ Ставка отменена.", reply_markup=get_work_keyboard())
+    await callback.message.answer("❌ ставка отменена.", reply_markup=get_work_keyboard())
 
 # ============================================================
 # МАТЕМАТИКА
@@ -2814,15 +2888,25 @@ async def handle_math(message: Message, state: FSMContext):
     await state.set_state(MathForm.waiting_for_answer)
 
     await message.answer(
-        f"🧮 Математика! За правильный ответ: {MATH_REWARD:,} ₽",
+        f"🧮",
         reply_markup=ReplyKeyboardRemove()
     )
     sent = await message.answer(
-        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nПиши ответ числом:",
+        f"реши пример!\n\n<b>{problem_text}</b>\n\nпиши ответ числом:",
         parse_mode="HTML",
         reply_markup=get_math_keyboard()
     )
     await state.update_data(problem_msg_id=sent.message_id)
+
+MATH_CORRECT_PHRASES = [
+    "✅ Точно!",
+    "🎉 Молодец!",
+    "🔥 Верно!",
+    "💯 Попадание!",
+    "🚀 Точно в цель!",
+    "🌟 Ты гений!",
+    "📊 Данные сошлись!"
+]
 
 @router.message(MathForm.waiting_for_answer)
 async def process_math_answer(message: Message, state: FSMContext):
@@ -2831,12 +2915,12 @@ async def process_math_answer(message: Message, state: FSMContext):
     correct_answer = data.get("math_answer")
     problem_msg_id = data.get("problem_msg_id")
     if correct_answer is None:
-        await message.answer("Этот пример уже решён. Жми «Следующий»!")
+        await message.answer("этот пример уже решён. жми «Следующий»!")
         return
     try:
         user_answer = int(message.text.strip())
     except ValueError:
-        await message.answer("❌ Пиши число — ответ примера:")
+        await message.answer("❌ пиши число(например:67)")
         return
     if problem_msg_id:
         try:
@@ -2848,8 +2932,12 @@ async def process_math_answer(message: Message, state: FSMContext):
     if user_answer == correct_answer:
         new_balance = await add_to_balance(user_id, MATH_REWARD)
         _, new_level, leveled_up = await add_xp(user_id, MATH_XP_REWARD)
+
+        # Выбираем случайную фразу
+        prefix = random.choice(MATH_CORRECT_PHRASES)
+
         result_text = (
-            f"✅ Точно! +{MATH_REWARD:,} ₽ и +{MATH_XP_REWARD} XP!\n"
+            f"{prefix} +{MATH_REWARD:,} ₽ и +{MATH_XP_REWARD} XP!\n"
             f"Баланс: {new_balance:,} ₽"
         )
         if leveled_up:
@@ -2880,7 +2968,7 @@ async def process_math_next(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MathForm.waiting_for_answer)
 
     sent = await callback.message.answer(
-        f"🧮 Реши пример!\n\n<b>{problem_text}</b>\n\nПиши ответ числом:",
+        f"🧮 реши пример!\n\n<b>{problem_text}</b>\n\nпиши ответ числом:",
         parse_mode="HTML",
         reply_markup=get_math_keyboard()
     )
@@ -2894,7 +2982,7 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("🚪 Вышел из математики.", reply_markup=get_work_keyboard())
+    await callback.message.answer("🚪 ты вышел с математики(правильно сделал)", reply_markup=get_work_keyboard())
 
 # ============================================================
 # БИЗНЕС
@@ -2943,7 +3031,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         except TelegramBadRequest:
             pass
         await callback.message.answer(
-            "Выбирай, чем займешься:",
+            "выбирай, чем займешься:",
             reply_markup=get_work_keyboard()
         )
         return
@@ -2979,16 +3067,16 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         biz_def = BUSINESS_LIST[idx]
         existing = await get_biz(user_id)
         if existing:
-            await callback.answer("У тебя уже есть бизнес! Сначала продай его.", show_alert=True)
+            await callback.answer("у тебя уже есть бизнес! сначала продай его.", show_alert=True)
             return
         balance = await get_balance(user_id)
         if balance < biz_def["price"]:
-            await callback.answer("Не хватает денег!", show_alert=True)
+            await callback.answer("не хватает денег!", show_alert=True)
             return
         await callback.answer()
         ok = await deduct_balance(user_id, biz_def["price"])
         if not ok:
-            await callback.answer("Не хватает денег!", show_alert=True)
+            await callback.answer("не хватает денег!", show_alert=True)
             return
         new_biz = {
             "name": biz_def["name"],
@@ -3004,7 +3092,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, new_biz)
         text, kb = biz_manage_view(new_biz)
         await callback.message.edit_text(
-            f"✅ Взял «{biz_def['name']}» за {biz_def['price']:,} ₽!\n\n" + text,
+            f"✅ взял «{biz_def['name']}» за {biz_def['price']:,} ₽!\n\n" + text,
             reply_markup=kb
         )
         return
@@ -3034,10 +3122,10 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         space = capacity - stock
         source_text = "основного баланса" if source == "user" else "со счёта бизнеса"
         await callback.message.answer(
-            f"Введи количество сырья для закупки.\n"
-            f"Цена: {RAW_PRICE} ₽ за штуку\n"
-            f"Свободно на складе: {space:,}\n"
-            f"Оплата: {source_text}"
+            f"введи количество сырья для закупки.\n"
+            f"цена: {RAW_PRICE} ₽ за штуку\n"
+            f"свободно на складе: {space:,}\n"
+            f"оплата: {source_text}"
         )
         return
 
@@ -3056,17 +3144,17 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         if source == "user":
             balance = await get_balance(user_id)
             if balance < cost:
-                await callback.answer(f"Не хватает {cost - balance:,} ₽", show_alert=True)
+                await callback.answer(f"не хватает {cost - balance:,} ₽", show_alert=True)
                 return
             await callback.answer()
             ok = await deduct_balance(user_id, cost)
             if not ok:
-                await callback.answer("Не хватает денег!", show_alert=True)
+                await callback.answer("не хватает денег!", show_alert=True)
                 return
         else:
             biz_balance = biz.get("balance", 0)
             if biz_balance < cost:
-                await callback.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽", show_alert=True)
+                await callback.answer(f"на счёте бизнеса не хватает {cost - biz_balance:,} ₽", show_alert=True)
                 return
             await callback.answer()
             biz["balance"] = biz_balance - cost
@@ -3091,9 +3179,9 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         sell_price = biz_sell_price(biz)
         text = (
-            f"⚠️ Точно продаёшь «{biz['name']}»?\n\n"
-            f"На руки получишь: {sell_price:,} ₽\n\n"
-            f"После продажи бизнес исчезнет, бабки упадут на баланс."
+            f"⚠️ ты точно хочешь продать «{biz['name']}»?\n\n"
+            f"на руки получишь: {sell_price:,} ₽\n\n"
+            f"после продажи бизнес исчезнет, бабки упадут на баланс"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -3111,7 +3199,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, None)
         text, kb = biz_no_biz_view()
         await callback.message.edit_text(
-            f"✅ Бизнес продан! На руках: {sell_price:,} ₽.\n\n" + text,
+            f"✅ бизнес продан! на руках: {sell_price:,} ₽.\n\n" + text,
             reply_markup=kb
         )
         return
@@ -3165,7 +3253,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     space = capacity - stock
 
     if amount > space:
-        await message.answer(f"На складе не хватает места! Свободно: {space:,}\nВведи меньше:")
+        await message.answer(f"на складе не хватает места! Свободно: {space:,}\nвведи меньше:")
         return
 
     cost = amount * RAW_PRICE
@@ -3173,7 +3261,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     if source == "user":
         balance = await get_balance(user_id)
         if balance < cost:
-            await message.answer(f"Не хватает {cost - balance:,} ₽. Баланс: {balance:,} ₽\nВведи меньше:")
+            await message.answer(f"не хватает {cost - balance:,} ₽. баланс: {balance:,} ₽\nвведи меньше:")
             return
         ok = await deduct_balance(user_id, cost)
         if not ok:
@@ -3182,7 +3270,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     else:
         biz_balance = biz.get("balance", 0)
         if biz_balance < cost:
-            await message.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽. Там: {biz_balance:,} ₽\nВведи меньше:")
+            await message.answer(f"На счёте бизнеса не хватает {cost - biz_balance:,} ₽. Там: {biz_balance:,} ₽\nвведи меньше:")
             return
         biz["balance"] = biz_balance - cost
 
@@ -3193,8 +3281,8 @@ async def process_raw_amount(message: Message, state: FSMContext):
     await state.clear()
 
     await message.answer(
-        f"✅ Затарил {amount:,} шт. сырья за {cost:,} ₽\n"
-        f"Склад: {biz['raw_stock']:,}/{capacity:,}"
+        f"✅ затарил {amount:,} шт. сырья за {cost:,} ₽\n"
+        f"склад: {biz['raw_stock']:,}/{capacity:,}"
     )
 
     text, kb = biz_warehouse_view(biz)
@@ -3282,7 +3370,7 @@ async def show_casino(message: Message, state: FSMContext):
     if not await check_level_access(message, message.from_user.id, CASINO_UNLOCK_LEVEL):
         return
     await state.clear()
-    text = "🎰 добро пожаловать в казино 'лохотрон'\n\nЗа какой стол хочешь сесть?"
+    text = "🎰 добро пожаловать в казино 'лохотрон'\n\nза какой стол хочешь сесть?"
     try:
         photo = FSInputFile("images/casino.png")
         await message.answer_photo(photo=photo, caption=text, reply_markup=get_casino_keyboard())
@@ -3331,7 +3419,7 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     try:
         amount = int(message.text.strip())
     except (TypeError, ValueError):
-        await message.answer("❌ Введи целое число, например: 100")
+        await message.answer("❌ Введи целое число, например: 52000")
         return
 
     if amount <= 0:
@@ -3363,8 +3451,8 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     await state.set_state(RouletteForm.waiting_for_bet)
 
     text = (
-        f"🎡 Рулетка\n\n"
-        f"🎯 На что ставишь?"
+        f"🎡 рулетка 'risk=rich'\n\n"
+        f"🎯 на что ставишь?"
     )
 
     try:
@@ -3463,8 +3551,8 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 
     spin_text = (
         f"🎡 <b>КРУТИМ...</b>\n\n"
-        f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
-        f"💰 Сумма: <b>{amount:,} ₽</b>"
+        f"🎯 ставка: <b>{roulette_bet_name(bet)}</b>\n"
+        f"💰 сумма: <b>{amount:,} ₽</b>"
     )
 
     spin_message = None
@@ -3520,8 +3608,8 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
                 text=(
                     f"<b>КРУТИМ...</b>\n\n"
                     f"{frame}\n\n"
-                    f"🎯 Ставка: <b>{roulette_bet_name(bet)}</b>\n"
-                    f"💰 Сумма: <b>{amount:,} ₽</b>"
+                    f"🎯 ставка: <b>{roulette_bet_name(bet)}</b>\n"
+                    f"💰 сумма: <b>{amount:,} ₽</b>"
                 ),
                 parse_mode="HTML",
                 reply_markup=None
@@ -3548,22 +3636,22 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 
         result_text = (
             f"🎡 <b>СТОП!</b>\n\n"
-            f"Выпало: {color} <b>{number}</b>\n"
-            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
+            f"выпало: {color} <b>{number}</b>\n"
+            f"твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"✅ <b>ВЫЙГРЫШ!</b>\n"
-            f"🎉 Пополнение: +{amount:,} ₽\n"
-            f"💰 Баланс: <b>{new_balance:,} ₽</b>"
+            f"🎉 пополнение: +{amount:,} ₽\n"
+            f"💰 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
         new_balance = await get_balance(user_id)
 
         result_text = (
             f"🎡 <b>СТОП!</b>\n\n"
-            f"Выпало: {color} <b>{number}</b>\n"
-            f"Твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
+            f"выпало: {color} <b>{number}</b>\n"
+            f"твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"❌ <b>ПРОИГРЫШ!</b>\n"
-            f"💸 Списание: -{amount:,} ₽\n"
-            f"💰 Баланс: <b>{new_balance:,} ₽</b>"
+            f"💸 списание: -{amount:,} ₽\n"
+            f"💰 баланс: <b>{new_balance:,} ₽</b>"
         )
 
     await callback.bot.edit_message_text(
@@ -3597,8 +3685,8 @@ async def show_duel_menu(message: Message, state: FSMContext):
 
     await message.answer(
         "🥊 Дуэли\n\n"
-        "Напиши ник и сумму, кому хочешь кинуть дуэль.\n"
-        "Формат: `ник сумма`\n",
+        "напиши ник и сумму, кому хочешь кинуть дуэль\n"
+        "формат: `ник сумма`\n",
         parse_mode="Markdown",
         reply_markup=kb
     )
@@ -3613,14 +3701,14 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     # --- Проверка кулдауна ---
     can_duel, remaining = await check_duel_cooldown(user_id)
     if not can_duel:
-        await message.answer(f"⏳ Дуэль можно кинуть через {remaining} сек.")
+        await message.answer(f"⏳ дуэль можно кинуть только через {remaining} сек.")
         return
 
     parts = text.rsplit(maxsplit=1)
     if len(parts) != 2:
         await message.answer(
-            "❌ Неверный формат. Пример: `killer 10000`\n"
-            "Или нажми «🔙 Назад» для выхода.",
+            "❌ Неверный формат\n Пример: `killer 69000`\n"
+            "или нажми «🔙 Назад» для выхода.",
             parse_mode="Markdown"
         )
         return
@@ -3629,16 +3717,16 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     try:
         amount = int(amount_str)
     except ValueError:
-        await message.answer("❌ Сумма должна быть числом. Пример: `саня67 10000`", parse_mode="Markdown")
+        await message.answer("❌ сумма должна быть числом. Пример: `убийца52 676767`", parse_mode="Markdown")
         return
 
     if amount <= 0:
-        await message.answer("❌ Сумма должна быть больше 0.")
+        await message.answer("❌ сумма должна быть больше 0.")
         return
 
     balance = await get_balance(user_id)
     if balance < amount:
-        await message.answer(f"❌ Не хватает денег. Баланс: {balance:,} ₽")
+        await message.answer(f"❌ не хватает денег. Баланс: {balance:,} ₽")
         return
 
     target_id = await get_user_id_by_name_direct(nick_str)
@@ -3646,17 +3734,17 @@ async def process_duel_challenge(message: Message, state: FSMContext):
         target_id = await get_user_id_by_username(nick_str)
 
     if not target_id:
-        await message.answer(f"❌ Игрок «{nick_str}» не найден.")
+        await message.answer(f"❌ игрок «{nick_str}» не найден.")
         return
 
     if target_id == user_id:
-        await message.answer("❌ Нельзя вызвать самого себя на дуэль!")
+        await message.answer("❌ ты как собираешь против себя играть?")
         return
 
     target_balance = await get_balance(target_id)
     if target_balance < amount:
         target_name = await get_user_name(target_id) or "Игрок"
-        await message.answer(f"❌ У {target_name} недостаточно денег для этой ставки.")
+        await message.answer(f"❌ у {target_name} недостаточно денег для этой ставки.")
         return
 
     duel_id = await create_duel(user_id, target_id, amount)
@@ -3664,8 +3752,8 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     target_name = await get_user_name(target_id) or "Игрок"
 
     await message.answer(
-        f"🥊 Ты вызвал {target_name} на дуэль на {amount:,} ₽.\n"
-        f"Ждём ответ..."
+        f"🥊 ты вызвал {target_name} на дуэль на {amount:,} ₽.\n"
+        f"ждём ответ...\n введи /menu чтобы продолжить играть, пока ожидаешь"
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3679,11 +3767,11 @@ async def process_duel_challenge(message: Message, state: FSMContext):
         await bot.send_message(
             target_id,
             f"🥊 {challenger_name} вызывает тебя на дуэль на {amount:,} ₽.\n"
-            f"Принять?",
+            f"принять?",
             reply_markup=kb
         )
     except Exception:
-        await message.answer("❌ Не удалось отправить вызов. Возможно, игрок заблокировал бота.")
+        await message.answer("❌ не удалось отправить вызов")
         await redis_client.delete(f"duel:{duel_id}")
 
     await state.clear()
@@ -3695,15 +3783,15 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     duel = await get_duel(duel_id)
 
     if not duel:
-        await callback.answer("⏰ Дуэль истекла.", show_alert=True)
+        await callback.answer("⏰ дуэль истекла.", show_alert=True)
         return
 
     if callback.from_user.id != duel["target_id"]:
-        await callback.answer("Это не твой вызов!", show_alert=True)
+        await callback.answer("это не твой вызов!", show_alert=True)
         return
 
     if duel["status"] != "pending":
-        await callback.answer("Дуэль уже обработана.", show_alert=True)
+        await callback.answer("дуэль уже обработана.", show_alert=True)
         return
 
     await callback.answer()
@@ -3711,23 +3799,23 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
  # --- Проверка кулдауна у принимающего ---
     can_duel, remaining = await check_duel_cooldown(callback.from_user.id)
     if not can_duel:
-        await callback.answer(f"⏳ Дуэль можно принять через {remaining} сек.", show_alert=True)
+        await callback.answer(f"⏳ дуэль можно принять через {remaining} сек.", show_alert=True)
         return
     
     ch_balance = await get_balance(duel["challenger_id"])
     tg_balance = await get_balance(duel["target_id"])
 
     if ch_balance < duel["amount"]:
-        await callback.message.edit_text("❌ У вызывающего недостаточно денег. Дуэль отменена.")
+        await callback.message.edit_text("❌ у вызывающего недостаточно денег. дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         try:
-            await bot.send_message(duel["challenger_id"], "❌ У тебя недостаточно денег на дуэль. Вызов отменён.")
+            await bot.send_message(duel["challenger_id"], "❌ у тебя недостаточно денег на дуэль. вызов отменён.")
         except Exception:
             pass
         return
 
     if tg_balance < duel["amount"]:
-        await callback.message.edit_text("❌ У тебя недостаточно денег. Дуэль отменена.")
+        await callback.message.edit_text("❌ у тебя недостаточно денег. Дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         return
 
@@ -3740,10 +3828,10 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         # Возвращаем деньги второму, если первому не хватило
         if ok_tg:
             await add_to_balance(duel["target_id"], duel["amount"])
-        await callback.message.edit_text("❌ У вызывающего недостаточно денег. Дуэль отменена.")
+        await callback.message.edit_text("❌ у вызывающего недостаточно денег. Дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         try:
-            await bot.send_message(duel["challenger_id"], "❌ У тебя недостаточно денег на дуэль. Вызов отменён.")
+            await bot.send_message(duel["challenger_id"], "❌ у тебя недостаточно денег на дуэль. Вызов отменён.")
         except Exception:
             pass
         return
@@ -3751,7 +3839,7 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     if not ok_tg:
         # Первому уже списали — возвращаем
         await add_to_balance(duel["challenger_id"], duel["amount"])
-        await callback.message.edit_text("❌ У тебя недостаточно денег. Дуэль отменена.")
+        await callback.message.edit_text("❌ у тебя недостаточно денег. Дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         return
 
@@ -3759,9 +3847,9 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
     start_text = (
-        f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
-        f"💰 Ставка: {duel['amount']:,} ₽\n\n"
-        f"🎲 Бросаем кости..."
+        f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+        f"💰 ставка: {duel['amount']:,} ₽\n\n"
+        f"🎲 бросаем кости..."
     )
 
     try:
@@ -3803,32 +3891,32 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     if ch_value > tg_value:
         await add_to_balance(duel["challenger_id"], duel["amount"] * 2)
         result_text = (
-            f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
-            f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+            f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+            f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🎉 Победил {ch_name}!\n"
-            f"💰 Выигрыш: +{duel['amount']:,} ₽"
+            f"🎉 победил {ch_name}!\n"
+            f"💰 выигрыш: +{duel['amount']:,} ₽"
         )
     elif tg_value > ch_value:
         await add_to_balance(duel["target_id"], duel["amount"] * 2)
         result_text = (
-            f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
-            f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+            f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+            f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🎉 Победил {tg_name}!\n"
-            f"💰 Выигрыш: +{duel['amount']:,} ₽"
+            f"🎉 победил {tg_name}!\n"
+            f"💰 выигрыш: +{duel['amount']:,} ₽"
         )
     else:
         await add_to_balance(duel["challenger_id"], duel["amount"])
         await add_to_balance(duel["target_id"], duel["amount"])
         result_text = (
-            f"🥊 Дуэль: {ch_name} vs {tg_name}\n"
-            f"💰 Ставка: {duel['amount']:,} ₽\n\n"
+            f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+            f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🤝 Ничья! Деньги возвращены."
+            f"🤝 ничья! неньги возвращены."
         )
 
 # --- XP и кулдаун для обоих ---
@@ -3864,15 +3952,15 @@ async def duel_decline(callback: CallbackQuery, state: FSMContext):
     duel = await get_duel(duel_id)
 
     if not duel:
-        await callback.answer("⏰ Дуэль истекла.", show_alert=True)
+        await callback.answer("⏰ дуэль истекла.", show_alert=True)
         return
 
     if callback.from_user.id != duel["target_id"]:
-        await callback.answer("Это не твой вызов!", show_alert=True)
+        await callback.answer("это не твой вызов!", show_alert=True)
         return
 
     if duel["status"] != "pending":
-        await callback.answer("Дуэль уже обработана.", show_alert=True)
+        await callback.answer("дуэль уже обработана.", show_alert=True)
         return
 
     await callback.answer()
@@ -3932,7 +4020,7 @@ async def monitor_empty_businesses():
                     await bot.send_message(
                         user_id,
                         f"⚠️ Твой «{biz.get('name', 'бизнес')}» простаивает! "
-                        "Затарись сырьём, чтобы не терять прибыль!"
+                        "затарись сырьём, чтобы не терять прибыль!"
                     )
                     biz["empty_notified"] = True
                     await save_biz(user_id, biz)
@@ -3945,12 +4033,67 @@ async def monitor_empty_businesses():
         await asyncio.sleep(EMPTY_STOCK_CHECK_INTERVAL)
 
 
+# --- Награды топ-игрокам (баланс, рефералы, уровень) ---
+async def _reward_one_top(config: dict, now: float):
+    """Награждает топ игроков одного лидерборда, если пришло время."""
+    last_ts_raw = await redis_client.get(config["last_ts_key"])
+    last_ts = float(last_ts_raw) if last_ts_raw else 0
+
+    if now - last_ts < TOP_REWARD_INTERVAL:
+        return
+
+    rewards = config["rewards"]
+    top = await redis_client.zrevrange(config["key"], 0, len(rewards) - 1, withscores=True)
+
+    for i, (uid_raw, _score) in enumerate(top, 1):
+        reward = rewards.get(i)
+        if not reward:
+            continue
+        try:
+            user_id = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+
+        new_balance = await add_to_balance(user_id, reward)
+        name = await get_user_name(user_id) or "Игрок"
+
+        try:
+            await bot.send_message(
+                user_id,
+                f"🏆 ты в топ-{i} по {config['label']}!\n"
+                f"{config['emoji']} награда: +{reward:,} ₽\n"
+                f"💳 баланс: {new_balance:,} ₽"
+            )
+        except Exception:
+            pass
+
+        logger.info(f"награда за топ-{i} по {config['label']}: {name} ({user_id}) получил {reward}")
+
+    await redis_client.set(config["last_ts_key"], str(now))
+
+
+async def reward_top_players():
+    """Раз в TOP_REWARD_INTERVAL награждает игроков из топа каждого лидерборда."""
+    while True:
+        try:
+            now = time.time()
+            for config in TOP_REWARD_CONFIGS:
+                await _reward_one_top(config, now)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ошибка начисления наград за топ")
+
+        await asyncio.sleep(TOP_REWARD_CHECK_INTERVAL)
+
+
 # --- Универсальный хендлер ---
 @router.message(F.text)
 async def handle_unknown_text(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
-        await message.answer("Используй кнопки 😡")
+        await message.answer("Используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
 
 @dp.errors()
 async def global_error_handler(event, exception):
@@ -4012,16 +4155,20 @@ async def main():
 
     # --- Фоновый мониторинг простаивающих бизнесов ---
     monitor_task = asyncio.create_task(monitor_empty_businesses())
+    # --- Фоновая выдача наград топ-игрокам ---
+    top_reward_task = asyncio.create_task(reward_top_players())
 
     try:
         logger.info("Бот запущен. Polling started.")
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         monitor_task.cancel()
-        try:
-            await monitor_task
-        except asyncio.CancelledError:
-            pass
+        top_reward_task.cancel()
+        for t in (monitor_task, top_reward_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
         if os.path.exists(LOCK_FILE):
             os.remove(LOCK_FILE)
         logger.info("Бот остановлен.")
