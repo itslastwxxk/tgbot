@@ -739,7 +739,9 @@ async def deduct_balance(user_id: int, amount: int) -> bool:
     await _ensure_deduct_script()
     result = await redis_client.evalsha(_deduct_sha, 1, f"user:{user_id}", amount)
     if int(result) == 1:
-        new_balance = await get_balance(user_id)
+        # Читаем актуальное значение напрямую: get_balance() мог вернуть устаревший кэш.
+        new_balance_raw = await redis_client.hget(f"user:{user_id}", "balance")
+        new_balance = int(float(new_balance_raw or 0))
         _balance_cache[user_id] = new_balance
         await redis_client.zadd("leaderboard:balance", {str(user_id): new_balance})
         return True
@@ -2813,6 +2815,17 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
+    # Ставку списываем атомарно ДО анимации: баланс сразу отражает риск.
+    if not await deduct_balance(user_id, int(amount)):
+        balance = await get_balance(user_id)
+        await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
+        await state.clear()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        return
+
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
 
@@ -2832,18 +2845,20 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
     multiplier = info["multiplier"]
 
     if won:
-        profit = int(amount * multiplier) - amount
-        await add_to_balance(user_id, profit)
+        # Ставка уже списана; возвращаем её с множителем.
+        payout = int(amount * multiplier)
+        profit = payout - int(amount)
+        await add_to_balance(user_id, payout)
         result_text = (
             f"🎉 рынок на твоей стороне!\n"
             f"режим: {mode}\n"
             f"направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
             f"ставка: {amount:,} ₽\n"
-            f"чистыми: +{profit:,} ₽ (x{multiplier})"
+            f"чистая прибыль: +{profit:,} ₽ (выплата {payout:,} ₽, x{multiplier})"
         )
         await log_trade(user_id, mode, amount, profit, True)
     else:
-        await deduct_balance(user_id, amount)
+        # Проигрыш: ставка уже списана перед анимацией.
         result_text = (
             f"💥 сделка ушла в минус...\n"
             f"режим: {mode}\n"
@@ -3053,7 +3068,6 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
             text, kb = biz_no_biz_view()
             await biz_edit(callback, text, kb)
             return
-        await settle_and_save_biz(user_id, biz)
         text, kb = biz_manage_view(biz)
         await biz_edit(callback, text, kb)
         return
@@ -3086,7 +3100,6 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         existing = await get_biz(user_id)
         if existing:
-            await settle_and_save_biz(user_id, existing)
             text, kb = biz_manage_view(existing)
             await biz_edit(callback, text, kb)
             return
@@ -3138,7 +3151,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await biz_edit(callback, text, kb)
         return
 
-    await settle_and_save_biz(user_id, biz)
+    # Не начисляем пассивный доход при каждом действии внутри бизнеса.
+    # Расчёт выполняется при входе в меню управления (biz_manage / команда меню).
 
     if data == "biz_wh":
         await callback.answer()
