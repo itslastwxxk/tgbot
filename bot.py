@@ -542,7 +542,7 @@ def biz_manage_view(biz):
         f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
     )
     if biz.get("broken"):
-        text += f"🛠 бизнес сломан! Починка стоит {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽."
+        text += f"🛠 бизнес сломался! починка стоит {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽."
     elif biz.get("raw_stock", 0) <= 0:
         text += "⚠️ бизнес встал — сырья ноль!\nжми «📦 Склад», затарься."
     else:
@@ -3227,19 +3227,19 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
 
     if data == "biz_repair":
         if not biz.get("broken"):
-            await callback.answer("Бизнес не сломан.", show_alert=True)
+            await callback.answer("бизнес не сломан.", show_alert=True)
             return
         repair_cost = int(biz.get("price", 0) * BUSINESS_REPAIR_COST_RATE)
         if not await deduct_balance(user_id, repair_cost):
-            await callback.answer(f"Не хватает {repair_cost:,} ₽ на ремонт.", show_alert=True)
+            await callback.answer(f"не хватает {repair_cost:,} ₽ на ремонт.", show_alert=True)
             return
         biz["broken"] = False
         biz.pop("broken_since", None)
         biz["last_collected"] = time.time()
         await save_biz(user_id, biz)
-        await callback.answer("Бизнес починен!")
+        await callback.answer("бизнес починен!")
         text, kb = biz_manage_view(biz)
-        await biz_edit(callback, "🛠 Бизнес успешно починен!\n\n" + text, kb)
+        await biz_edit(callback, "🛠 бизнес успешно починен!\n\n" + text, kb)
         return
 
     if data == "biz_sell":
@@ -4114,14 +4114,14 @@ async def monitor_empty_businesses():
                     await add_to_balance(user_id, payout)
                     await save_biz(user_id, None)
                     try:
-                        await bot.send_message(user_id, f"🏚 Бизнес «{name}» автоматически продан: он простаивал без сырья более 5 дней.\n💰 Начислено 50% стоимости: {payout:,} ₽.")
+                        await bot.send_message(user_id, f"🏚 бизнес «{name}» продан госсударству: он простаивал без сырья более 5 дней.\n💰 начислено 50% стоимости: {payout:,} ₽")
                     except Exception:
                         pass
                     continue
 
                 if now - float(empty_since) >= EMPTY_STOCK_NOTIFY_AFTER and not biz.get("empty_notified"):
                     try:
-                        await bot.send_message(user_id, f"⚠️ Твой «{biz.get('name', 'бизнес')}» простаивает! Пополни склад. Через 5 дней простоя без сырья он будет автоматически продан за 50% стоимости.")
+                        await bot.send_message(user_id, f"⚠️ твой «{biz.get('name', 'бизнес')}» простаивает! пополни склад, иначе через 5 дней его заберет госсударство")
                     except Exception:
                         pass
                     biz["empty_notified"] = True
