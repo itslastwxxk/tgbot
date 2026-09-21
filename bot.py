@@ -4141,7 +4141,7 @@ async def reward_top_players():
 async def handle_unknown_text(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
-        await message.answer("Используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
+        await message.answer("используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
 
 @dp.errors()
 async def global_error_handler(event, exception):
