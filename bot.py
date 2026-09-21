@@ -454,6 +454,10 @@ def biz_settle(biz):
     consumption_rate = biz.get("raw_consumption_per_min", 0)
     stock = biz.get("raw_stock", 0)
 
+    if biz.get("broken"):
+        biz["last_collected"] = now
+        return biz
+
     if stock <= 0 or income_rate <= 0:
         if stock <= 0:
             biz.setdefault("empty_since", last)
@@ -537,23 +541,25 @@ def biz_manage_view(biz):
         f"📦 Склад: {biz.get('raw_stock', 0):,}/{biz.get('raw_capacity', 30000):,}\n"
         f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
     )
-    if biz.get("raw_stock", 0) <= 0:
+    if biz.get("broken"):
+        text += f"🛠 бизнес сломан! Починка стоит {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽."
+    elif biz.get("raw_stock", 0) <= 0:
         text += "⚠️ бизнес встал — сырья ноль!\nжми «📦 Склад», затарься."
     else:
         text += "✅ бизнес работает!"
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📦 Склад", callback_data="biz_wh"),
-            InlineKeyboardButton(text="🚀 Прокачать", callback_data="biz_up"),
-        ],
+    rows = [
+        [InlineKeyboardButton(text="📦 Склад", callback_data="biz_wh"), InlineKeyboardButton(text="🚀 Прокачать", callback_data="biz_up")],
         [InlineKeyboardButton(text="💰 Снять деньги", callback_data="biz_collect")],
+    ]
+    if biz.get("broken"):
+        repair_cost = int(biz.get("price", 0) * BUSINESS_REPAIR_COST_RATE)
+        rows.append([InlineKeyboardButton(text=f"🛠 Починить за {repair_cost:,} ₽", callback_data="biz_repair")])
+    rows.extend([
         [InlineKeyboardButton(text="💸 Продать", callback_data="biz_sell")],
-        [
-            InlineKeyboardButton(text="🔄 Обновить", callback_data="biz_refresh"),
-            InlineKeyboardButton(text="🔙 Выйти", callback_data="biz_exit"),
-        ],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="biz_refresh"), InlineKeyboardButton(text="🔙 Выйти", callback_data="biz_exit")],
     ])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     return text, kb
 
 
@@ -3134,6 +3140,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
             "level": 1,
             "raw_stock": 0,
             "balance": 0,
+            "broken": False,
+            "last_break_check": time.time(),
             "last_collected": time.time(),
         }
         await save_biz(user_id, new_biz)
@@ -3215,6 +3223,23 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, biz)
         text, kb = biz_manage_view(biz)
         await biz_edit(callback, text, kb)
+        return
+
+    if data == "biz_repair":
+        if not biz.get("broken"):
+            await callback.answer("Бизнес не сломан.", show_alert=True)
+            return
+        repair_cost = int(biz.get("price", 0) * BUSINESS_REPAIR_COST_RATE)
+        if not await deduct_balance(user_id, repair_cost):
+            await callback.answer(f"Не хватает {repair_cost:,} ₽ на ремонт.", show_alert=True)
+            return
+        biz["broken"] = False
+        biz.pop("broken_since", None)
+        biz["last_collected"] = time.time()
+        await save_biz(user_id, biz)
+        await callback.answer("Бизнес починен!")
+        text, kb = biz_manage_view(biz)
+        await biz_edit(callback, "🛠 Бизнес успешно починен!\n\n" + text, kb)
         return
 
     if data == "biz_sell":
@@ -4030,8 +4055,13 @@ async def duel_decline(callback: CallbackQuery, state: FSMContext):
 # --- Уведомления о простое бизнеса из-за пустого склада ---
 EMPTY_STOCK_NOTIFY_AFTER = 60 * 60
 EMPTY_STOCK_CHECK_INTERVAL = 5 * 60
+BUSINESS_AUTO_SELL_AFTER = 5 * 86400
+BUSINESS_REPAIR_COST_RATE = 0.20
+BUSINESS_BREAK_CHECK_INTERVAL = 86400
+BUSINESS_BREAK_CHANCE = 0.10
 
 async def monitor_empty_businesses():
+    """Проверяет простой и поломки. При простое без сырья 5 суток бизнес продаётся автоматически."""
     while True:
         try:
             async for key in redis_client.scan_iter(match="user:*", count=100):
@@ -4046,37 +4076,61 @@ async def monitor_empty_businesses():
                 if not biz:
                     continue
 
-                # Сначала начисляем доход до момента остановки.
+                now = time.time()
                 await settle_and_save_biz(user_id, biz)
                 stock = int(biz.get("raw_stock", 0))
+
+                # Ежедневная проверка вероятности поломки: 10% за сутки.
+                last_check = float(biz.get("last_break_check", now))
+                if not biz.get("broken") and stock > 0 and now - last_check >= BUSINESS_BREAK_CHECK_INTERVAL:
+                    biz["last_break_check"] = now
+                    if random.random() < BUSINESS_BREAK_CHANCE:
+                        biz["broken"] = True
+                        biz["broken_since"] = now
+                        biz["last_collected"] = now
+                        await save_biz(user_id, biz)
+                        try:
+                            await bot.send_message(user_id, f"🛠 Бизнес «{biz.get('name', 'бизнес')}» сломался!\nПочинка стоит 20% от стоимости: {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽.")
+                        except Exception:
+                            pass
+                    else:
+                        await save_biz(user_id, biz)
+
                 if stock > 0:
                     biz.pop("empty_since", None)
                     biz.pop("empty_notified", None)
                     await save_biz(user_id, biz)
                     continue
 
-                now = time.time()
                 empty_since = biz.get("empty_since")
                 if empty_since is None:
-                    # Для старых сохранений начинаем отсчёт с первого обнаружения нулевого склада.
                     biz["empty_since"] = now
                     await save_biz(user_id, biz)
                     continue
 
-                if (now - float(empty_since) >= EMPTY_STOCK_NOTIFY_AFTER
-                        and not biz.get("empty_notified")):
-                    await bot.send_message(
-                        user_id,
-                        f"⚠️ Твой «{biz.get('name', 'бизнес')}» простаивает! "
-                        "затарись сырьём, чтобы не терять прибыль!"
-                    )
+                if now - float(empty_since) >= BUSINESS_AUTO_SELL_AFTER:
+                    payout = int(biz.get("price", 0) * 0.5)
+                    name = biz.get("name", "бизнес")
+                    await add_to_balance(user_id, payout)
+                    await save_biz(user_id, None)
+                    try:
+                        await bot.send_message(user_id, f"🏚 Бизнес «{name}» автоматически продан: он простаивал без сырья более 5 дней.\n💰 Начислено 50% стоимости: {payout:,} ₽.")
+                    except Exception:
+                        pass
+                    continue
+
+                if now - float(empty_since) >= EMPTY_STOCK_NOTIFY_AFTER and not biz.get("empty_notified"):
+                    try:
+                        await bot.send_message(user_id, f"⚠️ Твой «{biz.get('name', 'бизнес')}» простаивает! Пополни склад. Через 5 дней простоя без сырья он будет автоматически продан за 50% стоимости.")
+                    except Exception:
+                        pass
                     biz["empty_notified"] = True
                     await save_biz(user_id, biz)
 
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Ошибка мониторинга пустого склада")
+            logger.exception("Ошибка мониторинга бизнесов")
 
         await asyncio.sleep(EMPTY_STOCK_CHECK_INTERVAL)
 
@@ -4141,7 +4195,7 @@ async def reward_top_players():
 async def handle_unknown_text(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
-        await message.answer("используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
+        await message.answer("Используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
 
 @dp.errors()
 async def global_error_handler(event, exception):
