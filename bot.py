@@ -1076,7 +1076,7 @@ def get_pickaxe_upgrade_view(current_level: int, balance: int):
 
     if current_level >= len(PICKAXE_LEVELS) - 1:
         text = (
-            f"🔧 Прокачка кирки\n\n"
+            f"🔧 <b>прокачка кирки</b>\n\n"
             f"твоя кирка: {current['name']} (макс. уровень!)\n"
             f"💰 доход: {current['reward']:,} ₽ за клик\n\n"
             f"поздравляю, ты достиг максимальной кирки ⛏"
@@ -1090,21 +1090,21 @@ def get_pickaxe_upgrade_view(current_level: int, balance: int):
     can_afford = balance >= nxt["cost"]
 
     text = (
-        f"🔧 Прокачка кирки\n\n"
-        f"текущая: {current['name']} — {current['reward']:,} ₽/клик\n"
-        f"следующая: {nxt['name']} — {nxt['reward']:,} ₽/клик\n"
+        f"🔧 <b>прокачка кирки</b>\n\n"
+        f"<b>текущая:</b> {current['name']} — {current['reward']:,} ₽/клик\n"
+        f"<b>следующая:</b> {nxt['name']} — {nxt['reward']:,} ₽/клик\n"
         f"💸 цена: {nxt['cost']:,} ₽\n"
         f"💰 баланс: {balance:,} ₽"
     )
 
     if can_afford:
         btn = InlineKeyboardButton(
-            text=f"✅ Прокачать за {nxt['cost']:,} ₽",
+            text=f"✅ прокачать за {nxt['cost']:,} ₽",
             callback_data="pickaxe_upgrade"
         )
     else:
         btn = InlineKeyboardButton(
-            text=f"❌ Не хватает {nxt['cost'] - balance:,} ₽",
+            text=f"❌ не хватает {nxt['cost'] - balance:,} ₽",
             callback_data="pickaxe_noop"
         )
 
@@ -1169,14 +1169,14 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
 
 async def notify_level_up(user_id: int, new_level: int):
     """Отправляет сообщение о новом уровне."""
-    text = f"🎉 LEVEL UP! Ты достиг {new_level} уровня!"
+    text = f"🎉 <b>LEVEL UP!</b> Ты достиг {new_level} уровня!"
 
     unlocked = [name for name, lvl in UNLOCK_LEVELS.items() if lvl == new_level]
     if unlocked:
-        text += "\n\nтеперь доступно:\n" + "\n".join(f"• {name}" for name in unlocked)
+        text += "\n\n<b>теперь доступно:</b>\n" + "\n".join(f"• {name}" for name in unlocked)
 
     try:
-        await bot.send_message(user_id, text)
+        await bot.send_message(user_id, text, parse_mode="HTML")
     except Exception:
         pass
 
@@ -1267,8 +1267,9 @@ async def check_level_access(message: Message, user_id: int, required_level: int
     level = stats["level"]
     if level < required_level:
         await message.answer(
-            f"🔒 доступ откроется с {required_level} уровня.\n"
-            f"твой уровень: {level}."
+            f"🔒 доступ откроется с <b>{required_level}</b> уровня.\n"
+            f"твой уровень: <b>{level}</b>.",
+            parse_mode="HTML"
         )
         return False
     return True
@@ -1297,24 +1298,24 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     # --- ВЫБОР СЛУЧАЙНОГО ПРИВЕТСТВИЯ ---
     # Выбираем случайную фразу из списка и подставляем имя через форматирование строки
     greeting_template = random.choice(GREETINGS)
-    greeting_text = greeting_template.format(name=display_name)
+    greeting_text = greeting_template.format(name=f"<b>{display_name}</b>")
     
     # Формируем полный текст сообщения
-    text = f"{greeting_text}\nтвой баланс: {balance:,} ₽\nвыбирай куда направишься"
+    text = f"{greeting_text}\nтвой баланс: <b>{balance:,} ₽</b>\nвыбирай куда направишься"
     # -------------------------------------
 
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
-            await target.message.answer_photo(photo=photo, caption=text, reply_markup=get_main_keyboard())
+            await target.message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_main_keyboard())
         else:
-            await target.answer_photo(photo=photo, caption=text, reply_markup=get_main_keyboard())
+            await target.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_main_keyboard())
     except FileNotFoundError:
         logger.warning("Файл images/glmenu.png не найден.")
         if isinstance(target, CallbackQuery):
-            await target.message.answer(text, reply_markup=get_main_keyboard())
+            await target.message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
         else:
-            await target.answer(text, reply_markup=get_main_keyboard())
+            await target.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -1360,11 +1361,12 @@ async def _edit_or_answer(bot_obj, chat_id: int, msg_id: int | None, text: str, 
                 chat_id=chat_id,
                 message_id=msg_id,
                 reply_markup=kb,
+                parse_mode="HTML",
             )
             return
         except TelegramBadRequest:
             pass
-    await bot_obj.send_message(chat_id, text, reply_markup=kb)
+    await bot_obj.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
 
 
 @router.message(Command("admin"))
@@ -1374,7 +1376,8 @@ async def cmd_admin(message: Message, state: FSMContext):
         return
     await state.clear()
     sent = await message.answer(
-        "🛡 Админ-панель\n\nВыбирай действие:",
+        "🛡 <b>Админ-панель</b>\n\nВыбирай действие:",
+        parse_mode="HTML",
         reply_markup=get_admin_keyboard()
     )
     await state.update_data(admin_msg_id=sent.message_id)
@@ -1389,7 +1392,7 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        "🛡 Админ-панель\n\nВыбирай действие:",
+        "🛡 <b>Админ-панель</b>\n\nВыбирай действие:",
         get_admin_keyboard(),
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
@@ -1404,7 +1407,7 @@ async def admin_find(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminForm.waiting_for_search)
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        "🔍 Введи ник игрока или @username:\nНапример: Alex123 или @someuser",
+        "🔍 Введи ник игрока или @username:\nНапример: <b>Alex123</b> или <b>@someuser</b>",
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
 
@@ -1453,11 +1456,11 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
         biz_text = "нет"
 
     text = (
-        f"👤 Игрок #{player_id}\n\n"
-        f"⭐ Уровень: {(await get_user_stats(player_id))['level']}\n"
-        f"📝 Ник: {name}\n"
+        f"👤 <b>Игрок #{player_id}</b>\n\n"
+        f"⭐ Уровень: <b>{(await get_user_stats(player_id))['level']}</b>\n"
+        f"📝 Ник: <b>{name}</b>\n"
         f"👤 Username: @{username}\n"
-        f"💰 Баланс: {balance:,} ₽\n"
+        f"💰 Баланс: <b>{balance:,} ₽</b>\n"
         f"🏪 Бизнес: {biz_text}\n"
         f"👥 Рефералов: {referral_count}"
     )
@@ -1505,7 +1508,7 @@ async def admin_level_enter(message: Message, state: FSMContext):
     await redis_client.zadd("leaderboard:level", {str(player_id): level})
     name = await get_user_name(player_id) or "без ника"
     await _edit_or_answer(message.bot, message.chat.id, msg_id,
-                          f"✅ Уровень выдан!\n👤 {name} (#{player_id})\n⭐ Новый уровень: {level}",
+                          f"✅ Уровень выдан!\n👤 {name} (#{player_id})\n⭐ Новый уровень: <b>{level}</b>",
                           get_admin_back_keyboard(player_id))
     await state.set_state(None)
 
@@ -1538,7 +1541,7 @@ async def admin_action_start(callback: CallbackQuery, state: FSMContext):
 
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        f"💰 Сейчас на балансе: {current_balance:,} ₽\n\n"
+        f"💰 Сейчас на балансе: <b>{current_balance:,} ₽</b>\n\n"
         f"Введи сумму для «{action_names[action]}»:",
     )
 
@@ -1595,13 +1598,13 @@ async def admin_enter_amount(message: Message, state: FSMContext):
     name = await get_user_name(player_id) or "без ника"
 
     action_texts = {
-        "set": f"Задать баланс = {amount:,} ₽",
-        "add": f"Добавить {amount:,} ₽ (станет {current_balance + amount:,} ₽)",
-        "sub": f"Вычесть {amount:,} ₽ (станет {current_balance - amount:,} ₽)",
+        "set": f"Задать баланс = <b>{amount:,} ₽</b>",
+        "add": f"Добавить <b>{amount:,} ₽</b> (станет {current_balance + amount:,} ₽)",
+        "sub": f"Вычесть <b>{amount:,} ₽</b> (станет {current_balance - amount:,} ₽)",
     }
 
     text = (
-        f"⚠️ Подтверди действие:\n\n"
+        f"⚠️ <b>Подтверди действие:</b>\n\n"
         f"👤 Игрок: {name} (#{player_id})\n"
         f"💰 Сейчас на балансе: {current_balance:,} ₽\n"
         f"📋 {action_texts[action]}"
@@ -1637,9 +1640,9 @@ async def admin_do_action(callback: CallbackQuery, state: FSMContext):
 
     await _edit_or_answer(
         callback.bot, callback.message.chat.id, callback.message.message_id,
-        f"✅ Готово!\n\n"
+        f"✅ <b>Готово!</b>\n\n"
         f"👤 Игрок: {name} (#{player_id})\n"
-        f"💰 Новый баланс: {new_balance:,} ₽",
+        f"💰 Новый баланс: <b>{new_balance:,} ₽</b>",
         get_admin_back_keyboard(player_id),
     )
 
@@ -1676,9 +1679,9 @@ async def admin_top(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    text = "📊 Топ игроков (админ-режим):\n\n"
+    text = "📊 <b>Топ игроков (админ-режим):</b>\n\n"
     for i, (uid, name, balance) in enumerate(balances[:20], 1):
-        text += f"{i}. {name} (#{uid}) — {balance:,} ₽\n"
+        text += f"{i}. {name} (#{uid}) — <b>{balance:,} ₽</b>\n"
 
     text += f"\nВсего игроков: {len(balances)}"
 
@@ -1704,17 +1707,17 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
     if not top:
         await _edit_or_answer(
             callback.bot, callback.message.chat.id, callback.message.message_id,
-            "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил.",
+            "👥 <b>Топ по рефералам</b>\n\nПока пусто — никто никого не пригласил.",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
             ]),
         )
         return
 
-    text = "👥 Топ по рефералам (админ-режим):\n\n"
+    text = "👥 <b>Топ по рефералам (админ-режим):</b>\n\n"
     for i, (uid, count) in enumerate(top, 1):
         name = await get_user_name(uid) or "без ника"
-        text += f"{i}. {name} (#{uid}) — {count} реф.\n"
+        text += f"{i}. {name} (#{uid}) — <b>{count}</b> реф.\n"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 В меню админа", callback_data="admin_main")]
@@ -1917,12 +1920,12 @@ def render_trade_history_page(entries: list[dict], page: int) -> tuple[str, int]
     page = max(0, min(page, total_pages - 1))
 
     if not entries:
-        return "📜 История сделок\n\nПока сделок нет — самое время попробовать!", total_pages
+        return "📜 <b>История сделок</b>\n\nПока сделок нет — самое время попробовать!", total_pages
 
     start = page * TRADE_HISTORY_PAGE_SIZE
     chunk = entries[start:start + TRADE_HISTORY_PAGE_SIZE]
 
-    lines = [f"📜 История сделок (стр. {page + 1}/{total_pages})\n"]
+    lines = [f"📜 <b>История сделок</b> (стр. {page + 1}/{total_pages})\n"]
     for i, item in enumerate(chunk, start=start + 1):
         mode = TRADE_MODE_NAMES.get(item.get("mode"), item.get("mode", "Сделка"))
         amount = item.get("amount", 0)
@@ -1932,7 +1935,7 @@ def render_trade_history_page(entries: list[dict], page: int) -> tuple[str, int]
         status = "✅" if win else "❌"
         lines.append(
             f"{i}. {status} {mode} | 🕒 {stamp}\n"
-            f"   Ставка: {amount:,} ₽ | Итог: {result:+,.0f} ₽"
+            f"   Ставка: <b>{amount:,} ₽</b> | Итог: <b>{result:+,.0f} ₽</b>"
         )
     return "\n".join(lines), total_pages
 
@@ -1964,20 +1967,20 @@ async def handle_trade_history(callback: CallbackQuery, state: FSMContext):
     kb = get_trade_history_keyboard(page if entries else 0, total_pages)
 
     try:
-        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=kb)
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "trade_history_back")
 async def handle_trade_history_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     balance = await get_balance(callback.from_user.id)
-    text = f"💰 твой баланс: {balance:,} ₽\nвыбери уровень риска:"
+    text = f"💰 твой баланс: <b>{balance:,} ₽</b>\nвыбери уровень риска:"
     try:
-        await callback.message.edit_text(text, reply_markup=get_trading_mode_keyboard())
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_trading_mode_keyboard())
     except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=get_trading_mode_keyboard())
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=get_trading_mode_keyboard())
 
 # ============================================================
 # ГЕНЕРАЦИЯ КАРТИНКИ ДЛЯ МАТЕМАТИКИ (ОПТИМИЗИРОВАНО)
@@ -2078,8 +2081,9 @@ async def cmd_start(message: Message, state: FSMContext):
                 await state.update_data(pending_referrer=referrer_id)
 
         await message.answer(
-            "👋 дарова! напиши свой эксклюзивный ник\n"
-            "можно использовать русс/англ буквы и цифры\n"
+            "👋 <b>дарова!</b> напиши свой эксклюзивный ник\n"
+            "можно использовать русс/англ буквы и цифры\n",
+            parse_mode="HTML",
         )
         await state.set_state(NameForm.waiting_for_name)
         return
@@ -2089,8 +2093,9 @@ async def cmd_start(message: Message, state: FSMContext):
         result = await process_referral(user_id, referrer_id)
         if result:
             await message.answer(
-                f"🎁 тебя пригласил {result[1]}! "
-                f"бонус за регистрацию: +{REFERRAL_NEWBIE_BONUS:,} ₽"
+                f"🎁 тебя пригласил <b>{result[1]}</b>! "
+                f"бонус за регистрацию: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
+                parse_mode="HTML",
             )
 
     await send_main_menu(message, user_id)
@@ -2116,7 +2121,8 @@ async def cmd_ping(message: Message):
     mins, secs = divmod(rem, 60)
     uptime_str = f"{days} дн {hours} ч {mins} мин"
     await message.answer(
-        f"🤖 Бот жив\n{redis_ok}\n⏳ В строю уже: {uptime_str}"
+        f"🤖 <b>Бот жив</b>\n{redis_ok}\n⏳ В строю уже: {uptime_str}",
+        parse_mode="HTML",
     )
 
 @router.message(Command("trades"))
@@ -2128,7 +2134,7 @@ async def cmd_trades(message: Message):
         await message.answer("Сделок пока ноль — ты ещё не заходил в трейдинг.")
         return
     trades = [json.loads(t) for t in trades]
-    text = "📜 Твои сделки:\n\n"
+    text = "📜 <b>Твои сделки:</b>\n\n"
     wins = 0
     total_profit = 0
     for i, t in enumerate(trades[-5:], 1):
@@ -2137,8 +2143,8 @@ async def cmd_trades(message: Message):
         if t["win"]:
             wins += 1
         total_profit += t["result"]
-    text += f"\nВсего: {len(trades)} | Побед: {wins} | Общий результат: {total_profit:+,.0f} ₽"
-    await message.answer(text)
+    text += f"\nВсего: {len(trades)} | Побед: {wins} | Общий результат: <b>{total_profit:+,.0f} ₽</b>"
+    await message.answer(text, parse_mode="HTML")
 
 @router.message(NameForm.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
@@ -2174,18 +2180,19 @@ async def process_name(message: Message, state: FSMContext):
         result = await process_referral(user_id, pending_referrer)
         if result:
             ref_bonus_text = (
-                f"\n🎁 тебя пригласил {result[1]}! "
-                f"бонус: +{REFERRAL_NEWBIE_BONUS:,} ₽"
+                f"\n🎁 тебя пригласил <b>{result[1]}</b>! "
+                f"бонус: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
             )
 
     # Новый игрок проходит короткое обучение; флаг сохраняется в Redis.
     tutorial_done = await redis_client.hget(f"user:{user_id}", "tutorial_done")
     if not tutorial_done:
         await redis_client.hset(f"user:{user_id}", "tutorial_step", "mine")
-    await message.answer(f"👋{ref_bonus_text}")
+    await message.answer(f"👋{ref_bonus_text}", parse_mode="HTML")
     if not tutorial_done:
         await message.answer(
-            "🎓 быстрое введение:\nнажми 'работа', затем 'шахта', дальше разберешься\nповышение уровня = разблокировка новых функций\nприглашение друзей по рефке = хороший буст"
+            "🎓 <b>быстрое введение:</b>\nнажми 'работа', затем 'шахта', дальше разберешься\nповышение уровня = разблокировка новых функций\nприглашение друзей по рефке = хороший буст",
+            parse_mode="HTML",
         )
     await send_main_menu(message, user_id)
 
@@ -2212,9 +2219,9 @@ async def show_profile(message: Message, state: FSMContext):
     bar = "█" * filled + "░" * (bar_len - filled)
 
     profile_text = (
-        f"📋 твой профиль\n\n"
-        f"💰 баланс: {balance:,} ₽\n"
-        f"📈 уровень: {level}\n"
+        f"📋 <b>твой профиль</b>\n\n"
+        f"💰 баланс: <b>{balance:,} ₽</b>\n"
+        f"📈 уровень: <b>{level}</b>\n"
         f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
         f"📊 [{bar}] {percent}%"
     )
@@ -2258,6 +2265,7 @@ async def show_profile(message: Message, state: FSMContext):
     # К этому моменту reply-клавиатура уже должна быть убрана.
     await message.answer(
         text=profile_text,
+        parse_mode="HTML",
         reply_markup=kb
     )
 
@@ -2278,7 +2286,7 @@ async def transfer_no_note(callback: CallbackQuery, state: FSMContext):
         return
     await state.update_data(transfer_note="")
     await state.set_state(TransferForm.waiting_for_amount)
-    await callback.message.edit_text("✍️ Комментарий пропущен. Теперь напиши сумму перевода.\nДля отмены введи /cancel.")
+    await callback.message.edit_text("✍️ комментарий пропущен. теперь напиши сумму перевода.\nдля отмены введи /cancel.")
     await callback.answer()
 
 @router.callback_query(F.data == "transfer_cancel")
@@ -2350,28 +2358,29 @@ async def transfer_process(message: Message, state: FSMContext):
         await message.answer(
             f"❌ недостаточно средств.\n"
             f"перевод: {amount:,} ₽\nкомиссия 5%: {commission:,} ₽\n"
-            f"всего нужно: {total_cost:,} ₽\nтвой баланс: {await get_balance(sender_id):,} ₽"
+            f"всего нужно: <b>{total_cost:,} ₽</b>\nтвой баланс: {await get_balance(sender_id):,} ₽",
+            parse_mode="HTML",
         )
         return
     await add_to_balance(target_id, amount)
     sender_name = await get_user_name(sender_id) or "Игрок"
     try:
-        notification = f"💸 {sender_name} перевел тебе {amount:,} ₽"
+        notification = f"💸 <b>{sender_name}</b> перевел тебе <b>{amount:,} ₽</b>"
         if note:
             notification += f"\nкомментарий: {note}"
-        await bot.send_message(target_id, notification)
+        await bot.send_message(target_id, notification, parse_mode="HTML")
     except Exception:
         logger.exception("Не удалось уведомить получателя о переводе")
     await state.clear()
     result = (
-        f"✅ перевод {amount:,} ₽ выполнен пользователю {target_str}\n"
-        f"комиссия 5%: {commission:,} ₽\nвсего списано: {total_cost:,} ₽"
+        f"✅ перевод <b>{amount:,} ₽</b> выполнен пользователю {target_str}\n"
+        f"комиссия 5%: {commission:,} ₽\nвсего списано: <b>{total_cost:,} ₽</b>"
     )
     if note:
         result += f"\nкомментарий: {note}"
     else:
         result += "\nкомментарий: ---"
-    await message.answer(result)
+    await message.answer(result, parse_mode="HTML")
 
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
@@ -2428,7 +2437,7 @@ async def show_public_top(callback: CallbackQuery):
             [InlineKeyboardButton(text="📈 Топ по уровню", callback_data="public_top:level")],
             [InlineKeyboardButton(text="🔙 В меню", callback_data="public_top:back_to_main")],
         ])
-        await callback.message.edit_text("🏆 Выбери рейтинг:", reply_markup=kb)
+        await callback.message.edit_text("🏆 <b>Выбери рейтинг:</b>", parse_mode="HTML", reply_markup=kb)
         return
 
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -2439,40 +2448,40 @@ async def show_public_top(callback: CallbackQuery):
     if kind == "balance":
         balances = await get_all_balances()
         if not balances:
-            result_text = "🏆 Топ по балансу\n\nПока пусто — никто не играл."
+            result_text = "🏆 <b>Топ по балансу</b>\n\nПока пусто — никто не играл."
         else:
-            result_text = "💰 топ по балансу:\n\n"
+            result_text = "💰 <b>топ по балансу:</b>\n\n"
             for i, (uid, name, balance) in enumerate(balances[:10], 1):
-                result_text += f"{i}. {name} — {balance:,} ₽\n"
+                result_text += f"{i}. {name} — <b>{balance:,} ₽</b>\n"
             if len(balances) > 10:
                 result_text += f"\n...и ещё {len(balances) - 10} челиков"
     elif kind == "referrals":
         top = await get_top_referrals(10)
         if not top:
-            result_text = "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил."
+            result_text = "👥 <b>Топ по рефералам</b>\n\nПока пусто — никто никого не пригласил."
         else:
-            result_text = "👥 топ по рефералам:\n\n"
+            result_text = "👥 <b>топ по рефералам:</b>\n\n"
             for i, (uid, count) in enumerate(top, 1):
                 name = await get_user_name(uid) or "без ника"
-                result_text += f"{i}. {name} — {count} реф.\n"
+                result_text += f"{i}. {name} — <b>{count}</b> реф.\n"
     elif kind == "level":
         top = await get_top_levels(10)
         if not top:
-            result_text = "📈 Топ по уровням\n\nПока пусто — никто не получил XP."
+            result_text = "📈 <b>Топ по уровням</b>\n\nПока пусто — никто не получил XP."
         else:
-            result_text = "📈 топ по уровням:\n\n"
+            result_text = "📈 <b>топ по уровням:</b>\n\n"
             for i, (uid, lvl) in enumerate(top, 1):
                 name = await get_user_name(uid) or "без ника"
-                result_text += f"{i}. {name} — {lvl} ур.\n"
+                result_text += f"{i}. {name} — <b>{lvl}</b> ур.\n"
 
     else:
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
 
     try:
-        await callback.message.edit_text(result_text, reply_markup=back_kb)
+        await callback.message.edit_text(result_text, parse_mode="HTML", reply_markup=back_kb)
     except TelegramBadRequest:
-        await callback.message.answer(result_text, reply_markup=back_kb)
+        await callback.message.answer(result_text, parse_mode="HTML", reply_markup=back_kb)
 
 
 # ============================================================
@@ -2491,27 +2500,27 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
     if can:
         preview_amount = await daily_bonus_amount(streak)
         text = (
-            f"🎁 ежедневный бонус\n\n"
-            f"🔥 серия: {streak} дн. подряд\n"
-            f"💰 сегодня получишь: ~{preview_amount:,} ₽\n\n"
+            f"🎁 <b>ежедневный бонус</b>\n\n"
+            f"🔥 серия: <b>{streak}</b> дн. подряд\n"
+            f"💰 сегодня получишь: ~<b>{preview_amount:,} ₽</b>\n\n"
             f"жми «забрать», чтобы получить награду!"
         )
         kb = get_daily_bonus_keyboard(True)
     else:
         text = (
-            f"🎁 ежедневный бонус\n\n"
-            f"🔥 серия: {streak} дн. подряд\n"
+            f"🎁 <b>ежедневный бонус</b>\n\n"
+            f"🔥 серия: <b>{streak}</b> дн. подряд\n"
             f"⏳ бонус уже забран. приходи через:\n"
-            f"⏰ {format_cooldown(remaining)}"
+            f"⏰ <b>{format_cooldown(remaining)}</b>"
         )
         kb = get_daily_bonus_keyboard(False)
 
     try:
         photo = FSInputFile("images/daily_bonus.png")
-        await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=kb)
     except FileNotFoundError:
         logger.warning("Файл images/daily_bonus.png не найден.")
-        await message.answer(text, reply_markup=kb)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 @router.callback_query(F.data == "daily_claim")
 async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
@@ -2533,16 +2542,16 @@ async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
     new_balance = await get_balance(user_id)
 
     text = (
-        f"🎁 ежедневный бонус забран!\n\n"
-        f"💰 получено: +{amount:,} ₽\n"
-        f"🔥 серия: {new_streak} дн. подряд\n"
-        f"💳 баланс: {new_balance:,} ₽\n\n"
+        f"🎁 <b>ежедневный бонус забран!</b>\n\n"
+        f"💰 получено: +<b>{amount:,} ₽</b>\n"
+        f"🔥 серия: <b>{new_streak}</b> дн. подряд\n"
+        f"💳 баланс: <b>{new_balance:,} ₽</b>\n\n"
         f"возвращайся завтра — серия продолжится!"
     )
     try:
-        await callback.message.edit_text(text, reply_markup=get_daily_bonus_keyboard(False))
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_daily_bonus_keyboard(False))
     except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=get_daily_bonus_keyboard(False))
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=get_daily_bonus_keyboard(False))
 
 
 @router.callback_query(F.data == "daily_back_to_menu")
@@ -2579,15 +2588,15 @@ async def show_mine_menu(message: Message, state: FSMContext):
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     text = (
         f"⛏ ты в шахте\n\n"
-        f"🔧 кирка: {pickaxe_name}\n"
-        f"💰 за клик: {reward:,} ₽\n"
+        f"🔧 кирка: <b>{pickaxe_name}</b>\n"
+        f"💰 за клик: <b>{reward:,} ₽</b>\n"
     )
     try:
         photo = FSInputFile("images/mine.png")
-        await message.answer_photo(photo=photo, caption=text, reply_markup=get_mine_keyboard())
+        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_mine_keyboard())
     except FileNotFoundError:
         logger.warning("Файл images/mine.png не найден.")
-        await message.answer(text, reply_markup=get_mine_keyboard())
+        await message.answer(text, parse_mode="HTML", reply_markup=get_mine_keyboard())
 
 @router.callback_query(F.data == "help_top")
 async def handle_help_top(callback: CallbackQuery):
@@ -2673,10 +2682,10 @@ async def handle_mine_farm(message: Message, state: FSMContext):
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_MINE)
 
     text = (
-        f"⛏у тебя в руках {pickaxe_name} кирка\n+{reward:,} ₽ +{XP_PER_MINE} XP!\n"
-        f"Баланс: {new_balance:,} ₽"
+        f"⛏у тебя в руках {pickaxe_name} кирка\n+<b>{reward:,} ₽</b> +{XP_PER_MINE} XP!\n"
+        f"Баланс: <b>{new_balance:,} ₽</b>"
     )
-    await message.answer(text)
+    await message.answer(text, parse_mode="HTML")
 
     if leveled_up:
         await notify_level_up(user_id, new_level)
@@ -2696,7 +2705,7 @@ async def handle_pickaxe_upgrade_menu(message: Message, state: FSMContext):
     pickaxe_lvl = await get_pickaxe_level(user_id)
     balance = await get_balance(user_id)
     text, kb = get_pickaxe_upgrade_view(pickaxe_lvl, balance)
-    await message.answer(text, reply_markup=kb)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 # --- Прокачка кирки: кнопка inline "Прокачать" ---
@@ -2733,8 +2742,8 @@ async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
         await redis_client.hset(f"user:{user_id}", "tutorial_step", "math")
 
     upgrade_msg = (
-        f"🎉 кирка улучшена: {PICKAXE_LEVELS[pickaxe_lvl]['name']} → {nxt['name']}!\n"
-        f"новый доход: {nxt['reward']:,} ₽/клик\n\n"
+        f"🎉 кирка улучшена: {PICKAXE_LEVELS[pickaxe_lvl]['name']} → <b>{nxt['name']}</b>!\n"
+        f"новый доход: <b>{nxt['reward']:,} ₽/клик</b>\n\n"
     )
 
     if tutorial_step == "mine":
@@ -2742,9 +2751,9 @@ async def handle_pickaxe_upgrade_do(callback: CallbackQuery, state: FSMContext):
             "\n\nтвоя первая прокачка кирки! дальше меньше!!"
         )
     try:
-        await callback.message.edit_text(upgrade_msg + text, reply_markup=kb)
+        await callback.message.edit_text(upgrade_msg + text, parse_mode="HTML", reply_markup=kb)
     except TelegramBadRequest:
-        await callback.message.answer(upgrade_msg + text, reply_markup=kb)
+        await callback.message.answer(upgrade_msg + text, parse_mode="HTML", reply_markup=kb)
 
 
 # --- Прокачка кирки: пустая кнопка (не хватает денег) ---
@@ -2771,10 +2780,10 @@ async def handle_pickaxe_back(callback: CallbackQuery, state: FSMContext):
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     text = (
         f"⛏ ты в шахте\n\n"
-        f"🔧 кирка: {pickaxe_name}\n"
-        f"💰 за клик: {reward:,} ₽\n"
+        f"🔧 кирка: <b>{pickaxe_name}</b>\n"
+        f"💰 за клик: <b>{reward:,} ₽</b>\n"
     )
-    await callback.message.answer(text, reply_markup=get_mine_keyboard())
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=get_mine_keyboard())
 
 @router.message(F.text == "🔗 Реф")
 async def handle_ref(message: Message):
@@ -2785,12 +2794,12 @@ async def handle_ref(message: Message):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
 
     text = (
-        f"🔗 Реферальная система\n\n"
+        f"🔗 <b>Реферальная система</b>\n\n"
         f"Твоя ссылка:\n`{ref_link}`\n\n"
-        f"👥 Приглашено: {referral_count} чел.\n"
-        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
-        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
-        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
+        f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
+        f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
+        f"За каждого приглашённого — <b>{REFERRAL_REWARD:,} ₽</b>\n"
+        f"Новичку за регистрацию по ссылке — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
@@ -2814,21 +2823,21 @@ async def handle_ref_top(callback: CallbackQuery):
 
     top = await get_top_referrals(10)
     if not top:
-        text = "👥 Топ по рефералам\n\nПока пусто — никто никого не пригласил."
+        text = "👥 <b>Топ по рефералам</b>\n\nПока пусто — никто никого не пригласил."
     else:
-        text = "👥 Топ по рефералам:\n\n"
+        text = "👥 <b>Топ по рефералам:</b>\n\n"
         for i, (uid, count) in enumerate(top, 1):
             name = await get_user_name(uid) or "без ника"
-            text += f"{i}. {name} — {count} реф.\n"
+            text += f"{i}. {name} — <b>{count}</b> реф.\n"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="ref_back_to_info")],
     ])
 
     try:
-        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=kb)
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "ref_back")
@@ -2849,12 +2858,12 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
     bot_info = await callback.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
     text = (
-        f"🔗 Реферальная система\n\n"
+        f"🔗 <b>Реферальная система</b>\n\n"
         f"Твоя ссылка:\n`{ref_link}`\n\n"
-        f"👥 Приглашено: {referral_count} чел.\n"
-        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
-        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
-        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
+        f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
+        f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
+        f"За каждого приглашённого — <b>{REFERRAL_REWARD:,} ₽</b>\n"
+        f"Новичку за регистрацию по ссылке — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
@@ -2876,8 +2885,9 @@ async def handle_trading(message: Message, state: FSMContext):
     if balance < TRADING_MIN_BALANCE:
         await message.answer(
             f"❌ не хватает денег для трейдинга.\n"
-            f"минимальный порог входа: {TRADING_MIN_BALANCE:,} ₽\n"
+            f"минимальный порог входа: <b>{TRADING_MIN_BALANCE:,} ₽</b>\n"
             "найди деньги и подключайся к трейдингу",
+            parse_mode="HTML",
             reply_markup=get_work_keyboard()
         )
         return
@@ -2885,8 +2895,9 @@ async def handle_trading(message: Message, state: FSMContext):
     await message.answer("💻", reply_markup=ReplyKeyboardRemove())
     await message.answer(
         "курсы не продам\n"
-        f"💰 твой баланс: {balance:,} ₽\n"
+        f"💰 твой баланс: <b>{balance:,} ₽</b>\n"
         "выбери уровень риска:",
+        parse_mode="HTML",
         reply_markup=get_trading_mode_keyboard()
     )
 
@@ -2898,9 +2909,10 @@ async def choose_risk(callback: CallbackQuery, state: FSMContext):
 
     balance = await get_balance(callback.from_user.id)
     await callback.message.edit_text(
-        f"режим: {mode}\n"
-        f"💰 баланс: {balance:,} ₽\n"
+        f"режим: <b>{mode}</b>\n"
+        f"💰 баланс: <b>{balance:,} ₽</b>\n"
         "введи сумму ставки:",
+        parse_mode="HTML",
         reply_markup=get_trading_result_keyboard2()
     )
     await state.set_state(TradingForm.waiting_for_amount)
@@ -2934,18 +2946,18 @@ async def process_trading_amount(message: Message, state: FSMContext):
             pass
 
     await state.update_data(amount=amount)
-    caption_text = f"📊 график актива\nставка: {amount:,} ₽\nкуда пойдёт график?"
+    caption_text = f"📊 график актива\nставка: <b>{amount:,} ₽</b>\nкуда пойдёт график?"
     photo_path = "images/graph.png"
     if not os.path.exists(photo_path):
         logger.warning(f"Файл {photo_path} не найден. Отправляем только текст.")
-        await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
+        await message.answer(text=caption_text, parse_mode="HTML", reply_markup=get_trading_direction_keyboard())
     else:
         try:
             photo = FSInputFile(photo_path)
-            await message.answer_photo(photo=photo, caption=caption_text, reply_markup=get_trading_direction_keyboard())
+            await message.answer_photo(photo=photo, caption=caption_text, parse_mode="HTML", reply_markup=get_trading_direction_keyboard())
         except Exception as e:
             logger.error(f"Ошибка отправки фото: {e}")
-            await message.answer(text=caption_text, reply_markup=get_trading_direction_keyboard())
+            await message.answer(text=caption_text, parse_mode="HTML", reply_markup=get_trading_direction_keyboard())
     await state.set_state(TradingForm.waiting_for_direction)
 
 TRADE_STEPS = [
@@ -3004,25 +3016,25 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
         profit = payout - int(amount)
         await add_to_balance(user_id, payout)
         result_text = (
-            f"🎉 рынок на твоей стороне!\n"
+            f"🎉 <b>рынок на твоей стороне!</b>\n"
             f"режим: {mode}\n"
             f"направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
             f"ставка: {amount:,} ₽\n"
-            f"чистая прибыль: +{profit:,} ₽ (выплата {payout:,} ₽, x{multiplier})"
+            f"чистая прибыль: +<b>{profit:,} ₽</b> (выплата {payout:,} ₽, x{multiplier})"
         )
         await log_trade(user_id, mode, amount, profit, True)
     else:
         # Проигрыш: ставка уже списана перед анимацией.
         result_text = (
-            f"💥 сделка ушла в минус...\n"
+            f"💥 <b>сделка ушла в минус...</b>\n"
             f"режим: {mode}\n"
             f"направление: {'📈 Вверх' if direction == 'up' else '📉 Вниз'}\n"
-            f"ставка: {amount:,} ₽ сгорела\n"
+            f"ставка: <b>{amount:,} ₽</b> сгорела\n"
         )
         await log_trade(user_id, mode, amount, -amount, False)
 
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_TRADE)
-    await msg.edit_text(result_text, reply_markup=get_trading_result_keyboard())
+    await msg.edit_text(result_text, parse_mode="HTML", reply_markup=get_trading_result_keyboard())
 
     if leveled_up:
         await notify_level_up(user_id, new_level)
@@ -3039,7 +3051,8 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
         except TelegramBadRequest:
             pass
         await callback.message.answer(
-            f"❌ не хватает денег для трейдинга (нужно {TRADING_MIN_BALANCE:,} ₽).",
+            f"❌ не хватает денег для трейдинга (нужно <b>{TRADING_MIN_BALANCE:,} ₽</b>).",
+            parse_mode="HTML",
             reply_markup=get_work_keyboard()
         )
         await state.clear()
@@ -3051,8 +3064,9 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
         pass
 
     await callback.message.answer(
-        f"💰 твой баланс: {balance:,} ₽\n"
+        f"💰 твой баланс: <b>{balance:,} ₽</b>\n"
         "выбери уровень риска:",
+        parse_mode="HTML",
         reply_markup=get_trading_mode_keyboard()
     )
     await state.clear()
@@ -3140,14 +3154,14 @@ async def process_math_answer(message: Message, state: FSMContext):
         prefix = random.choice(MATH_CORRECT_PHRASES)
 
         result_text = (
-            f"{prefix} +{MATH_REWARD:,} ₽ и +{MATH_XP_REWARD} XP!\n"
-            f"Баланс: {new_balance:,} ₽"
+            f"<b>{prefix}</b> +<b>{MATH_REWARD:,} ₽</b> и +{MATH_XP_REWARD} XP!\n"
+            f"Баланс: <b>{new_balance:,} ₽</b>"
         )
         if leveled_up:
             await notify_level_up(user_id, new_level)
     else:
-        result_text = f"❌ Мимо. Правильный ответ: {correct_answer}"
-    await message.answer(result_text, reply_markup=get_math_keyboard())
+        result_text = f"❌ Мимо. Правильный ответ: <b>{correct_answer}</b>"
+    await message.answer(result_text, parse_mode="HTML", reply_markup=get_math_keyboard())
     await state.update_data(math_answer=None)
 
 @router.callback_query(F.data == "math_next")
@@ -3295,7 +3309,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, new_biz)
         text, kb = biz_manage_view(new_biz)
         await callback.message.edit_text(
-            f"✅ взял «{biz_def['name']}» за {biz_def['price']:,} ₽!\n\n" + text,
+            f"✅ взял «{biz_def['name']}» за <b>{biz_def['price']:,} ₽</b>!\n\n" + text,
+            parse_mode="HTML",
             reply_markup=kb
         )
         return
@@ -3328,8 +3343,9 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             f"введи количество сырья для закупки.\n"
             f"цена: {RAW_PRICE} ₽ за штуку\n"
-            f"свободно на складе: {space:,}\n"
-            f"оплата: {source_text}"
+            f"свободно на складе: <b>{space:,}</b>\n"
+            f"оплата: {source_text}",
+            parse_mode="HTML",
         )
         return
 
@@ -3387,7 +3403,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, biz)
         await callback.answer("бизнес починен!")
         text, kb = biz_manage_view(biz)
-        await biz_edit(callback, "🛠 бизнес успешно починен!\n\n" + text, kb)
+        await biz_edit(callback, "🛠 <b>бизнес успешно починен!</b>\n\n" + text, kb)
         return
 
     if data == "biz_sell":
@@ -3401,7 +3417,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         sell_price = biz_sell_price(biz)
         text = (
             f"⚠️ ты точно хочешь продать «{biz['name']}»?\n\n"
-            f"на руки получишь: {sell_price:,} ₽\n\n"
+            f"на руки получишь: <b>{sell_price:,} ₽</b>\n\n"
             f"после продажи бизнес исчезнет, бабки упадут на баланс"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3410,7 +3426,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(text="❌ Отмена", callback_data="biz_manage"),
             ],
         ])
-        await biz_edit(callback, text, kb)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
     if data == "biz_sell_do":
@@ -3420,7 +3436,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, None)
         text, kb = biz_no_biz_view()
         await callback.message.edit_text(
-            f"✅ бизнес продан! на руках: {sell_price:,} ₽.\n\n" + text,
+            f"✅ бизнес продан! на руках: <b>{sell_price:,} ₽</b>.\n\n" + text,
+            parse_mode="HTML",
             reply_markup=kb
         )
         return
@@ -3440,7 +3457,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         await save_biz(user_id, biz)
         text, kb = biz_manage_view(biz)
         await callback.message.edit_text(
-            f"💰 Забрал {biz_balance:,} ₽!\n\n" + text,
+            f"💰 Забрал <b>{biz_balance:,} ₽</b>!\n\n" + text,
+            parse_mode="HTML",
             reply_markup=kb
         )
         return
@@ -3502,8 +3520,9 @@ async def process_raw_amount(message: Message, state: FSMContext):
     await state.clear()
 
     await message.answer(
-        f"✅ затарил {amount:,} шт. сырья за {cost:,} ₽\n"
-        f"склад: {biz['raw_stock']:,}/{capacity:,}"
+        f"✅ затарил <b>{amount:,}</b> шт. сырья за <b>{cost:,} ₽</b>\n"
+        f"склад: {biz['raw_stock']:,}/{capacity:,}",
+        parse_mode="HTML",
     )
 
     text, kb = biz_warehouse_view(biz)
@@ -3578,9 +3597,10 @@ async def roulette_show_amount(message: Message, state: FSMContext):
     await state.clear()
     await state.set_state(RouletteForm.waiting_for_amount)
     sent = await message.answer(
-        f"🎡 Рулетка\n\n"
-        f"💰 Твой баланс: {balance:,} ₽\n\n"
+        f"🎡 <b>Рулетка</b>\n\n"
+        f"💰 Твой баланс: <b>{balance:,} ₽</b>\n\n"
         f"Введи сумму ставки:",
+        parse_mode="HTML",
         reply_markup=get_roulette_amount_keyboard(0)
     )
     await state.update_data(amount_msg_id=sent.message_id, amount=0)
@@ -3672,16 +3692,16 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     await state.set_state(RouletteForm.waiting_for_bet)
 
     text = (
-        f"🎡 рулетка 'risk=rich'\n\n"
+        f"🎡 <b>рулетка 'risk=rich'</b>\n\n"
         f"🎯 на что ставишь?"
     )
 
     try:
         photo = FSInputFile("images/roulette_table.png")
-        await message.answer_photo(photo=photo, caption=text, reply_markup=get_roulette_bet_keyboard(amount))
+        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_roulette_bet_keyboard(amount))
     except FileNotFoundError:
         logger.warning("Файл images/roulette_table.png не найден.")
-        await message.answer(text, reply_markup=get_roulette_bet_keyboard(amount))
+        await message.answer(text, parse_mode="HTML", reply_markup=get_roulette_bet_keyboard(amount))
 
 
 @router.callback_query(RouletteForm.waiting_for_amount, F.data.startswith("roulette_mul:"))
@@ -3973,8 +3993,9 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     target_name = await get_user_name(target_id) or "Игрок"
 
     await message.answer(
-        f"🥊 ты вызвал {target_name} на дуэль на {amount:,} ₽.\n"
-        f"ждём ответ...\n введи /menu чтобы продолжить играть, пока ожидаешь"
+        f"🥊 ты вызвал <b>{target_name}</b> на дуэль на <b>{amount:,} ₽</b>.\n"
+        f"ждём ответ...\n введи /menu чтобы продолжить играть, пока ожидаешь",
+        parse_mode="HTML",
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3987,8 +4008,9 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     try:
         await bot.send_message(
             target_id,
-            f"🥊 {challenger_name} вызывает тебя на дуэль на {amount:,} ₽.\n"
+            f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль на <b>{amount:,} ₽</b>.\n"
             f"принять?",
+            parse_mode="HTML",
             reply_markup=kb
         )
     except Exception:
@@ -4068,18 +4090,18 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
     start_text = (
-        f"🥊 дуэль: {ch_name} vs {tg_name}\n"
-        f"💰 ставка: {duel['amount']:,} ₽\n\n"
+        f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
+        f"💰 ставка: <b>{duel['amount']:,} ₽</b>\n\n"
         f"🎲 бросаем кости..."
     )
 
     try:
-        await callback.message.edit_text(start_text)
+        await callback.message.edit_text(start_text, parse_mode="HTML")
     except TelegramBadRequest:
-        await callback.message.answer(start_text)
+        await callback.message.answer(start_text, parse_mode="HTML")
 
     try:
-        await bot.send_message(duel["challenger_id"], start_text)
+        await bot.send_message(duel["challenger_id"], start_text, parse_mode="HTML")
     except Exception:
         pass
 
@@ -4112,32 +4134,32 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     if ch_value > tg_value:
         await add_to_balance(duel["challenger_id"], duel["amount"] * 2)
         result_text = (
-            f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
             f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🎉 победил {ch_name}!\n"
-            f"💰 выигрыш: +{duel['amount']:,} ₽"
+            f"🎉 <b>победил {ch_name}!</b>\n"
+            f"💰 выигрыш: +<b>{duel['amount']:,} ₽</b>"
         )
     elif tg_value > ch_value:
         await add_to_balance(duel["target_id"], duel["amount"] * 2)
         result_text = (
-            f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
             f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🎉 победил {tg_name}!\n"
-            f"💰 выигрыш: +{duel['amount']:,} ₽"
+            f"🎉 <b>победил {tg_name}!</b>\n"
+            f"💰 выигрыш: +<b>{duel['amount']:,} ₽</b>"
         )
     else:
         await add_to_balance(duel["challenger_id"], duel["amount"])
         await add_to_balance(duel["target_id"], duel["amount"])
         result_text = (
-            f"🥊 дуэль: {ch_name} vs {tg_name}\n"
+            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
             f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🤝 ничья! неньги возвращены."
+            f"🤝 <b>ничья!</b> неньги возвращены."
         )
 
 # --- XP и кулдаун для обоих ---
@@ -4152,12 +4174,12 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     # ... отправка result_text обоим игрокам ...
 
     try:
-        await callback.message.answer(result_text)
+        await callback.message.answer(result_text, parse_mode="HTML")
     except TelegramBadRequest:
         pass
 
     try:
-        await bot.send_message(duel["challenger_id"], result_text)
+        await bot.send_message(duel["challenger_id"], result_text, parse_mode="HTML")
     except Exception:
         pass
 
@@ -4191,12 +4213,12 @@ async def duel_decline(callback: CallbackQuery, state: FSMContext):
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
     try:
-        await callback.message.edit_text(f"❌ {tg_name} отклонил дуэль от {ch_name}.")
+        await callback.message.edit_text(f"❌ <b>{tg_name}</b> отклонил дуэль от <b>{ch_name}</b>.", parse_mode="HTML")
     except TelegramBadRequest:
-        await callback.message.answer(f"❌ {tg_name} отклонил дуэль от {ch_name}.")
+        await callback.message.answer(f"❌ <b>{tg_name}</b> отклонил дуэль от <b>{ch_name}</b>.", parse_mode="HTML")
 
     try:
-        await bot.send_message(duel["challenger_id"], f"❌ {tg_name} отклонил твою дуэль.")
+        await bot.send_message(duel["challenger_id"], f"❌ <b>{tg_name}</b> отклонил твою дуэль.", parse_mode="HTML")
     except Exception:
         pass
 
@@ -4238,7 +4260,7 @@ async def monitor_empty_businesses():
                         biz["last_collected"] = now
                         await save_biz(user_id, biz)
                         try:
-                            await bot.send_message(user_id, f"🛠 Бизнес «{biz.get('name', 'бизнес')}» сломался!\nПочинка стоит 20% от стоимости: {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽.")
+                            await bot.send_message(user_id, f"🛠 Бизнес «{biz.get('name', 'бизнес')}» сломался!\nПочинка стоит 20% от стоимости: <b>{int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽</b>.", parse_mode="HTML")
                         except Exception:
                             pass
                     else:
@@ -4262,7 +4284,7 @@ async def monitor_empty_businesses():
                     await add_to_balance(user_id, payout)
                     await save_biz(user_id, None)
                     try:
-                        await bot.send_message(user_id, f"🏚 бизнес «{name}» забрало госсударство: он простаивал без сырья более 5 дней.\n💰 начислено 50% стоимости: {payout:,} ₽.")
+                        await bot.send_message(user_id, f"🏚 бизнес «{name}» забрало госсударство: он простаивал без сырья более 5 дней.\n💰 начислено 50% стоимости: <b>{payout:,} ₽</b>.", parse_mode="HTML")
                     except Exception:
                         pass
                     continue
@@ -4311,8 +4333,9 @@ async def _reward_one_top(config: dict, now: float):
             await bot.send_message(
                 user_id,
                 f"🏆 ты в топ-{i} по {config['label']}!\n"
-                f"{config['emoji']} награда: +{reward:,} ₽\n"
-                f"💳 баланс: {new_balance:,} ₽"
+                f"{config['emoji']} награда: +<b>{reward:,} ₽</b>\n"
+                f"💳 баланс: <b>{new_balance:,} ₽</b>",
+                parse_mode="HTML",
             )
         except Exception:
             pass
