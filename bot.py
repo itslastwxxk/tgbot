@@ -1782,7 +1782,7 @@ def get_main_keyboard():
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🥊 Дуэли")],
         [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
-        [KeyboardButton(text="📋 Профиль")]
+        [KeyboardButton(text="📋 Профиль"), KeyboardButton(text="📦 Кейсы")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -2500,6 +2500,195 @@ async def show_work_menu(message: Message, state: FSMContext):
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message):
     await message.answer("Раздел «Магаз» пока в разработке — скоро зальём.")
+
+# ============================================================
+# КЕЙСЫ
+# ============================================================
+CASES = {
+    "bronze": {
+        "emoji": "🥉",
+        "name": "Бронзовый кейс",
+        "cost": 3000,
+        # (шанс, множитель от стоимости). Множитель 0.0 = пусто.
+        "outcomes": [
+            (0.50, 0.0),
+            (0.30, 0.5),
+            (0.15, 1.5),
+            (0.05, 3.0),
+        ],
+    },
+    "silver": {
+        "emoji": "🥈",
+        "name": "Серебряный кейс",
+        "cost": 10000,
+        "outcomes": [
+            (0.55, 0.0),
+            (0.25, 0.5),
+            (0.15, 2.0),
+            (0.05, 5.0),
+        ],
+    },
+    "gold": {
+        "emoji": "🥇",
+        "name": "Золотой кейс",
+        "cost": 30000,
+        "outcomes": [
+            (0.60, 0.0),
+            (0.20, 0.5),
+            (0.15, 3.0),
+            (0.05, 8.0),
+        ],
+    },
+    "diamond": {
+        "emoji": "💎",
+        "name": "Алмазный кейс",
+        "cost": 100000,
+        "outcomes": [
+            (0.65, 0.0),
+            (0.15, 0.5),
+            (0.15, 4.0),
+            (0.05, 15.0),
+        ],
+    },
+}
+CASE_ORDER = ["bronze", "silver", "gold", "diamond"]
+
+
+def get_case_win_chance(case: dict) -> float:
+    """Суммарный шанс выпадения денег (любой исход с множителем > 0)."""
+    return sum(chance for chance, mult in case["outcomes"] if mult > 0) * 100
+
+
+def get_case_text(index: int) -> str:
+    key = CASE_ORDER[index]
+    case = CASES[key]
+    win_chance = get_case_win_chance(case)
+
+    lines = [
+        f"{case['emoji']} <b>{case['name']}</b>  ({index + 1}/{len(CASE_ORDER)})",
+        "",
+        f"💸 стоимость: <b>{case['cost']:,} ₽</b>",
+        f"🎲 шанс выиграть деньги: <b>{win_chance:.0f}%</b>",
+        "",
+        "<b>возможные исходы:</b>",
+    ]
+    for chance, mult in case["outcomes"]:
+        pct = chance * 100
+        if mult == 0.0:
+            lines.append(f"• ❌ пусто — {pct:.0f}%")
+        else:
+            payout = int(case["cost"] * mult)
+            lines.append(f"• 💰 x{mult:g} ({payout:,} ₽) — {pct:.0f}%")
+
+    return "\n".join(lines)
+
+
+def get_case_keyboard(index: int) -> InlineKeyboardMarkup:
+    key = CASE_ORDER[index]
+    case = CASES[key]
+    prev_index = (index - 1) % len(CASE_ORDER)
+    next_index = (index + 1) % len(CASE_ORDER)
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="◀️", callback_data=f"cases_nav:{prev_index}"),
+            InlineKeyboardButton(text=case["emoji"], callback_data="cases_noop"),
+            InlineKeyboardButton(text="▶️", callback_data=f"cases_nav:{next_index}"),
+        ],
+        [InlineKeyboardButton(text=f"📦 Открыть за {case['cost']:,} ₽", callback_data=f"cases_open:{index}")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="cases_back")],
+    ])
+
+
+@router.message(F.text == "📦 Кейсы")
+async def show_cases(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        get_case_text(0),
+        parse_mode="HTML",
+        reply_markup=get_case_keyboard(0),
+    )
+
+
+@router.callback_query(F.data.startswith("cases_nav:"))
+async def cases_nav(callback: CallbackQuery):
+    index = int(callback.data.split(":", 1)[1])
+    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            get_case_text(index),
+            parse_mode="HTML",
+            reply_markup=get_case_keyboard(index),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data == "cases_noop")
+async def cases_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cases_back")
+async def cases_back(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+    await send_main_menu(callback, user_id)
+
+
+@router.callback_query(F.data.startswith("cases_open:"))
+async def cases_open(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    index = int(callback.data.split(":", 1)[1])
+    key = CASE_ORDER[index]
+    case = CASES[key]
+    cost = case["cost"]
+
+    if not await deduct_balance(user_id, cost):
+        balance = await get_balance(user_id)
+        await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
+        return
+
+    await callback.answer()
+
+    chances = [c for c, _ in case["outcomes"]]
+    mults = [m for _, m in case["outcomes"]]
+    multiplier = random.choices(mults, weights=chances, k=1)[0]
+    payout = int(cost * multiplier)
+
+    if payout > 0:
+        new_balance = await add_to_balance(user_id, payout)
+        profit = payout - cost
+        sign = "+" if profit >= 0 else ""
+        result_text = (
+            f"{case['emoji']} <b>{case['name']}</b>\n\n"
+            f"🎉 выпало: <b>{payout:,} ₽</b> (x{multiplier:g})\n"
+            f"итог: {sign}{profit:,} ₽\n"
+            f"💳 баланс: <b>{new_balance:,} ₽</b>"
+        )
+    else:
+        new_balance = await get_balance(user_id)
+        result_text = (
+            f"{case['emoji']} <b>{case['name']}</b>\n\n"
+            f"💔 кейс оказался пуст...\n"
+            f"потрачено: <b>{cost:,} ₽</b>\n"
+            f"💳 баланс: <b>{new_balance:,} ₽</b>"
+        )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Открыть ещё", callback_data=f"cases_open:{index}")],
+        [InlineKeyboardButton(text="🔙 К кейсам", callback_data=f"cases_nav:{index}")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="cases_back")],
+    ])
+
+    try:
+        await callback.message.edit_text(result_text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        await callback.message.answer(result_text, parse_mode="HTML", reply_markup=kb)
 
 @router.message(F.text == "🏆 Топ")
 async def show_top(message: Message, state: FSMContext):
