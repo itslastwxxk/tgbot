@@ -2323,14 +2323,14 @@ async def transfer_note_received(message: Message, state: FSMContext):
 @router.message(Command("cancel"), TransferForm.waiting_for_amount)
 async def transfer_cancel_command(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Перевод отменён.")
+    await message.answer("❌ перевод отменён.")
 
 @router.message(TransferForm.waiting_for_amount)
 async def transfer_process(message: Message, state: FSMContext):
     try:
         amount = parse_amount((message.text or "").strip())
     except ValueError:
-        await message.answer("Не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
+        await message.answer("не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
         return
     sender_id = message.from_user.id
     data = await state.get_data()
@@ -2339,18 +2339,18 @@ async def transfer_process(message: Message, state: FSMContext):
     note = data.get("transfer_note", "")
     if not target_id:
         await state.clear()
-        await message.answer("❌ Не удалось определить получателя. Начни перевод заново.")
+        await message.answer("❌ не удалось определить получателя. начни перевод заново.")
         return
     if amount <= 0:
-        await message.answer("❌ Сумма должна быть больше нуля.")
+        await message.answer("❌ сумма должна быть больше нуля.")
         return
     commission = (amount * 5 + 99) // 100  # комиссия 5%, округление вверх до 1 ₽
     total_cost = amount + commission
     if not await deduct_balance(sender_id, total_cost):
         await message.answer(
-            f"❌ Недостаточно средств.\n"
-            f"Перевод: {amount:,} ₽\nКомиссия 5%: {commission:,} ₽\n"
-            f"Всего нужно: {total_cost:,} ₽\nТвой баланс: {await get_balance(sender_id):,} ₽"
+            f"❌ недостаточно средств.\n"
+            f"перевод: {amount:,} ₽\nкомиссия 5%: {commission:,} ₽\n"
+            f"всего нужно: {total_cost:,} ₽\nтвой баланс: {await get_balance(sender_id):,} ₽"
         )
         return
     await add_to_balance(target_id, amount)
