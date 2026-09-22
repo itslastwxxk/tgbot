@@ -2379,49 +2379,105 @@ async def transfer_process(message: Message, state: FSMContext):
     try:
         amount = parse_amount((message.text or "").strip())
     except ValueError:
-        await message.answer("не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
+        await message.answer("❌ не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
         return
+
     sender_id = message.from_user.id
     data = await state.get_data()
     target_id = data.get("transfer_target_id")
     target_str = data.get("transfer_target_str", str(target_id))
     note = data.get("transfer_note", "")
+
     if not target_id:
         await state.clear()
-        await message.answer("❌ не удалось определить получателя. начни перевод заново.")
+        await message.answer("❌ не удалось определить получателя. Начни перевод заново.")
         return
+
     if amount <= 0:
         await message.answer("❌ сумма должна быть больше нуля.")
         return
-    commission = (amount * 5 + 99) // 100  # комиссия 5%, округление вверх до 1 ₽
+
+    commission = (amount * 5 + 99) // 100  # комиссия 5%, округление вверх
     total_cost = amount + commission
+
+    # Проверка баланса
     if not await deduct_balance(sender_id, total_cost):
+        current_balance = await get_balance(sender_id)
         await message.answer(
-            f"❌ недостаточно средств.\n"
-            f"перевод: {amount:,} ₽\nкомиссия 5%: {commission:,} ₽\n"
-            f"всего нужно: <b>{total_cost:,} ₽</b>\nтвой баланс: {await get_balance(sender_id):,} ₽",
+            f"❌ <b>недостаточно средств</b>\n"
+            f"перевод: {amount:,} ₽\n"
+            f"комиссия 5%: {commission:,} ₽\n"
+            f"всего нужно: <b>{total_cost:,} ₽</b>\n"
+            f"твой баланс: {current_balance:,} ₽",
             parse_mode="HTML",
         )
         return
+
+    # --- ПОПЫТКА ПЕРЕВОДА И УВЕДОМЛЕНИЯ ---
+    
+    # Сначала начисляем деньги получателю (транзакция в БД уже прошла через deduct_balance)
+    # Примечание: Если твоя функция deduct_balance делает commit сразу, 
+    # то для отката нужно будет вызывать add_to_balance(sender_id, total_cost) при ошибке.
     await add_to_balance(target_id, amount)
+
     sender_name = await get_user_name(sender_id) or "Игрок"
-    try:
-        notification = f"💸 <b>{sender_name}</b> перевел тебе <b>{amount:,} ₽</b>"
-        if note:
-            notification += f"\nкомментарий: {note}"
-        await bot.send_message(target_id, notification, parse_mode="HTML")
-    except Exception:
-        logger.exception("Не удалось уведомить получателя о переводе")
-    await state.clear()
-    result = (
-        f"✅ перевод <b>{amount:,} ₽</b> выполнен пользователю {target_str}\n"
-        f"комиссия 5%: {commission:,} ₽\nвсего списано: <b>{total_cost:,} ₽</b>"
-    )
+    notification = f"💸 <b>{sender_name}</b> перевел тебе <b>{amount:,} ₽</b>"
     if note:
-        result += f"\nкомментарий: {note}"
+        notification += f"\nкомментарий: {note}"
+
+    try:
+        # Пытаемся отправить уведомление
+        await bot.send_message(target_id, notification, parse_mode="HTML")
+        success_msg = (
+            f"✅ перевод <b>{amount:,} ₽</b> выполнен пользователю {target_str}\n"
+            f"комиссия 5%: {commission:,} ₽\n"
+            f"всего списано: <b>{total_cost:,} ₽</b>\n"
+        )
+        
+    except TelegramBadRequest as e:
+        # Ловим конкретную ошибку от Telegram
+        if "chat not found" in str(e).lower() or "user was deleted" in str(e).lower():
+            logger.warning(f"Не удалось уведомить пользователя {target_id}: чат не найден или пользователь заблокировал бота.")
+            
+            # ВАЖНО: Решаем, что делать с деньгами.
+            # Вариант 1: Деньги остаются у получателя, но он не знает. (Плохо для UX)
+            # Вариант 2 (РЕКОМЕНДУЕТСЯ): Отменяем перевод, так как сделка не завершена корректно.
+            
+            # Отменяем начисление получателю
+            await deduct_balance(target_id, amount) 
+            # Возвращаем деньги отправителю
+            await add_to_balance(sender_id, total_cost)
+            
+            success_msg = (
+                f"❌ не удалось выполнить перевод.\n"
+                f"твои деньги ({total_cost:,} ₽) возвращены на баланс."
+            )
+        else:
+            # Другая ошибка API, логируем и пробуем продолжить (или тоже отменяем, зависит от политики)
+            logger.error(f"Ошибка при отправке уведомления: {e}")
+            # Для безопасности экономики лучше тоже отменить перевод при любой ошибке API
+            await deduct_balance(target_id, amount)
+            await add_to_balance(sender_id, total_cost)
+            success_msg = "❌ Произошла ошибка при выполнении перевода. Деньги возвращены."
+
+    except Exception as e:
+        # Неожиданные ошибки
+        logger.exception("Неожиданная ошибка при переводе")
+        # Откат транзакции
+        await deduct_balance(target_id, amount)
+        await add_to_balance(sender_id, total_cost)
+        success_msg = "❌ произошла непредвиденная ошибка. Деньги возвращены."
+
+    # Добавляем комментарий в финальное сообщение
+    if note:
+        success_msg += f"\nкомментарий: {note}"
     else:
-        result += "\nкомментарий: ---"
-    await message.answer(result, parse_mode="HTML")
+        success_msg += "\nкомментарий: ---"
+        
+    success_msg += "\nнажми /menu, чтобы вернуться в главное меню."
+
+    await message.answer(success_msg, parse_mode="HTML")
+    await state.clear()
 
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
