@@ -91,6 +91,23 @@ router = Router()
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
+
+def parse_amount(value: str) -> int:
+    """Принимает 1000000, 1 000 000, 100к, 1кк; также 1.5к/1,5к."""
+    raw = value.strip().lower().replace("\u00a0", "").replace(" ", "").replace("_", "")
+    raw = raw.replace(",", ".")
+    multiplier = 1
+    if raw.endswith("кк"):
+        multiplier, raw = 1_000_000, raw[:-2]
+    elif raw.endswith("к"):
+        multiplier, raw = 1_000, raw[:-1]
+    if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        raise ValueError("invalid amount")
+    result = float(raw) * multiplier
+    if not result.is_integer():
+        raise ValueError("amount must be integer")
+    return int(result)
+
 # --- FSM ---
 class TradingForm(StatesGroup):
     waiting_for_amount = State()
@@ -120,6 +137,10 @@ class AdminForm(StatesGroup):
 
 class DuelForm(StatesGroup):
     waiting_for_target = State()
+
+class TransferForm(StatesGroup):
+    waiting_for_note = State()
+    waiting_for_target_amount = State()
 
 # ============================================================
 # КОНСТАНТЫ HELP
@@ -542,7 +563,7 @@ def biz_manage_view(biz):
         f"💳 На счету бизнеса: {biz_balance:,} ₽\n\n"
     )
     if biz.get("broken"):
-        text += f"🛠 бизнес сломался! починка стоит {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽."
+        text += f"🛠 бизнес сломался! Починка стоит {int(biz.get('price', 0) * BUSINESS_REPAIR_COST_RATE):,} ₽."
     elif biz.get("raw_stock", 0) <= 0:
         text += "⚠️ бизнес встал — сырья ноль!\nжми «📦 Склад», затарься."
     else:
@@ -1527,7 +1548,7 @@ async def admin_enter_amount(message: Message, state: FSMContext):
     chat_id = message.chat.id
 
     try:
-        amount = int(message.text.strip())
+        amount = parse_amount(message.text)
         if amount < 0:
             try:
                 await message.delete()
@@ -1722,6 +1743,7 @@ def get_help_menu_keyboard():
             InlineKeyboardButton(text="🧮 Математика", callback_data="help_math"),
             InlineKeyboardButton(text="🏪 Бизнесы", callback_data="help_business"),
         ],
+        [InlineKeyboardButton(text="🏆 Топ", callback_data="help_top")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -2196,6 +2218,7 @@ async def show_profile(message: Message, state: FSMContext):
     # -------------------------------------------
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Перевести деньги", callback_data="transfer_start")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
     ])
 
@@ -2233,6 +2256,89 @@ async def show_profile(message: Message, state: FSMContext):
     await message.answer(
         text=profile_text,
         reply_markup=kb
+    )
+
+@router.callback_query(F.data == "transfer_start")
+async def transfer_start(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отказаться", callback_data="transfer_cancel")]
+    ])
+    await callback.message.answer("💸 Напиши текст к переводу (или нажми «Отказаться»).", reply_markup=kb)
+    await state.set_state(TransferForm.waiting_for_note)
+    await callback.answer()
+
+@router.callback_query(F.data == "transfer_cancel")
+async def transfer_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Перевод отменён.")
+    await callback.answer()
+
+@router.message(TransferForm.waiting_for_note)
+async def transfer_note_received(message: Message, state: FSMContext):
+    note = (message.text or "").strip()
+    if not note:
+        await message.answer("Напиши текст сообщением или нажми «Отказаться».")
+        return
+    if len(note) > 500:
+        await message.answer("Текст слишком длинный. Максимум 500 символов.")
+        return
+    await state.update_data(transfer_note=note)
+    await state.set_state(TransferForm.waiting_for_target_amount)
+    await message.answer("Теперь напиши получателя и сумму через пробел.\nПример: @username 1кк или 123456789 100 000\nДля отмены введи /cancel.")
+
+@router.message(Command("cancel"), TransferForm.waiting_for_target_amount)
+@router.message(Command("cancel"), TransferForm.waiting_for_note)
+async def transfer_cancel_command(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Перевод отменён.")
+
+@router.message(TransferForm.waiting_for_target_amount)
+async def transfer_process(message: Message, state: FSMContext):
+    # Первый токен — получатель, остаток — сумма (в том числе с пробелами).
+    parts = (message.text or "").strip().split(maxsplit=1)
+    if len(parts) != 2:
+        await message.answer("Формат: @username сумма. Например: @player 1кк или @player 1 000 000")
+        return
+    target_str, amount_str = parts
+    try:
+        amount = parse_amount(amount_str)
+    except ValueError:
+        await message.answer("Не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
+        return
+    sender_id = message.from_user.id
+    target_id = await resolve_target(target_str)
+    if not target_id:
+        await message.answer("❌ Получатель не найден. Укажи его @username или ID.")
+        return
+    if target_id == sender_id:
+        await message.answer("❌ Нельзя переводить деньги самому себе.")
+        return
+    if amount <= 0:
+        await message.answer("❌ Сумма должна быть больше нуля.")
+        return
+    commission = (amount * 5 + 99) // 100  # комиссия 5%, округление вверх до 1 ₽
+    total_cost = amount + commission
+    if not await deduct_balance(sender_id, total_cost):
+        await message.answer(
+            f"❌ Недостаточно средств.\n"
+            f"Перевод: {amount:,} ₽\nКомиссия 5%: {commission:,} ₽\n"
+            f"Всего нужно: {total_cost:,} ₽\nТвой баланс: {await get_balance(sender_id):,} ₽"
+        )
+        return
+    await add_to_balance(target_id, amount)
+    data = await state.get_data()
+    note = data.get("transfer_note", "")
+    sender_name = await get_user_name(sender_id) or "Игрок"
+    try:
+        await bot.send_message(target_id, f"💸 Тебе перевели {amount:,} ₽ от {sender_name}.\nКомментарий: {note}")
+    except Exception:
+        logger.exception("Не удалось уведомить получателя о переводе")
+    await state.clear()
+    await message.answer(
+        f"✅ Перевод выполнен: {amount:,} ₽ пользователю {target_str}.\n"
+        f"Комиссия 5%: {commission:,} ₽\nВсего списано: {total_cost:,} ₽\n"
+        f"Комментарий: {note}"
     )
 
 @router.message(F.text == "💼 Работа")
@@ -2450,6 +2556,23 @@ async def show_mine_menu(message: Message, state: FSMContext):
     except FileNotFoundError:
         logger.warning("Файл images/mine.png не найден.")
         await message.answer(text, reply_markup=get_mine_keyboard())
+
+@router.callback_query(F.data == "help_top")
+async def handle_help_top(callback: CallbackQuery):
+    text = (
+        "🏆 Топ — это рейтинг игроков.\n\n"
+        "В игре доступны три рейтинга:\n"
+        "💰 По балансу — игроки с самым большим количеством денег.\n"
+        "👥 По рефералам — игроки, пригласившие больше пользователей.\n"
+        "📈 По уровню — игроки с самым высоким уровнем.\n\n"
+        "Открыть сами рейтинги можно кнопкой 🏆 Топ в главном меню."
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=get_help_menu_keyboard())
+    except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=get_help_menu_keyboard())
+    await callback.answer()
+
 
 @router.callback_query(F.data == "help_trading")
 async def handle_help_trading(callback: CallbackQuery):
@@ -2764,7 +2887,7 @@ async def process_trading_amount(message: Message, state: FSMContext):
     amount_msg_id = data.get("amount_msg_id")
 
     try:
-        amount = int(message.text)
+        amount = parse_amount(message.text)
         if amount <= 0:
             await message.answer("сумма должна быть больше 00. попробуй ещё раз:")
             return
@@ -3303,7 +3426,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
 
     try:
-        amount = int(message.text.strip())
+        amount = parse_amount(message.text)
         if amount <= 0:
             await message.answer("Количество должно быть больше 0. Попробуй ещё раз:")
             return
@@ -3490,7 +3613,7 @@ async def process_roulette_amount(message: Message, state: FSMContext):
     user_id = message.from_user.id
 
     try:
-        amount = int(message.text.strip())
+        amount = parse_amount(message.text)
     except (TypeError, ValueError):
         await message.answer("❌ Введи целое число, например: 52000")
         return
@@ -3788,7 +3911,7 @@ async def process_duel_challenge(message: Message, state: FSMContext):
 
     nick_str, amount_str = parts
     try:
-        amount = int(amount_str)
+        amount = parse_amount(amount_str)
     except ValueError:
         await message.answer("❌ сумма должна быть числом. Пример: `убийца52 676767`", parse_mode="Markdown")
         return
@@ -4114,14 +4237,14 @@ async def monitor_empty_businesses():
                     await add_to_balance(user_id, payout)
                     await save_biz(user_id, None)
                     try:
-                        await bot.send_message(user_id, f"🏚 бизнес «{name}» продан госсударству: он простаивал без сырья более 5 дней.\n💰 начислено 50% стоимости: {payout:,} ₽")
+                        await bot.send_message(user_id, f"🏚 бизнес «{name}» забрало госсударство: он простаивал без сырья более 5 дней.\n💰 начислено 50% стоимости: {payout:,} ₽.")
                     except Exception:
                         pass
                     continue
 
                 if now - float(empty_since) >= EMPTY_STOCK_NOTIFY_AFTER and not biz.get("empty_notified"):
                     try:
-                        await bot.send_message(user_id, f"⚠️ твой «{biz.get('name', 'бизнес')}» простаивает! пополни склад, иначе через 5 дней его заберет госсударство")
+                        await bot.send_message(user_id, f"⚠️ твой «{biz.get('name', 'бизнес')}» простаивает! пополни склад, иначе через 5 дней его заберет государство.")
                     except Exception:
                         pass
                     biz["empty_notified"] = True
@@ -4195,7 +4318,7 @@ async def reward_top_players():
 async def handle_unknown_text(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
-        await message.answer("Используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
+        await message.answer("используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
 
 @dp.errors()
 async def global_error_handler(event, exception):
