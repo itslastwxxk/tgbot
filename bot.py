@@ -193,7 +193,7 @@ GREETINGS = [
     "добро пожаловать отсюда, {name}.",
     "рад снова с тобой увидеться, {name}.",
     "связь, {name}.",
-    "я тебя могу, {name}.",
+    "я тебя могну, {name}.",
     "ку, {name}.",
     "салам, {name}.",
     "сап, {name}."
@@ -2123,7 +2123,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
         await message.answer(
             "👋 <b>дарова!</b> напиши свой эксклюзивный ник\n"
-            "можно использовать русские/английские буквы и цифры\n",
+            "можно использовать русс/англ буквы и цифры\n",
             parse_mode="HTML",
         )
         await state.set_state(NameForm.waiting_for_name)
