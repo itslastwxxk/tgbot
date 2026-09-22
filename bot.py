@@ -3908,7 +3908,7 @@ async def show_duel_menu(message: Message, state: FSMContext):
         "🥊 <b>Дуэли</b>\n\n"
         "напиши ник и сумму, кому хочешь кинуть дуэль\n"
         "формат: `ник сумма`\n",
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=kb
     )
     await state.set_state(DuelForm.waiting_for_target)
