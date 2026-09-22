@@ -139,8 +139,9 @@ class DuelForm(StatesGroup):
     waiting_for_target = State()
 
 class TransferForm(StatesGroup):
+    waiting_for_target = State()
     waiting_for_note = State()
-    waiting_for_target_amount = State()
+    waiting_for_amount = State()
 
 # ============================================================
 # КОНСТАНТЫ HELP
@@ -172,7 +173,7 @@ HELP_TEXT_BUSINESS = (
     "бизнесу нужно сырьё. Если оно заканчивается, бизнес перестаёт работать и доход останавливается.\nуровень бизнеса можно повышать, чем выше уровень тем выше доход."
 )
 
-HELP_TEXT_TOP = ("топ это")
+HELP_TEXT_TOP = ("топ — лучшие пользователи в боте.\n\nигроки которые занимают топ 1-5 каждые 3 дня получают награды")
 
 GREETINGS = [
     "вечер в хату, {name}.",
@@ -2264,10 +2265,20 @@ async def show_profile(message: Message, state: FSMContext):
 async def transfer_start(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отказаться", callback_data="transfer_cancel")]
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="transfer_cancel")]
     ])
-    await callback.message.answer("💸 Напиши текст к переводу (или нажми «Отказаться»).", reply_markup=kb)
-    await state.set_state(TransferForm.waiting_for_note)
+    await callback.message.answer("💸 Напиши @username или ID пользователя, которому хочешь перевести деньги.", reply_markup=kb)
+    await state.set_state(TransferForm.waiting_for_target)
+    await callback.answer()
+
+@router.callback_query(F.data == "transfer_no_note")
+async def transfer_no_note(callback: CallbackQuery, state: FSMContext):
+    if await state.get_state() != TransferForm.waiting_for_note:
+        await callback.answer()
+        return
+    await state.update_data(transfer_note="")
+    await state.set_state(TransferForm.waiting_for_amount)
+    await callback.message.edit_text("✍️ Комментарий пропущен. Теперь напиши сумму перевода.\nДля отмены введи /cancel.")
     await callback.answer()
 
 @router.callback_query(F.data == "transfer_cancel")
@@ -2276,45 +2287,59 @@ async def transfer_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("❌ Перевод отменён.")
     await callback.answer()
 
-@router.message(TransferForm.waiting_for_note)
-async def transfer_note_received(message: Message, state: FSMContext):
-    note = (message.text or "").strip()
-    if not note:
-        await message.answer("Напиши текст сообщением или нажми «Отказаться».")
-        return
-    if len(note) > 500:
-        await message.answer("Текст слишком длинный. Максимум 500 символов.")
-        return
-    await state.update_data(transfer_note=note)
-    await state.set_state(TransferForm.waiting_for_target_amount)
-    await message.answer("Теперь напиши получателя и сумму через пробел.\nПример: @username 1кк или 123456789 100 000\nДля отмены введи /cancel.")
-
-@router.message(Command("cancel"), TransferForm.waiting_for_target_amount)
-@router.message(Command("cancel"), TransferForm.waiting_for_note)
-async def transfer_cancel_command(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ Перевод отменён.")
-
-@router.message(TransferForm.waiting_for_target_amount)
-async def transfer_process(message: Message, state: FSMContext):
-    # Первый токен — получатель, остаток — сумма (в том числе с пробелами).
-    parts = (message.text or "").strip().split(maxsplit=1)
-    if len(parts) != 2:
-        await message.answer("Формат: @username сумма. Например: @player 1кк или @player 1 000 000")
-        return
-    target_str, amount_str = parts
-    try:
-        amount = parse_amount(amount_str)
-    except ValueError:
-        await message.answer("Не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
-        return
-    sender_id = message.from_user.id
+@router.message(TransferForm.waiting_for_target)
+async def transfer_target_received(message: Message, state: FSMContext):
+    target_str = (message.text or "").strip()
     target_id = await resolve_target(target_str)
     if not target_id:
         await message.answer("❌ Получатель не найден. Укажи его @username или ID.")
         return
-    if target_id == sender_id:
+    if target_id == message.from_user.id:
         await message.answer("❌ Нельзя переводить деньги самому себе.")
+        return
+    await state.update_data(transfer_target_id=target_id, transfer_target_str=target_str)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Без комментария", callback_data="transfer_no_note")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="transfer_cancel")]
+    ])
+    await state.set_state(TransferForm.waiting_for_note)
+    await message.answer("📝 Напиши комментарий к переводу или нажми «Без комментария».", reply_markup=kb)
+
+@router.message(TransferForm.waiting_for_note)
+async def transfer_note_received(message: Message, state: FSMContext):
+    note = (message.text or "").strip()
+    if not note:
+        await message.answer("Напиши комментарий сообщением или нажми «Без комментария».")
+        return
+    if len(note) > 500:
+        await message.answer("Комментарий слишком длинный. Максимум 500 символов.")
+        return
+    await state.update_data(transfer_note=note)
+    await state.set_state(TransferForm.waiting_for_amount)
+    await message.answer("💰 Теперь напиши сумму перевода. Например: 1000, 100к или 1кк. Для отмены введи /cancel.")
+
+@router.message(Command("cancel"), TransferForm.waiting_for_target)
+@router.message(Command("cancel"), TransferForm.waiting_for_note)
+@router.message(Command("cancel"), TransferForm.waiting_for_amount)
+async def transfer_cancel_command(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Перевод отменён.")
+
+@router.message(TransferForm.waiting_for_amount)
+async def transfer_process(message: Message, state: FSMContext):
+    try:
+        amount = parse_amount((message.text or "").strip())
+    except ValueError:
+        await message.answer("Не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
+        return
+    sender_id = message.from_user.id
+    data = await state.get_data()
+    target_id = data.get("transfer_target_id")
+    target_str = data.get("transfer_target_str", str(target_id))
+    note = data.get("transfer_note", "")
+    if not target_id:
+        await state.clear()
+        await message.answer("❌ Не удалось определить получателя. Начни перевод заново.")
         return
     if amount <= 0:
         await message.answer("❌ Сумма должна быть больше нуля.")
@@ -2329,19 +2354,24 @@ async def transfer_process(message: Message, state: FSMContext):
         )
         return
     await add_to_balance(target_id, amount)
-    data = await state.get_data()
-    note = data.get("transfer_note", "")
     sender_name = await get_user_name(sender_id) or "Игрок"
     try:
-        await bot.send_message(target_id, f"💸 Тебе перевели {amount:,} ₽ от {sender_name}.\nКомментарий: {note}")
+        notification = f"💸 Тебе перевели {amount:,} ₽ от {sender_name}."
+        if note:
+            notification += f"\nКомментарий: {note}"
+        await bot.send_message(target_id, notification)
     except Exception:
         logger.exception("Не удалось уведомить получателя о переводе")
     await state.clear()
-    await message.answer(
+    result = (
         f"✅ Перевод выполнен: {amount:,} ₽ пользователю {target_str}.\n"
-        f"Комиссия 5%: {commission:,} ₽\nВсего списано: {total_cost:,} ₽\n"
-        f"Комментарий: {note}"
+        f"Комиссия 5%: {commission:,} ₽\nВсего списано: {total_cost:,} ₽"
     )
+    if note:
+        result += f"\nКомментарий: {note}"
+    else:
+        result += "\nКомментарий: без комментария"
+    await message.answer(result)
 
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
