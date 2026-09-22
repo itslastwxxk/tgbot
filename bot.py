@@ -316,7 +316,7 @@ TRADING_MODES = {
     "high": {"multiplier": 5.0, "chance": 0.18},  # EV = -10%
 }
 
-ROULETTE_HOUSE_RIG = 0.05
+ROULETTE_HOUSE_RIG = 0.01
 DUEL_TIMEOUT = 3600
 DUEL_COOLDOWN = 60
 
@@ -3905,7 +3905,7 @@ async def show_duel_menu(message: Message, state: FSMContext):
     ])
 
     await message.answer(
-        "🥊 Дуэли\n\n"
+        "🥊 <b>Дуэли</b>\n\n"
         "напиши ник и сумму, кому хочешь кинуть дуэль\n"
         "формат: `ник сумма`\n",
         parse_mode="Markdown",
