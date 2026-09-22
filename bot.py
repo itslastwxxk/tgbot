@@ -2432,7 +2432,7 @@ async def show_work_menu(message: Message, state: FSMContext):
         await message.answer_photo(photo=photo, caption=text, reply_markup=get_work_keyboard())
     except FileNotFoundError:
         logger.warning("Файл images/work.png не найден.")
-        await message.answer(text, reply_markup=get_work_keyboard())
+        await message.answer(text, parse_mode="HTML", reply_markup=get_work_keyboard())
 
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message):
