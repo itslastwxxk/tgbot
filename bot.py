@@ -154,7 +154,7 @@ HELP_TEXT_MAIN = (
 HELP_TEXT_TRADING = (
     "трейдинг — это торговля на рынке криптовалюты с разной степенью риска.\n\n"
     "как это работает:\n"
-    "1. выбираешь риск: низкий(высокий шанс победы, но выйгрыш небольшой), средний(шанс 50на50, выйгрыш х2), высокий(маленький шанс, но выйгрыш х5 от ставки!!).\n"
+    "1. выбираешь риск: низкий(высокий шанс победы, но выигрыш небольшой), средний(шанс 50 на 50, выигрыш х2), высокий(маленький шанс, но выигрыш х5 от ставки!!).\n"
     "2. вводи сумму ставки\n"
     "3. бот проверяет рынок и показывает результат.\n\n"
 )
@@ -191,9 +191,9 @@ GREETINGS = [
     "честь имею, {name}.",
     "здрав буде, {name}.",
     "добро пожаловать отсюда, {name}.",
-    "рад снова с тобой увидится, {name}.",
+    "рад снова с тобой увидеться, {name}.",
     "связь, {name}.",
-    "я тебя могну, {name}.",
+    "я тебя могу, {name}.",
     "ку, {name}.",
     "салам, {name}.",
     "сап, {name}."
@@ -975,28 +975,65 @@ async def add_to_referral_earnings(user_id: int, amount: int):
     await redis_client.hincrby(f"user:{user_id}", "referral_earnings", amount)
 
 async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str] | None:
-    """Обрабатывает реферала. Возвращает (new_count, referrer_name) или None."""
-    existing = await get_referrer(new_user_id)
-    if existing:
+    """Регистрирует реферала; выплаты начисляются после достижения 5 уровня."""
+    if new_user_id == referrer_id or await get_referrer(new_user_id):
         return None
     referrer_name = await get_user_name(referrer_id)
     if not referrer_name:
         return None
+
     await set_referrer(new_user_id, referrer_id)
     new_count = await increment_referral_count(referrer_id)
+    await redis_client.hset(
+        f"user:{new_user_id}", mapping={"referral_reward_pending": "1"}
+    )
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"🎉 По твоей ссылке зарегистрировался {referrer_name}!\\n"
+            f"🎁 Награда будет начислена, когда новичок достигнет 5 уровня.\\n"
+            f"👥 Всего рефералов: {new_count}"
+        )
+    except Exception:
+        pass
+    return new_count, referrer_name
+
+
+async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
+    """Выдаёт выплаты за реферала ровно один раз при достижении 5 уровня."""
+    if level < 5:
+        return False
+    user_key = f"user:{new_user_id}"
+    pending = await redis_client.hget(user_key, "referral_reward_pending")
+    if pending != "1":
+        return False
+    referrer_id = await get_referrer(new_user_id)
+    if not referrer_id:
+        return False
+
+    claimed = await redis_client.hsetnx(user_key, "referral_reward_pending", "0")
+    if not claimed:
+        return False
+
     await add_to_balance(referrer_id, REFERRAL_REWARD)
     await add_to_referral_earnings(referrer_id, REFERRAL_REWARD)
     await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
     try:
         await bot.send_message(
             referrer_id,
-            f"🎉 По твоей ссылке зарегистрировался {referrer_name}!\n"
-            f"💰 Награда: +{REFERRAL_REWARD:,} ₽\n"
-            f"👥 Всего рефералов: {new_count}"
+            f"🎉 Твой реферал достиг 5 уровня!\\n"
+            f"💰 Награда: +<b>{REFERRAL_REWARD:,} ₽</b>",
+            parse_mode="HTML",
+        )
+        await bot.send_message(
+            new_user_id,
+            f"🎁 Ты достиг 5 уровня! Бонус за приглашение: "
+            f"<b>+{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
+            parse_mode="HTML",
         )
     except Exception:
         pass
-    return new_count, referrer_name
+    return True
 
 async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
     raw = await redis_client.zrevrange("referrals_top", 0, limit - 1, withscores=True)
@@ -1165,6 +1202,10 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
     new_stats = {"xp": new_xp, "level": new_level}
     _stats_cache[user_id] = new_stats
 
+    # Выплаты за реферала — только при переходе на 5 уровень или выше.
+    if old_level < 5 <= new_level:
+        await pay_referral_reward_if_eligible(user_id, new_level)
+
     return new_xp, new_level, leveled_up
 
 async def notify_level_up(user_id: int, new_level: int):
@@ -1298,10 +1339,10 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     # --- ВЫБОР СЛУЧАЙНОГО ПРИВЕТСТВИЯ ---
     # Выбираем случайную фразу из списка и подставляем имя через форматирование строки
     greeting_template = random.choice(GREETINGS)
-    greeting_text = greeting_template.format(name=f"<b>{display_name}</b>")
+    greeting_text = greeting_template.format(name=f"{display_name}")
     
     # Формируем полный текст сообщения
-    text = f"{greeting_text}\nтвой баланс: <b>{balance:,} ₽</b>\nвыбирай куда направишься"
+    text = f"{greeting_text}\n<b>твой баланс:</b> {balance:,} ₽\nвыбирай куда направишься"
     # -------------------------------------
 
     try:
@@ -2082,7 +2123,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
         await message.answer(
             "👋 <b>дарова!</b> напиши свой эксклюзивный ник\n"
-            "можно использовать русс/англ буквы и цифры\n",
+            "можно использовать русские/английские буквы и цифры\n",
             parse_mode="HTML",
         )
         await state.set_state(NameForm.waiting_for_name)
@@ -2385,7 +2426,7 @@ async def transfer_process(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
-    text = f"выбирай, где хочешь работать:"
+    text = f"<b>выбирай, где хочешь работать:</b>"
     try:
         photo = FSInputFile("images/work.png")
         await message.answer_photo(photo=photo, caption=text, reply_markup=get_work_keyboard())
@@ -2796,16 +2837,16 @@ async def handle_ref(message: Message):
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
         f"Твоя ссылка:\n`{ref_link}`\n\n"
-        f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
-        f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
-        f"За каждого приглашённого — <b>{REFERRAL_REWARD:,} ₽</b>\n"
-        f"Новичку за регистрацию по ссылке — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
+        f"👥 Приглашено: {referral_count} чел.\n"
+        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
+        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
+        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
     ])
-    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "ref_top")
