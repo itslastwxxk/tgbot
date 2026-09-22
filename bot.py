@@ -172,6 +172,8 @@ HELP_TEXT_BUSINESS = (
     "бизнесу нужно сырьё. Если оно заканчивается, бизнес перестаёт работать и доход останавливается.\nуровень бизнеса можно повышать, чем выше уровень тем выше доход."
 )
 
+HELP_TEXT_TOP = ("топ это")
+
 GREETINGS = [
     "вечер в хату, {name}.",
     "добро пожаловать обратно, {name}!",
@@ -2559,14 +2561,7 @@ async def show_mine_menu(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "help_top")
 async def handle_help_top(callback: CallbackQuery):
-    text = (
-        "🏆 Топ — это рейтинг игроков.\n\n"
-        "В игре доступны три рейтинга:\n"
-        "💰 По балансу — игроки с самым большим количеством денег.\n"
-        "👥 По рефералам — игроки, пригласившие больше пользователей.\n"
-        "📈 По уровню — игроки с самым высоким уровнем.\n\n"
-        "Открыть сами рейтинги можно кнопкой 🏆 Топ в главном меню."
-    )
+    text = HELP_TEXT_TOP
     try:
         await callback.message.edit_text(text, reply_markup=get_help_menu_keyboard())
     except TelegramBadRequest:
