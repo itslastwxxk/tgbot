@@ -1039,6 +1039,14 @@ async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
     raw = await redis_client.zrevrange("referrals_top", 0, limit - 1, withscores=True)
     return [(int(uid), int(score)) for uid, score in raw]
 
+async def get_top_display_name(user_id: int) -> str:
+    """Отображаемое имя игрока для топов: ник + @username (если он есть)."""
+    name = await get_user_name(user_id) or "без ника"
+    username = await get_username(user_id)
+    if username and username != "без_username":
+        return f"{name} (@{username})"
+    return name
+
 # --- Дуэли: хелперы ---
 async def create_duel(challenger_id: int, target_id: int, amount: int) -> str:
     duel_id = uuid.uuid4().hex[:8]
@@ -1263,8 +1271,7 @@ async def get_all_balances() -> list[tuple[int, str, int]]:
             uid = int(uid_raw)
         except (TypeError, ValueError):
             continue
-        data = await redis_client.hgetall(f"user:{uid}")
-        name = data.get("name") or data.get("username") or "Игрок"
+        name = await get_top_display_name(uid)
         results.append((uid, name, int(score)))
     return results
 
@@ -1757,7 +1764,7 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
 
     text = "👥 <b>Топ по рефералам (админ-режим):</b>\n\n"
     for i, (uid, count) in enumerate(top, 1):
-        name = await get_user_name(uid) or "без ника"
+        name = await get_top_display_name(uid)
         text += f"{i}. {name} (#{uid}) — <b>{count}</b> реф.\n"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -2341,10 +2348,10 @@ async def transfer_target_received(message: Message, state: FSMContext):
     target_str = (message.text or "").strip()
     target_id = await resolve_target(target_str)
     if not target_id:
-        await message.answer("❌ Получатель не найден. Укажи его @username или ID.")
+        await message.answer("❌ получатель не найден. укажи его @username или ник.")
         return
     if target_id == message.from_user.id:
-        await message.answer("❌ Нельзя переводить деньги самому себе.")
+        await message.answer("❌ нельзя переводить деньги самому себе.")
         return
     await state.update_data(transfer_target_id=target_id, transfer_target_str=target_str)
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -2429,7 +2436,7 @@ async def transfer_process(message: Message, state: FSMContext):
         # Пытаемся отправить уведомление
         await bot.send_message(target_id, notification, parse_mode="HTML")
         success_msg = (
-            f"✅ перевод <b>{amount:,} ₽</b> выполнен пользователю {target_str}\n"
+            f"✅ перевод <b>{amount:,} ₽</b> выполнен пользователю <b>{target_str}</b>\n"
             f"комиссия 5%: {commission:,} ₽\n"
             f"всего списано: <b>{total_cost:,} ₽</b>\n"
         )
@@ -2470,11 +2477,11 @@ async def transfer_process(message: Message, state: FSMContext):
 
     # Добавляем комментарий в финальное сообщение
     if note:
-        success_msg += f"\nкомментарий: {note}"
+        success_msg += f"\n\nкомментарий: {note}"
     else:
-        success_msg += "\nкомментарий: ---"
+        success_msg += "\n\nкомментарий: ---"
         
-    success_msg += "\nнажми /menu, чтобы вернуться в главное меню."
+    success_msg += "\n\nнажми /menu, чтобы вернуться в главное меню"
 
     await message.answer(success_msg, parse_mode="HTML")
     await state.clear()
@@ -2559,7 +2566,7 @@ async def show_public_top(callback: CallbackQuery):
         else:
             result_text = "👥 <b>топ по рефералам:</b>\n\n"
             for i, (uid, count) in enumerate(top, 1):
-                name = await get_user_name(uid) or "без ника"
+                name = await get_top_display_name(uid)
                 result_text += f"{i}. {name} — <b>{count}</b> реф.\n"
     elif kind == "level":
         top = await get_top_levels(10)
@@ -2568,7 +2575,7 @@ async def show_public_top(callback: CallbackQuery):
         else:
             result_text = "📈 <b>топ по уровням:</b>\n\n"
             for i, (uid, lvl) in enumerate(top, 1):
-                name = await get_user_name(uid) or "без ника"
+                name = await get_top_display_name(uid)
                 result_text += f"{i}. {name} — <b>{lvl}</b> ур.\n"
 
     else:
@@ -2924,7 +2931,7 @@ async def handle_ref_top(callback: CallbackQuery):
     else:
         text = "👥 <b>Топ по рефералам:</b>\n\n"
         for i, (uid, count) in enumerate(top, 1):
-            name = await get_user_name(uid) or "без ника"
+            name = await get_top_display_name(uid)
             text += f"{i}. {name} — <b>{count}</b> реф.\n"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
