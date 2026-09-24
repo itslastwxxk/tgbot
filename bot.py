@@ -282,33 +282,37 @@ REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистр
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
 MINE_COOLDOWN = 3
-MINE_STAMINA_MAX = 7             # сколько раз подряд можно фармить шахту
+MINE_STAMINA_MAX = 10             # сколько раз подряд можно фармить шахту
 MINE_STAMINA_REGEN_SECONDS = 600  # 10 минут на восстановление выносливости
 MATH_REWARD = 500
 MATH_COOLDOWN = 10
 RAW_PRICE = 1
 
 PICKAXE_LEVELS = [
-    {"name": "деревянная",  "reward": 10,   "cost": 0},
-    {"name": "медная",  "reward": 50,   "cost": 100},
-    {"name": "оловянная",  "reward": 150,   "cost": 1000},
-    {"name": "кактусовая",  "reward": 300,   "cost": 4000},
-    {"name": "каменная",    "reward": 600,  "cost": 12000},
-    {"name": "железная",    "reward": 1200,  "cost": 36000},
-    {"name": "свинцовая",    "reward": 2400,  "cost": 84000},
-    {"name": "серебряная",    "reward": 4000,  "cost": 100000},
-    {"name": "вольфрамовая",    "reward": 7000,  "cost": 200000},
-    {"name": "костяная",    "reward": 10000,  "cost": 250000},
-    {"name": "золотая",     "reward": 15000,  "cost": 300000},
-    {"name": "карамельная",    "reward": 18000,  "cost": 300000},
-    {"name": "железная",    "reward": 20000,  "cost": 350000},
-    {"name": "платиновая",    "reward": 25000,  "cost": 500000},
-    {"name": "алмазная",    "reward": 30000,  "cost": 700000},
-    {"name": "аметистовая", "reward": 35000,  "cost": 600000},
-    {"name": "кошмарная",    "reward": 40000,  "cost": 1000000},
-    {"name": "смертоносная",    "reward": 45000,  "cost": 1500000},
-    {"name": "незеритовая", "reward": 55000,  "cost": 2000000},
-    {"name": "адамантитовая", "reward": 60000,  "cost": 3000000},
+    {"name": "деревянная",  "reward": 20,   "cost": 0},
+    {"name": "медная",  "reward": 80,   "cost": 100},
+    {"name": "оловянная",  "reward": 300,   "cost": 1000},
+    {"name": "кактусовая",  "reward": 500,   "cost": 4000},
+    {"name": "каменная",    "reward": 900,  "cost": 12000},
+    {"name": "железная",    "reward": 1500,  "cost": 36000},
+    {"name": "свинцовая",    "reward": 2800,  "cost": 84000},
+    {"name": "серебряная",    "reward": 4500,  "cost": 100000},
+    {"name": "вольфрамовая",    "reward": 8000,  "cost": 200000},
+    {"name": "костяная",    "reward": 12000,  "cost": 250000},
+    {"name": "золотая",     "reward": 18000,  "cost": 300000},
+    {"name": "карамельная",    "reward": 21000,  "cost": 300000},
+    {"name": "железная",    "reward": 25000,  "cost": 350000},
+    {"name": "платиновая",    "reward": 30000,  "cost": 500000},
+    {"name": "алмазная",    "reward": 36000,  "cost": 700000},
+    {"name": "аметистовая", "reward": 41000,  "cost": 600000},
+    {"name": "кошмарная",    "reward": 47000,  "cost": 1000000},
+    {"name": "кобальтовая",    "reward": 54000,  "cost": 1500000},
+    {"name": "палладиевая",    "reward": 67000,  "cost": 2000000},
+    {"name": "смертоносная",    "reward": 77000,  "cost": 3000000},
+    {"name": "мифриловая",    "reward": 88000,  "cost": 4000000},
+    {"name": "незеритовая", "reward": 100000,  "cost": 5000000},
+    {"name": "адамантитовая", "reward": 115000,  "cost": 6000000},
+    {"name": "титановая",    "reward": 135000,  "cost": 7500000},
 ]
 
 TRADING_MIN_BALANCE = 20000
@@ -3046,7 +3050,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
 
     text = (
         f"⛏у тебя в руках {pickaxe_name} кирка\n+<b>{reward:,} ₽</b> +{XP_PER_MINE} XP!\n"
-        f"Баланс: <b>{new_balance:,} ₽</b>\n"
+        f"💰 Баланс: <b>{new_balance:,} ₽</b>\n"
         f"🔋 выносливость: <b>{stamina_info}/{MINE_STAMINA_MAX}</b>"
     )
     await message.answer(text, parse_mode="HTML")
