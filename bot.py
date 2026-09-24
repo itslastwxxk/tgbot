@@ -282,6 +282,8 @@ REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистр
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
 MINE_COOLDOWN = 3
+MINE_STAMINA_MAX = 7             # сколько раз подряд можно фармить шахту
+MINE_STAMINA_REGEN_SECONDS = 600  # 10 минут на восстановление выносливости
 MATH_REWARD = 500
 MATH_COOLDOWN = 10
 RAW_PRICE = 1
@@ -1093,6 +1095,45 @@ async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple
         ttl = await redis_client.ttl(key)
         _farm_cooldown_cache[user_id] = now + max(ttl, 0)
         return False, max(ttl, 0)
+
+# --- Выносливость шахты ---
+async def get_mine_stamina(user_id: int) -> tuple[int, int]:
+    """Возвращает (текущая выносливость, секунд до полного восстановления — 0, если восстанавливать нечего)."""
+    now = time.time()
+    data = await redis_client.hgetall(f"user:{user_id}")
+    stamina_raw = data.get("mine_stamina")
+    stamina = int(stamina_raw) if stamina_raw not in (None, "") else MINE_STAMINA_MAX
+
+    empty_at_raw = data.get("mine_stamina_empty_at")
+    if stamina <= 0 and empty_at_raw:
+        try:
+            empty_at = float(empty_at_raw)
+        except (TypeError, ValueError):
+            empty_at = now
+        elapsed = now - empty_at
+        if elapsed >= MINE_STAMINA_REGEN_SECONDS:
+            stamina = MINE_STAMINA_MAX
+            await redis_client.hset(f"user:{user_id}", mapping={
+                "mine_stamina": str(stamina),
+                "mine_stamina_empty_at": "",
+            })
+            return stamina, 0
+        return 0, int(MINE_STAMINA_REGEN_SECONDS - elapsed)
+
+    return stamina, 0
+
+async def consume_mine_stamina(user_id: int) -> tuple[bool, int]:
+    """Списывает 1 единицу выносливости. Возвращает (успех, остаток выносливости либо секунды до восстановления)."""
+    stamina, wait = await get_mine_stamina(user_id)
+    if stamina <= 0:
+        return False, wait
+
+    stamina -= 1
+    updates = {"mine_stamina": str(stamina)}
+    if stamina == 0:
+        updates["mine_stamina_empty_at"] = str(time.time())
+    await redis_client.hset(f"user:{user_id}", mapping=updates)
+    return True, stamina
 
 # --- Кирка ---
 async def get_pickaxe_level(user_id: int) -> int:
@@ -2893,10 +2934,17 @@ async def show_mine_menu(message: Message, state: FSMContext):
     pickaxe_lvl = await get_pickaxe_level(user_id)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
+    stamina, wait = await get_mine_stamina(user_id)
+    if stamina > 0:
+        stamina_line = f"🔋 выносливость: <b>{stamina}/{MINE_STAMINA_MAX}</b>\n"
+    else:
+        minutes, seconds = divmod(wait, 60)
+        stamina_line = f"🔋 выносливость: <b>0/{MINE_STAMINA_MAX}</b> (восстановится через {minutes} мин {seconds} сек)\n"
     text = (
         f"⛏ ты в шахте\n\n"
         f"🔧 кирка: <b>{pickaxe_name}</b>\n"
         f"💰 за клик: <b>{reward:,} ₽</b>\n"
+        f"{stamina_line}"
     )
     try:
         photo = FSInputFile("images/mine.png")
@@ -2981,6 +3029,14 @@ async def handle_mine_farm(message: Message, state: FSMContext):
         await message.answer(f"⏳ обожди {remaining} сек.")
         return
 
+    stamina_ok, stamina_info = await consume_mine_stamina(user_id)
+    if not stamina_ok:
+        minutes, seconds = divmod(stamina_info, 60)
+        await message.answer(
+            f"🔋 выносливость закончилась!\nвосстановится через {minutes} мин {seconds} сек."
+        )
+        return
+
     pickaxe_lvl = await get_pickaxe_level(user_id)
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
@@ -2990,7 +3046,8 @@ async def handle_mine_farm(message: Message, state: FSMContext):
 
     text = (
         f"⛏у тебя в руках {pickaxe_name} кирка\n+<b>{reward:,} ₽</b> +{XP_PER_MINE} XP!\n"
-        f"Баланс: <b>{new_balance:,} ₽</b>"
+        f"Баланс: <b>{new_balance:,} ₽</b>\n"
+        f"🔋 выносливость: <b>{stamina_info}/{MINE_STAMINA_MAX}</b>"
     )
     await message.answer(text, parse_mode="HTML")
 
@@ -3085,10 +3142,17 @@ async def handle_pickaxe_back(callback: CallbackQuery, state: FSMContext):
     pickaxe_lvl = await get_pickaxe_level(user_id)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
+    stamina, wait = await get_mine_stamina(user_id)
+    if stamina > 0:
+        stamina_line = f"🔋 выносливость: <b>{stamina}/{MINE_STAMINA_MAX}</b>\n"
+    else:
+        minutes, seconds = divmod(wait, 60)
+        stamina_line = f"🔋 выносливость: <b>0/{MINE_STAMINA_MAX}</b> (восстановится через {minutes} мин {seconds} сек)\n"
     text = (
         f"⛏ ты в шахте\n\n"
         f"🔧 кирка: <b>{pickaxe_name}</b>\n"
         f"💰 за клик: <b>{reward:,} ₽</b>\n"
+        f"{stamina_line}"
     )
     await callback.message.answer(text, parse_mode="HTML", reply_markup=get_mine_keyboard())
 
