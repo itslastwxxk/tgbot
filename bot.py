@@ -2775,14 +2775,6 @@ async def show_work_menu(message: Message, state: FSMContext):
 async def show_shop_menu(message: Message):
     await message.answer("Раздел «Магаз» пока в разработке — скоро зальём.")
 
-@router.message(F.text == "💎 ДОНАТ 💎")
-async def donate_handler(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    tokens = await get_tokens(user_id)
-    text, kb = await donate_carousel_view(0, user_id, tokens)
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
-
-
 # --- Магазин за Токены (ТК) ---
 DONATE_SHOP_ITEMS = [
     {
