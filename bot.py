@@ -136,6 +136,7 @@ class AdminForm(StatesGroup):
     waiting_for_search = State()
     waiting_for_amount = State()
     waiting_for_level = State()
+    waiting_for_tk_amount: State = State()
 
 class DuelForm(StatesGroup):
     waiting_for_target = State()
@@ -1507,8 +1508,15 @@ def get_admin_keyboard():
 def get_admin_player_keyboard(player_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Задать баланс", callback_data=f"admin_act:set:{player_id}")],
-        [InlineKeyboardButton(text="➕ Добавить", callback_data=f"admin_act:add:{player_id}")],
-        [InlineKeyboardButton(text="➖ Вычесть", callback_data=f"admin_act:sub:{player_id}")],
+        [
+            InlineKeyboardButton(text="➕ Добавить", callback_data=f"admin_act:add:{player_id}"),
+            InlineKeyboardButton(text="➖ Вычесть", callback_data=f"admin_act:sub:{player_id}"),
+        ],
+        [InlineKeyboardButton(text="💎 Задать ТК", callback_data=f"admin_tk_act:set:{player_id}")],
+        [
+            InlineKeyboardButton(text="➕ Добавить ТК", callback_data=f"admin_tk_act:add:{player_id}"),
+            InlineKeyboardButton(text="➖ Вычесть ТК", callback_data=f"admin_tk_act:sub:{player_id}"),
+        ],
         [InlineKeyboardButton(text="⭐ Выдать уровень", callback_data=f"admin_level:{player_id}")],
         [InlineKeyboardButton(text="🔙 К меню", callback_data="admin_main")],
     ])
@@ -1555,55 +1563,6 @@ async def cmd_admin(message: Message, state: FSMContext):
         reply_markup=get_admin_keyboard()
     )
     await state.update_data(admin_msg_id=sent.message_id)
-
-
-@router.message(Command("give_tokens"))
-async def cmd_give_tokens(message: Message):
-    """Вспомогательная команда админа: /give_tokens <user_id> <кол-во>"""
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Доступ закрыт, ты не админ.")
-        return
-
-    parts = message.text.split()
-    if len(parts) != 3:
-        await message.answer(
-            "Использование: <code>/give_tokens user_id количество</code>\n"
-            "Пример: <code>/give_tokens 123456789 20</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    try:
-        target_id = int(parts[1])
-        amount = int(parts[2])
-    except ValueError:
-        await message.answer("user_id и количество должны быть целыми числами.")
-        return
-
-    if amount == 0:
-        await message.answer("Количество не может быть нулевым.")
-        return
-
-    new_tokens = await add_tokens(target_id, amount)
-    sign = "+" if amount > 0 else ""
-    await message.answer(
-        f"✅ Игроку <code>{target_id}</code> начислено {sign}{amount} ТК.\n"
-        f"Баланс игрока: <b>{new_tokens} ТК</b>",
-        parse_mode="HTML",
-    )
-
-    if amount > 0:
-        try:
-            await message.bot.send_message(
-                target_id,
-                f"🎁 Администрация начислила тебе <b>{amount} ТК</b>!\n"
-                f"Баланс: <b>{new_tokens} ТК</b>\n\n"
-                f"Загляни в «💎 ДОНАТ 💎», чтобы посмотреть, что можно на них взять.",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
 
 @router.callback_query(F.data == "admin_main")
 async def admin_main(callback: CallbackQuery, state: FSMContext):
@@ -1667,6 +1626,7 @@ async def admin_search(message: Message, state: FSMContext):
 async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
                              state: FSMContext, player_id: int):
     balance = await get_balance(player_id)
+    tokens = await get_tokens(player_id)
     name = await get_user_name(player_id) or "без ника"
     username = await get_username(player_id)
     referral_count = await get_referral_count(player_id)
@@ -1683,6 +1643,7 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
         f"📝 Ник: <b>{name}</b>\n"
         f"👤 Username: @{username}\n"
         f"💰 Баланс: <b>{balance:,} ₽</b>\n"
+        f"💎 Токены: <b>{tokens} ТК</b>\n"
         f"🏪 Бизнес: {biz_text}\n"
         f"👥 Рефералов: {referral_count}"
     )
@@ -1868,6 +1829,142 @@ async def admin_do_action(callback: CallbackQuery, state: FSMContext):
         get_admin_back_keyboard(player_id),
     )
 
+@router.callback_query(F.data.startswith("admin_tk_act:"))
+async def admin_tk_action_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    action = parts[1]
+    player_id = int(parts[2])
+
+    await callback.answer()
+
+    action_names = {
+        "set": "задать новое количество ТК",
+        "add": "добавить ТК",
+        "sub": "вычесть ТК",
+    }
+
+    current_tokens = await get_tokens(player_id)
+
+    await state.update_data(
+        admin_tk_action=action,
+        admin_player_id=player_id,
+        admin_msg_id=callback.message.message_id,
+    )
+    await state.set_state(AdminForm.waiting_for_tk_amount)
+
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        f"💎 Сейчас на балансе: <b>{current_tokens} ТК</b>\n\n"
+        f"Введи количество ТК для «{action_names[action]}»:",
+    )
+
+
+@router.message(AdminForm.waiting_for_tk_amount)
+async def admin_enter_tk_amount(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    chat_id = message.chat.id
+
+    try:
+        amount = parse_amount(message.text)
+        if amount < 0:
+            try:
+                await message.delete()
+            except TelegramBadRequest:
+                pass
+            await _edit_or_answer(
+                message.bot, chat_id, (await state.get_data()).get("admin_msg_id"),
+                "❌ Минус нельзя. Введи нормальное число:",
+            )
+            return
+    except ValueError:
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            pass
+        await _edit_or_answer(
+            message.bot, chat_id, (await state.get_data()).get("admin_msg_id"),
+            "❌ Введи целое число:",
+        )
+        return
+
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
+    data = await state.get_data()
+    action = data.get("admin_tk_action")
+    player_id = data.get("admin_player_id")
+    msg_id = data.get("admin_msg_id")
+
+    if not action or not player_id:
+        await _edit_or_answer(
+            message.bot, chat_id, msg_id,
+            "❌ Сессия истекла. Начни заново через /admin",
+        )
+        await state.clear()
+        return
+
+    current_tokens = await get_tokens(player_id)
+    name = await get_user_name(player_id) or "без ника"
+
+    action_texts = {
+        "set": f"Задать ТК = <b>{amount}</b>",
+        "add": f"Добавить <b>{amount} ТК</b> (станет {current_tokens + amount} ТК)",
+        "sub": f"Вычесть <b>{amount} ТК</b> (станет {current_tokens - amount} ТК)",
+    }
+
+    text = (
+        f"⚠️ <b>Подтверди действие:</b>\n\n"
+        f"👤 Игрок: {name} (#{player_id})\n"
+        f"💎 Сейчас ТК: {current_tokens}\n"
+        f"📋 {action_texts[action]}"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_tk_do:{action}:{player_id}:{amount}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_back:{player_id}")],
+    ])
+    await _edit_or_answer(message.bot, chat_id, msg_id, text, kb)
+    await state.set_state(None)
+
+
+@router.callback_query(F.data.startswith("admin_tk_do:"))
+async def admin_do_tk_action(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    action = parts[1]
+    player_id = int(parts[2])
+    amount = int(parts[3])
+
+    await callback.answer()
+
+    if action == "set":
+        await set_tokens(player_id, amount)
+    elif action == "add":
+        await add_tokens(player_id, amount)
+    elif action == "sub":
+        await add_tokens(player_id, -amount)
+
+    new_tokens = await get_tokens(player_id)
+    name = await get_user_name(player_id) or "без ника"
+
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        f"✅ <b>Готово!</b>\n\n"
+        f"👤 Игрок: {name} (#{player_id})\n"
+        f"💎 Новые токены: <b>{new_tokens} ТК</b>",
+        get_admin_back_keyboard(player_id),
+    )
 
 @router.callback_query(F.data.startswith("admin_back:"))
 async def admin_back_to_player(callback: CallbackQuery, state: FSMContext):
