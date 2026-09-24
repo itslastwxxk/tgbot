@@ -2791,6 +2791,7 @@ DONATE_SHOP_ITEMS = [
         "name": "Повышение уровня кирки",
         "price": 20,
         "desc": "мгновенно поднимает уровень твоей кирки на 1, без затрат ₽",
+        "image": "images/pickaxe.png",
     },
     {
         "id": "stamina_refill",
@@ -2798,11 +2799,51 @@ DONATE_SHOP_ITEMS = [
         "name": "Восстановление выносливости",
         "price": 5,
         "desc": "мгновенно восстанавливает выносливость в шахте до максимума",
+        "image": None,
     },
 ]
 
 
+def _donate_carousel_text(idx: int, user_id: int, tokens: int):
+    """Формирует текст и клавиатуру для карусели донат-магазина."""
+    idx = max(0, min(idx, len(DONATE_SHOP_ITEMS) - 1))
+    item = DONATE_SHOP_ITEMS[idx]
+    can_buy = tokens >= item["price"]
+
+    extra_line = ""
+    if item["id"] == "pickaxe_upgrade":
+        pickaxe_lvl = _pickaxe_cache.get(user_id)
+        if pickaxe_lvl is None:
+            # асинхронный вызов невозможен в синхронной функции,
+            # поэтому ниже оставлен async-вариант
+            pass
+        # Проверка на макс. уровень выполняется в async-обёртке
+
+    text = (
+        f"💎 <b>Магазин за Токены</b>\n\n"
+        f"{item['emoji']} <b>{item['name']}</b>\n"
+        f"{item['desc']}{extra_line}\n\n"
+        f"💠 Цена: <b>{item['price']} ТК</b>\n"
+        f"Твой баланс: <b>{tokens} ТК</b>"
+    )
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"donate_car:{idx-1}"))
+    nav.append(InlineKeyboardButton(text=f"{idx+1}/{len(DONATE_SHOP_ITEMS)}", callback_data="donate_noop"))
+    if idx < len(DONATE_SHOP_ITEMS) - 1:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"donate_car:{idx+1}"))
+    rows = [nav]
+    if can_buy:
+        rows.append([InlineKeyboardButton(text=f"✅ Купить за {item['price']} ТК", callback_data=f"donate_buy:{idx}")])
+    else:
+        rows.append([InlineKeyboardButton(text="❌ Недоступно", callback_data="donate_noop")])
+    rows.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="donate_close")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def donate_carousel_view(idx: int, user_id: int, tokens: int):
+    """Возвращает (text, kb, image_path_or_None) для карусели."""
     idx = max(0, min(idx, len(DONATE_SHOP_ITEMS) - 1))
     item = DONATE_SHOP_ITEMS[idx]
     can_buy = tokens >= item["price"]
@@ -2834,19 +2875,66 @@ async def donate_carousel_view(idx: int, user_id: int, tokens: int):
     else:
         rows.append([InlineKeyboardButton(text="❌ Недоступно", callback_data="donate_noop")])
     rows.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="donate_close")])
-    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+    image_path = item.get("image")
+    if image_path and not os.path.isfile(image_path):
+        image_path = None
+
+    return text, InlineKeyboardMarkup(inline_keyboard=rows), image_path
+
+
+async def _send_donate_carousel(bot_obj, chat_id: int, idx: int, user_id: int,
+                                reply_to_msg_id: int | None = None):
+    """Удаляет старое сообщение (если есть) и отправляет новую карточку товара."""
+    tokens = await get_tokens(user_id)
+    text, kb, image_path = await donate_carousel_view(idx, user_id, tokens)
+
+    # Удаляем предыдущее сообщение карусели
+    if reply_to_msg_id:
+        try:
+            await bot_obj.delete_message(chat_id, reply_to_msg_id)
+        except TelegramBadRequest:
+            pass
+
+    if image_path:
+        photo = FSInputFile(image_path)
+        sent = await bot_obj.send_photo(
+            chat_id=chat_id,
+            photo=photo,
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return sent.message_id
+    else:
+        sent = await bot_obj.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return sent.message_id
+
+
+@router.message(F.text == "💎 ДОНАТ 💎")
+async def donate_handler(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    msg_id = await _send_donate_carousel(message.bot, message.chat.id, 0, user_id)
+    await state.update_data(donate_msg_id=msg_id, donate_idx=0)
 
 
 @router.callback_query(F.data.startswith("donate_car:"))
-async def donate_car(callback: CallbackQuery):
+async def donate_car(callback: CallbackQuery, state: FSMContext):
     idx = int(callback.data.split(":")[1])
     user_id = callback.from_user.id
-    tokens = await get_tokens(user_id)
-    text, kb = await donate_carousel_view(idx, user_id, tokens)
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except TelegramBadRequest:
-        pass
+    data = await state.get_data()
+    old_msg_id = data.get("donate_msg_id")
+
+    new_msg_id = await _send_donate_carousel(
+        callback.bot, callback.message.chat.id, idx, user_id,
+        reply_to_msg_id=old_msg_id or callback.message.message_id,
+    )
+    await state.update_data(donate_msg_id=new_msg_id, donate_idx=idx)
     await callback.answer()
 
 
@@ -2856,19 +2944,22 @@ async def donate_noop(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "donate_close")
-async def donate_close(callback: CallbackQuery):
+async def donate_close(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    msg_id = data.get("donate_msg_id", callback.message.message_id)
     try:
-        await callback.message.delete()
+        await callback.bot.delete_message(callback.message.chat.id, msg_id)
     except TelegramBadRequest:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
+    await state.clear()
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("donate_buy:"))
-async def donate_buy(callback: CallbackQuery):
+async def donate_buy(callback: CallbackQuery, state: FSMContext):
     idx = int(callback.data.split(":")[1])
     idx = max(0, min(idx, len(DONATE_SHOP_ITEMS) - 1))
     item = DONATE_SHOP_ITEMS[idx]
@@ -2899,12 +2990,14 @@ async def donate_buy(callback: CallbackQuery):
         })
         await callback.answer("🔋 выносливость восстановлена до максимума!", show_alert=True)
 
-    tokens = await get_tokens(user_id)
-    text, kb = await donate_carousel_view(idx, user_id, tokens)
-    try:
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    except TelegramBadRequest:
-        pass
+    # Обновляем карусель: удаляем старое сообщение, отправляем новое
+    data = await state.get_data()
+    old_msg_id = data.get("donate_msg_id", callback.message.message_id)
+    new_msg_id = await _send_donate_carousel(
+        callback.bot, callback.message.chat.id, idx, user_id,
+        reply_to_msg_id=old_msg_id,
+    )
+    await state.update_data(donate_msg_id=new_msg_id, donate_idx=idx)
 
 
 # ============================================================
