@@ -1780,9 +1780,9 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
-        [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🥊 Дуэли")],
+        [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="📦 Кейсы"), KeyboardButton(text="🥊 Дуэли")],
         [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
-        [KeyboardButton(text="📋 Профиль"), KeyboardButton(text="📦 Кейсы")]
+        [KeyboardButton(text="📋 Профиль")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -2505,83 +2505,54 @@ async def show_shop_menu(message: Message):
 # КЕЙСЫ
 # ============================================================
 CASES = {
-    "bronze": {
-        "emoji": "🥉",
-        "name": "Бронзовый кейс",
-        "cost": 3000,
-        # (шанс, множитель от стоимости). Множитель 0.0 = пусто.
-        "outcomes": [
-            (0.50, 0.0),
-            (0.30, 0.5),
-            (0.15, 1.5),
-            (0.05, 3.0),
-        ],
-    },
-    "silver": {
-        "emoji": "🥈",
-        "name": "Серебряный кейс",
-        "cost": 10000,
-        "outcomes": [
-            (0.55, 0.0),
-            (0.25, 0.5),
-            (0.15, 2.0),
-            (0.05, 5.0),
-        ],
-    },
-    "gold": {
-        "emoji": "🥇",
-        "name": "Золотой кейс",
-        "cost": 30000,
-        "outcomes": [
-            (0.60, 0.0),
-            (0.20, 0.5),
-            (0.15, 3.0),
-            (0.05, 8.0),
-        ],
-    },
-    "diamond": {
-        "emoji": "💎",
-        "name": "Алмазный кейс",
-        "cost": 100000,
-        "outcomes": [
-            (0.65, 0.0),
-            (0.15, 0.5),
-            (0.15, 4.0),
-            (0.05, 15.0),
-        ],
-    },
+    "bronze": {"emoji": "🥉", "name": "Стартовый кейс", "cost": 6000,
+        "outcomes": [(50, 3000), (20, 6000), (5, 10000), (20, 0), (5, 20000)]},
+    "silver": {"emoji": "🥈", "name": "Серебряный кейс", "cost": 10000,
+        "outcomes": [(55, 0), (25, 5000), (15, 20000), (5, 50000)]},
+    "gold": {"emoji": "🥇", "name": "Золотой кейс", "cost": 30000,
+        "outcomes": [(60, 0), (20, 15000), (15, 90000), (5, 240000)]},
+    "diamond": {"emoji": "💎", "name": "Алмазный кейс", "cost": 100000,
+        "outcomes": [(65, 0), (15, 50000), (15, 400000), (5, 1500000)]},
 }
 CASE_ORDER = ["bronze", "silver", "gold", "diamond"]
 
 
-def get_case_win_chance(case: dict) -> float:
-    """Суммарный шанс выпадения денег (любой исход с множителем > 0)."""
-    return sum(chance for chance, mult in case["outcomes"] if mult > 0) * 100
+def get_case_win_chance(case: dict) -> int:
+    """Суммарный шанс получить ненулевой денежный приз."""
+    return sum(chance for chance, prize in case["outcomes"] if prize > 0)
+
+
+def validate_cases():
+    """Проверяет, что сумма шансов каждого кейса равна 100%."""
+    for key, case in CASES.items():
+        total = sum(chance for chance, _ in case["outcomes"])
+        if total != 100:
+            raise ValueError(f"Шансы кейса {key} должны составлять 100%, сейчас: {total}%")
+        if any(chance < 0 or prize < 0 for chance, prize in case["outcomes"]):
+            raise ValueError(f"В кейсе {key} обнаружены отрицательные значения")
+
+
+validate_cases()
 
 
 def get_case_text(index: int) -> str:
     key = CASE_ORDER[index]
     case = CASES[key]
     win_chance = get_case_win_chance(case)
-
     lines = [
         f"{case['emoji']} <b>{case['name']}</b>  ({index + 1}/{len(CASE_ORDER)})",
         "",
-        f"💸 стоимость: <b>{case['cost']:,} ₽</b>",
-        f"🎲 шанс выиграть деньги: <b>{win_chance:.0f}%</b>",
+        f"💸 стоимость открытия: <b>{case['cost']:,} ₽</b>",
+        f"🎲 шанс получить деньги: <b>{win_chance}%</b>",
         "",
-        "<b>возможные исходы:</b>",
+        "<b>🎁 призы и шансы выпадения:</b>",
     ]
-    for chance, mult in case["outcomes"]:
-        pct = chance * 100
-        if mult == 0.0:
-            lines.append(f"• ❌ пусто — {pct:.0f}%")
+    for chance, prize in case["outcomes"]:
+        if prize == 0:
+            lines.append(f"• 💨 Ничего — <b>{chance}%</b>")
         else:
-            payout = int(case["cost"] * mult)
-            lines.append(f"• 💰 x{mult:g} ({payout:,} ₽) — {pct:.0f}%")
-
-    return "\n".join(lines)
-
+            lines.append(f"• 💰 <b>{prize:,} ₽</b> — шанс <b>{chance}%</b>")
+    return "\\n".join(lines)
 
 def get_case_keyboard(index: int) -> InlineKeyboardMarkup:
     key = CASE_ORDER[index]
@@ -2644,38 +2615,54 @@ async def cases_back(callback: CallbackQuery):
 async def cases_open(callback: CallbackQuery):
     user_id = callback.from_user.id
     index = int(callback.data.split(":", 1)[1])
-    key = CASE_ORDER[index]
-    case = CASES[key]
-    cost = case["cost"]
+    if index < 0 or index >= len(CASE_ORDER):
+        await callback.answer("Такого кейса нет.", show_alert=True)
+        return
 
+    case = CASES[CASE_ORDER[index]]
+    cost = case["cost"]
     if not await deduct_balance(user_id, cost):
         balance = await get_balance(user_id)
         await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
         return
 
-    await callback.answer()
+    await callback.answer("Кейс открывается…")
+    chances = [chance for chance, _ in case["outcomes"]]
+    prizes = [prize for _, prize in case["outcomes"]]
+    prize = random.choices(prizes, weights=chances, k=1)[0]
 
-    chances = [c for c, _ in case["outcomes"]]
-    mults = [m for _, m in case["outcomes"]]
-    multiplier = random.choices(mults, weights=chances, k=1)[0]
-    payout = int(cost * multiplier)
+    # Анимация: одно сообщение несколько раз редактируется.
+    frames = [
+        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🔒 Кейс запущен…",
+        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［□□□□□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［■□□□□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［■■■□□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［■■■■■］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\\n\\n✨ Определяем приз…",
+    ]
+    for frame in frames:
+        try:
+            await callback.message.edit_text(frame, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        await asyncio.sleep(0.45)
 
-    if payout > 0:
-        new_balance = await add_to_balance(user_id, payout)
-        profit = payout - cost
+    if prize > 0:
+        new_balance = await add_to_balance(user_id, prize)
+        profit = prize - cost
         sign = "+" if profit >= 0 else ""
         result_text = (
-            f"{case['emoji']} <b>{case['name']}</b>\n\n"
-            f"🎉 выпало: <b>{payout:,} ₽</b> (x{multiplier:g})\n"
-            f"итог: {sign}{profit:,} ₽\n"
+            f"{case['emoji']} <b>{case['name']}</b>\\n\\n"
+            f"🎉 выпало: <b>{prize:,} ₽</b>\\n"
+            f"📊 итог открытия: <b>{sign}{profit:,} ₽</b>\\n"
             f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
         new_balance = await get_balance(user_id)
         result_text = (
-            f"{case['emoji']} <b>{case['name']}</b>\n\n"
-            f"💔 кейс оказался пуст...\n"
-            f"потрачено: <b>{cost:,} ₽</b>\n"
+            f"{case['emoji']} <b>{case['name']}</b>\\n\\n"
+            f"💨 приз не выпал.\\n"
+            f"потрачено: <b>{cost:,} ₽</b>\\n"
             f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
 
@@ -2684,7 +2671,6 @@ async def cases_open(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 К кейсам", callback_data=f"cases_nav:{index}")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="cases_back")],
     ])
-
     try:
         await callback.message.edit_text(result_text, parse_mode="HTML", reply_markup=kb)
     except TelegramBadRequest:
