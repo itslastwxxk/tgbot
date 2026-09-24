@@ -58,6 +58,7 @@ _name_cache: dict[int, str] = {}
 _username_to_id_cache: dict[str, int] = {}
 _name_to_id_cache: dict[str, int] = {}
 _farm_cooldown_cache: dict[int, float] = {}
+_case_cooldown_cache: dict[int, float] = {}
 _math_cooldown_cache: dict[int, float] = {}
 _pickaxe_cache: dict[int, int] = {}
 _stats_cache: dict[int, dict] = {}
@@ -2523,6 +2524,7 @@ CASES = {
             "outcomes": [(5, 0), (30, 1000000), (25, 1600000), (20, 2600000), (15, 3200000), (5, 4000000)]},
 }
 CASE_ORDER = ["1", "2", "3", "4", "5", "6", "7"]
+CASE_OPEN_COOLDOWN = 1  # секунда между открытиями кейсов
 
 
 def get_case_win_chance(case: dict) -> int:
@@ -2631,6 +2633,15 @@ async def cases_open(callback: CallbackQuery):
 
     case = CASES[CASE_ORDER[index]]
     cost = case["cost"]
+
+    now = time.time()
+    last_open = _case_cooldown_cache.get(user_id, 0)
+    remaining = last_open + CASE_OPEN_COOLDOWN - now
+    if remaining > 0:
+        await callback.answer("⏳ подожди секунду перед следующим открытием.", show_alert=True)
+        return
+    _case_cooldown_cache[user_id] = now
+
     if not await deduct_balance(user_id, cost):
         balance = await get_balance(user_id)
         await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
