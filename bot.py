@@ -309,10 +309,10 @@ PICKAXE_LEVELS = [
     {"name": "кобальтовая",    "reward": 54000,  "cost": 1500000},
     {"name": "палладиевая",    "reward": 67000,  "cost": 2000000},
     {"name": "смертоносная",    "reward": 77000,  "cost": 3000000},
-    {"name": "мифриловая",    "reward": 88000,  "cost": 4000000},
-    {"name": "незеритовая", "reward": 100000,  "cost": 5000000},
-    {"name": "адамантитовая", "reward": 115000,  "cost": 6000000},
-    {"name": "титановая",    "reward": 135000,  "cost": 7500000},
+    {"name": "мифриловая",    "reward": 88000,  "cost": 4500000},
+    {"name": "незеритовая", "reward": 100000,  "cost": 6000000},
+    {"name": "адамантитовая", "reward": 115000,  "cost": 7500000},
+    {"name": "титановая",    "reward": 135000,  "cost": 9000000},
 ]
 
 TRADING_MIN_BALANCE = 20000
@@ -1044,8 +1044,20 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
     return True
 
 async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
-    raw = await redis_client.zrevrange("referrals_top", 0, limit - 1, withscores=True)
-    return [(int(uid), int(score)) for uid, score in raw]
+    # Берём полный рейтинг, чтобы после исключения админов набрать нужное число игроков.
+    raw = await redis_client.zrevrange("referrals_top", 0, -1, withscores=True)
+    result = []
+    for uid_raw, score in raw:
+        try:
+            uid = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+        if is_admin(uid):
+            continue
+        result.append((uid, int(score)))
+        if len(result) >= limit:
+            break
+    return result
 
 async def get_top_display_name(user_id: int) -> str:
     """Отображаемое имя игрока для топов: ник + @username (если он есть)."""
@@ -1277,8 +1289,19 @@ async def notify_level_up(user_id: int, new_level: int):
         pass
 
 async def get_top_levels(limit: int = 10) -> list[tuple[int, int]]:
-    raw = await redis_client.zrevrange("leaderboard:level", 0, limit - 1, withscores=True)
-    return [(int(uid), int(score)) for uid, score in raw]
+    raw = await redis_client.zrevrange("leaderboard:level", 0, -1, withscores=True)
+    result = []
+    for uid_raw, score in raw:
+        try:
+            uid = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+        if is_admin(uid):
+            continue
+        result.append((uid, int(score)))
+        if len(result) >= limit:
+            break
+    return result
 
 # --- Кулдаун дуэлей ---
 async def check_duel_cooldown(user_id: int) -> tuple[bool, int]:
@@ -1310,16 +1333,21 @@ async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bo
         await redis_client.rpush(key, json.dumps(t))
 
 # --- Топ игроков ---
-async def get_all_balances() -> list[tuple[int, str, int]]:
-    rows = await redis_client.zrevrange("leaderboard:balance", 0, 9, withscores=True)
+async def get_all_balances(limit: int = 10) -> list[tuple[int, str, int]]:
+    # Фильтруем админов до ограничения количества, чтобы топ заполнялся игроками.
+    rows = await redis_client.zrevrange("leaderboard:balance", 0, -1, withscores=True)
     results = []
     for uid_raw, score in rows:
         try:
             uid = int(uid_raw)
         except (TypeError, ValueError):
             continue
+        if is_admin(uid):
+            continue
         name = await get_top_display_name(uid)
         results.append((uid, name, int(score)))
+        if len(results) >= limit:
+            break
     return results
 
 
@@ -4690,7 +4718,19 @@ async def _reward_one_top(config: dict, now: float):
         return
 
     rewards = config["rewards"]
-    top = await redis_client.zrevrange(config["key"], 0, len(rewards) - 1, withscores=True)
+    # Админы не участвуют в распределении наград и не занимают места в топе.
+    all_top = await redis_client.zrevrange(config["key"], 0, -1, withscores=True)
+    top = []
+    for uid_raw, score in all_top:
+        try:
+            candidate_id = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+        if is_admin(candidate_id):
+            continue
+        top.append((uid_raw, score))
+        if len(top) >= len(rewards):
+            break
 
     for i, (uid_raw, _score) in enumerate(top, 1):
         reward = rewards.get(i)
