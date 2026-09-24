@@ -53,6 +53,7 @@ redis_client = None
 
 # Кэши в памяти
 _balance_cache: dict[int, int] = {}
+_token_cache: dict[int, int] = {}
 _username_cache: dict[int, str] = {}
 _name_cache: dict[int, str] = {}
 _username_to_id_cache: dict[str, int] = {}
@@ -282,7 +283,7 @@ REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистр
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
 # ============================================================
-MINE_COOLDOWN = 3
+MINE_COOLDOWN = 2
 MINE_STAMINA_MAX = 10             # сколько раз подряд можно фармить шахту
 MINE_STAMINA_REGEN_SECONDS = 600  # 10 минут на восстановление выносливости
 MATH_REWARD = 500
@@ -790,6 +791,54 @@ async def set_balance(user_id: int, amount: int):
     await redis_client.hset(f"user:{user_id}", mapping={"balance": str(amount)})
     _balance_cache[user_id] = amount
     await redis_client.zadd("leaderboard:balance", {str(user_id): amount})
+
+TOKEN_DEDUCT_LUA = """
+local tokens = tonumber(redis.call('HGET', KEYS[1], 'tokens') or '0')
+local amount = tonumber(ARGV[1])
+if tokens >= amount then
+    redis.call('HINCRBY', KEYS[1], 'tokens', -amount)
+    return 1
+else
+    return 0
+end
+"""
+_token_deduct_sha = None
+
+async def _ensure_token_deduct_script():
+    """Загружает Lua-скрипт списания токенов в Redis (кешируется SHA)."""
+    global _token_deduct_sha
+    if _token_deduct_sha is None:
+        _token_deduct_sha = await redis_client.script_load(TOKEN_DEDUCT_LUA)
+
+async def get_tokens(user_id: int) -> int:
+    if user_id in _token_cache:
+        return _token_cache[user_id]
+    data = await redis_client.hgetall(f"user:{user_id}")
+    tokens = int(float(data.get("tokens", "0")))
+    _token_cache[user_id] = tokens
+    return tokens
+
+async def add_tokens(user_id: int, amount: int) -> int:
+    """Атомарно начисляет Токены (через HINCRBY). Возвращает новый баланс."""
+    new_tokens = await redis_client.hincrby(f"user:{user_id}", "tokens", amount)
+    _token_cache[user_id] = new_tokens
+    return new_tokens
+
+async def deduct_tokens(user_id: int, amount: int) -> bool:
+    """Атомарно списывает Токены через Lua-скрипт.
+    True — успешно, False — не хватает Токенов."""
+    await _ensure_token_deduct_script()
+    result = await redis_client.evalsha(_token_deduct_sha, 1, f"user:{user_id}", amount)
+    if int(result) == 1:
+        new_tokens_raw = await redis_client.hget(f"user:{user_id}", "tokens")
+        new_tokens = int(float(new_tokens_raw or 0))
+        _token_cache[user_id] = new_tokens
+        return True
+    return False
+
+async def set_tokens(user_id: int, amount: int):
+    await redis_client.hset(f"user:{user_id}", mapping={"tokens": str(amount)})
+    _token_cache[user_id] = amount
 
 # --- Функции работы с username ---
 async def save_user_info(user_id: int, username: str | None):
@@ -1508,6 +1557,54 @@ async def cmd_admin(message: Message, state: FSMContext):
     await state.update_data(admin_msg_id=sent.message_id)
 
 
+@router.message(Command("give_tokens"))
+async def cmd_give_tokens(message: Message):
+    """Вспомогательная команда админа: /give_tokens <user_id> <кол-во>"""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ закрыт, ты не админ.")
+        return
+
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer(
+            "Использование: <code>/give_tokens user_id количество</code>\n"
+            "Пример: <code>/give_tokens 123456789 20</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        target_id = int(parts[1])
+        amount = int(parts[2])
+    except ValueError:
+        await message.answer("user_id и количество должны быть целыми числами.")
+        return
+
+    if amount == 0:
+        await message.answer("Количество не может быть нулевым.")
+        return
+
+    new_tokens = await add_tokens(target_id, amount)
+    sign = "+" if amount > 0 else ""
+    await message.answer(
+        f"✅ Игроку <code>{target_id}</code> начислено {sign}{amount} ТК.\n"
+        f"Баланс игрока: <b>{new_tokens} ТК</b>",
+        parse_mode="HTML",
+    )
+
+    if amount > 0:
+        try:
+            await message.bot.send_message(
+                target_id,
+                f"🎁 Администрация начислила тебе <b>{amount} ТК</b>!\n"
+                f"Баланс: <b>{new_tokens} ТК</b>\n\n"
+                f"Загляни в «💎 ДОНАТ 💎», чтобы посмотреть, что можно на них взять.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+
 @router.callback_query(F.data == "admin_main")
 async def admin_main(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
@@ -1859,7 +1956,8 @@ def get_main_keyboard():
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="📦 Кейсы"), KeyboardButton(text="🥊 Дуэли")],
         [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
-        [KeyboardButton(text="📋 Профиль")]
+        [KeyboardButton(text="📋 Профиль")],
+        [KeyboardButton(text="💎 ДОНАТ 💎")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -2330,6 +2428,7 @@ async def show_profile(message: Message, state: FSMContext):
 
     # --- БЛОК РАСЧЕТА ДАННЫХ (оставь свой код) ---
     balance = await get_balance(user_id)
+    tokens = await get_tokens(user_id)
     stats = await get_user_stats(user_id)
     name = await get_user_name(user_id) or "Игрок"
 
@@ -2346,6 +2445,7 @@ async def show_profile(message: Message, state: FSMContext):
     profile_text = (
         f"📋 <b>твой профиль</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
+        f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
         f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
         f"📊 [{bar}] {percent}%"
@@ -2577,6 +2677,138 @@ async def show_work_menu(message: Message, state: FSMContext):
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message):
     await message.answer("Раздел «Магаз» пока в разработке — скоро зальём.")
+
+@router.message(F.text == "💎 ДОНАТ 💎")
+async def donate_handler(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    tokens = await get_tokens(user_id)
+    text, kb = await donate_carousel_view(0, user_id, tokens)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+# --- Магазин за Токены (ТК) ---
+DONATE_SHOP_ITEMS = [
+    {
+        "id": "pickaxe_upgrade",
+        "emoji": "🔧",
+        "name": "Повышение уровня кирки",
+        "price": 20,
+        "desc": "мгновенно поднимает уровень твоей кирки на 1, без затрат ₽",
+    },
+    {
+        "id": "stamina_refill",
+        "emoji": "🔋",
+        "name": "Восстановление выносливости",
+        "price": 5,
+        "desc": "мгновенно восстанавливает выносливость в шахте до максимума",
+    },
+]
+
+
+async def donate_carousel_view(idx: int, user_id: int, tokens: int):
+    idx = max(0, min(idx, len(DONATE_SHOP_ITEMS) - 1))
+    item = DONATE_SHOP_ITEMS[idx]
+    can_buy = tokens >= item["price"]
+
+    extra_line = ""
+    if item["id"] == "pickaxe_upgrade":
+        pickaxe_lvl = await get_pickaxe_level(user_id)
+        if pickaxe_lvl >= len(PICKAXE_LEVELS) - 1:
+            extra_line = "\n⚠️ у тебя уже максимальная кирка"
+            can_buy = False
+
+    text = (
+        f"💎 <b>Магазин за Токены</b>\n\n"
+        f"{item['emoji']} <b>{item['name']}</b>\n"
+        f"{item['desc']}{extra_line}\n\n"
+        f"💠 Цена: <b>{item['price']} ТК</b>\n"
+        f"Твой баланс: <b>{tokens} ТК</b>"
+    )
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"donate_car:{idx-1}"))
+    nav.append(InlineKeyboardButton(text=f"{idx+1}/{len(DONATE_SHOP_ITEMS)}", callback_data="donate_noop"))
+    if idx < len(DONATE_SHOP_ITEMS) - 1:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"donate_car:{idx+1}"))
+    rows = [nav]
+    if can_buy:
+        rows.append([InlineKeyboardButton(text=f"✅ Купить за {item['price']} ТК", callback_data=f"donate_buy:{idx}")])
+    else:
+        rows.append([InlineKeyboardButton(text="❌ Недоступно", callback_data="donate_noop")])
+    rows.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="donate_close")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("donate_car:"))
+async def donate_car(callback: CallbackQuery):
+    idx = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+    tokens = await get_tokens(user_id)
+    text, kb = await donate_carousel_view(idx, user_id, tokens)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "donate_noop")
+async def donate_noop(callback: CallbackQuery):
+    await callback.answer("Недостаточно ТК на балансе.", show_alert=True)
+
+
+@router.callback_query(F.data == "donate_close")
+async def donate_close(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("donate_buy:"))
+async def donate_buy(callback: CallbackQuery):
+    idx = int(callback.data.split(":")[1])
+    idx = max(0, min(idx, len(DONATE_SHOP_ITEMS) - 1))
+    item = DONATE_SHOP_ITEMS[idx]
+    user_id = callback.from_user.id
+
+    if item["id"] == "pickaxe_upgrade":
+        pickaxe_lvl = await get_pickaxe_level(user_id)
+        if pickaxe_lvl >= len(PICKAXE_LEVELS) - 1:
+            await callback.answer("у тебя уже максимальная кирка!", show_alert=True)
+            return
+
+    ok = await deduct_tokens(user_id, item["price"])
+    if not ok:
+        await callback.answer("Не хватает ТК!", show_alert=True)
+        return
+
+    if item["id"] == "pickaxe_upgrade":
+        pickaxe_lvl = await get_pickaxe_level(user_id)
+        new_lvl = pickaxe_lvl + 1
+        await set_pickaxe_level(user_id, new_lvl)
+        await callback.answer(
+            f"🎉 кирка улучшена до «{PICKAXE_LEVELS[new_lvl]['name']}»!", show_alert=True
+        )
+    elif item["id"] == "stamina_refill":
+        await redis_client.hset(f"user:{user_id}", mapping={
+            "mine_stamina": str(MINE_STAMINA_MAX),
+            "mine_stamina_empty_at": "",
+        })
+        await callback.answer("🔋 выносливость восстановлена до максимума!", show_alert=True)
+
+    tokens = await get_tokens(user_id)
+    text, kb = await donate_carousel_view(idx, user_id, tokens)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+
 
 # ============================================================
 # КЕЙСЫ
