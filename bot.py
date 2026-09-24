@@ -211,7 +211,7 @@ TOP_PROMPT_VARIANTS = [
 # КОНСТАНТЫ ЕЖЕДНЕВНОГО БОНУСА
 # ============================================================
 DAILY_BONUS_BASE = 10000          # базовая награда
-DAILY_BONUS_STREAK_MULT = 0.50    # +50% за каждый день стрика
+DAILY_BONUS_STREAK_MULT = 1.00    # +100% за каждый день стрика
 DAILY_BONUS_MAX_STREAK = 100     # потолок множителя
 DAILY_BONUS_RANDOM_MIN = 1000    # случайная прибавка — минимум
 DAILY_BONUS_RANDOM_MAX = 5000    # случайная прибавка — максимум
@@ -327,11 +327,12 @@ XP_PER_DUEL = 200
 
 # --- ЛВЛ РАЗБЛОКИРОВКИ ---
 PROFILE_UNLOCK_LEVEL = 1
-BONUS_UNLOCK_LEVEL = 3
+BONUS_UNLOCK_LEVEL = 2
 MATH_UNLOCK_LEVEL = 3
 DUEL_UNLOCK_LEVEL = 5
+CASE_UNLOCK_LEVEL = 8
 TRADING_UNLOCK_LEVEL = 10
-BUSINESS_UNLOCK_LEVEL = 10
+BUSINESS_UNLOCK_LEVEL = 11
 CASINO_UNLOCK_LEVEL = 15
 
 # ============================================================
@@ -1308,6 +1309,7 @@ UNLOCK_LEVELS = {
     "🏪 Бизнесы": BUSINESS_UNLOCK_LEVEL,
     "🎰 Казино": CASINO_UNLOCK_LEVEL,
     "🎁 Ежедневный бонус": BONUS_UNLOCK_LEVEL,
+    "📦 Кейсы": CASE_UNLOCK_LEVEL,
 }
 
 async def check_level_access(message: Message, user_id: int, required_level: int) -> bool:
@@ -2506,19 +2508,19 @@ async def show_shop_menu(message: Message):
 # ============================================================
 CASES = {
     "1": {"emoji": "🗿", "name": "каменный кейс", "cost": 6000,
-        "outcomes": [(5, 0), (30, 3000), (25, 5000), (20, 7000), (15, 9000), (5, 12000)]},
+        "outcomes": [(5, 0), (30, 3000), (25, 5000), (20, 8000), (15, 9000), (5, 12000)]},
     "2": {"emoji": "🥉", "name": "бронзовый кейс", "cost": 10000,
-        "outcomes": [(5, 0), (30, 5000), (25, 8000), (20, 12000), (15, 16000), (5, 20000)]},
+        "outcomes": [(5, 0), (30, 5000), (25, 8000), (20, 14000), (15, 16000), (5, 20000)]},
     "3": {"emoji": "🥈", "name": "серебряный кейс", "cost": 30000,
-        "outcomes": [(5, 0), (30, 15000), (25, 24000), (20, 36000), (15, 48000), (5, 60000)]},
+        "outcomes": [(5, 0), (30, 15000), (25, 24000), (20, 40000), (15, 48000), (5, 60000)]},
     "4": {"emoji": "🥇", "name": "золотой кейс", "cost": 100000,
-        "outcomes": [(5, 0), (30, 50000), (25, 80000), (20, 120000), (15, 160000), (5, 200000)]},
+        "outcomes": [(5, 0), (30, 50000), (25, 80000), (20, 140000), (15, 160000), (5, 200000)]},
     "5": {"emoji": "💎", "name": "алмазный кейс", "cost": 500000,
-            "outcomes": [(5, 0), (30, 250000), (25, 400000), (20, 600000), (15, 800000), (5, 1000000)]},
+            "outcomes": [(5, 0), (30, 250000), (25, 400000), (20, 700000), (15, 800000), (5, 1000000)]},
     "6": {"emoji": "💠", "name": "платиновый кейс", "cost": 1000000,
-            "outcomes": [(5, 0), (30, 500000), (25, 800000), (20, 1200000), (15, 1600000), (5, 2000000)]},
+            "outcomes": [(5, 0), (30, 500000), (25, 800000), (20, 1400000), (15, 1600000), (5, 2000000)]},
     "7": {"emoji": "⚜️", "name": "элитный кейс", "cost": 2000000,
-            "outcomes": [(5, 0), (30, 1000000), (25, 1600000), (20, 2400000), (15, 3200000), (5, 4000000)]},
+            "outcomes": [(5, 0), (30, 1000000), (25, 1600000), (20, 2600000), (15, 3200000), (5, 4000000)]},
 }
 CASE_ORDER = ["1", "2", "3", "4", "5", "6", "7"]
 
@@ -2549,7 +2551,6 @@ def get_case_text(index: int) -> str:
         f"{case['emoji']} <b>{case['name']}</b>  ({index + 1}/{len(CASE_ORDER)})",
         "",
         f"💸 стоимость открытия: <b>{case['cost']:,} ₽</b>",
-        f"🎲 шанс выйти в плюс: <b>{win_chance}%</b>",
         "",
         "<b>🎁 призы и шансы выпадения:</b>",
     ]
@@ -2580,6 +2581,8 @@ def get_case_keyboard(index: int) -> InlineKeyboardMarkup:
 
 @router.message(F.text == "📦 Кейсы")
 async def show_cases(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, CASE_UNLOCK_LEVEL): 
+            return
     await state.clear()
     await message.answer(
         get_case_text(0),
@@ -2662,7 +2665,6 @@ async def cases_open(callback: CallbackQuery):
         result_text = (
             f"{case['emoji']} <b>{case['name']}</b>\n\n"
             f"🎉 выпало: <b>{prize:,} ₽</b>\n"
-            f"📊 итог открытия: <b>{sign}{profit:,} ₽</b>\n"
             f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
