@@ -990,8 +990,8 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
     try:
         await bot.send_message(
             referrer_id,
-            f"🎉 По твоей ссылке зарегистрировался {referrer_name}!\\n"
-            f"🎁 Награда будет начислена, когда новичок достигнет 5 уровня.\\n"
+            f"🎉 По твоей ссылке зарегистрировался {referrer_name}!\n"
+            f"🎁 Награда будет начислена, когда новичок достигнет 5 уровня.\n"
             f"👥 Всего рефералов: {new_count}"
         )
     except Exception:
@@ -1021,7 +1021,7 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
     try:
         await bot.send_message(
             referrer_id,
-            f"🎉 Твой реферал достиг 5 уровня!\\n"
+            f"🎉 Твой реферал достиг 5 уровня!\n"
             f"💰 Награда: +<b>{REFERRAL_REWARD:,} ₽</b>",
             parse_mode="HTML",
         )
@@ -2505,21 +2505,27 @@ async def show_shop_menu(message: Message):
 # КЕЙСЫ
 # ============================================================
 CASES = {
-    "bronze": {"emoji": "🥉", "name": "Стартовый кейс", "cost": 6000,
-        "outcomes": [(50, 3000), (20, 6000), (5, 10000), (20, 0), (5, 20000)]},
-    "silver": {"emoji": "🥈", "name": "Серебряный кейс", "cost": 10000,
-        "outcomes": [(55, 0), (25, 5000), (15, 20000), (5, 50000)]},
-    "gold": {"emoji": "🥇", "name": "Золотой кейс", "cost": 30000,
-        "outcomes": [(60, 0), (20, 15000), (15, 90000), (5, 240000)]},
-    "diamond": {"emoji": "💎", "name": "Алмазный кейс", "cost": 100000,
-        "outcomes": [(65, 0), (15, 50000), (15, 400000), (5, 1500000)]},
+    "1": {"emoji": "🥉", "name": "каменный кейс", "cost": 6000,
+        "outcomes": [(35, 3000), (30, 5000), (20, 7000), (15, 9000)]},
+    "2": {"emoji": "🥈", "name": "бронзовый кейс", "cost": 10000,
+        "outcomes": [(35, 5000), (30, 8000), (20, 12000), (15, 16000)]},
+    "3": {"emoji": "🥇", "name": "серебряный кейс", "cost": 30000,
+        "outcomes": [(35, 15000), (30, 24000), (20, 36000), (15, 48000)]},
+    "4": {"emoji": "💎", "name": "золотой кейс", "cost": 100000,
+        "outcomes": [(35, 50000), (30, 80000), (20, 120000), (15, 160000)]},
+    "5": {"emoji": "💎", "name": "алмазный кейс", "cost": 500000,
+            "outcomes": [(35, 250000), (30, 400000), (20, 600000), (15, 800000)]},
+    "6": {"emoji": "💎", "name": "платиновый кейс", "cost": 1000000,
+            "outcomes": [(35, 500000), (30, 800000), (20, 1200000), (15, 1600000)]},
+    "6": {"emoji": "💎", "name": "элитный кейс", "cost": 2000000,
+            "outcomes": [(35, 1000000), (30, 1600000), (20, 2400000), (15, 3200000)]},
 }
-CASE_ORDER = ["bronze", "silver", "gold", "diamond"]
+CASE_ORDER = ["1", "2", "3", "4", "5", "6"]
 
 
 def get_case_win_chance(case: dict) -> int:
-    """Суммарный шанс получить ненулевой денежный приз."""
-    return sum(chance for chance, prize in case["outcomes"] if prize > 0)
+    """Суммарный шанс выйти в плюс (приз больше стоимости кейса)."""
+    return sum(chance for chance, prize in case["outcomes"] if prize > case["cost"])
 
 
 def validate_cases():
@@ -2543,16 +2549,15 @@ def get_case_text(index: int) -> str:
         f"{case['emoji']} <b>{case['name']}</b>  ({index + 1}/{len(CASE_ORDER)})",
         "",
         f"💸 стоимость открытия: <b>{case['cost']:,} ₽</b>",
-        f"🎲 шанс получить деньги: <b>{win_chance}%</b>",
+        f"🎲 шанс выйти в плюс: <b>{win_chance}%</b>",
         "",
         "<b>🎁 призы и шансы выпадения:</b>",
     ]
     for chance, prize in case["outcomes"]:
-        if prize == 0:
-            lines.append(f"• 💨 Ничего — <b>{chance}%</b>")
-        else:
-            lines.append(f"• 💰 <b>{prize:,} ₽</b> — шанс <b>{chance}%</b>")
-    return "\\n".join(lines)
+        profit = prize - case["cost"]
+        sign = "+" if profit >= 0 else ""
+        lines.append(f"• 💰 <b>{prize:,} ₽</b> ({sign}{profit:,} ₽) — шанс <b>{chance}%</b>")
+    return "\n".join(lines)
 
 def get_case_keyboard(index: int) -> InlineKeyboardMarkup:
     key = CASE_ORDER[index]
@@ -2633,12 +2638,13 @@ async def cases_open(callback: CallbackQuery):
 
     # Анимация: одно сообщение несколько раз редактируется.
     frames = [
-        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🔒 Кейс запущен…",
-        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［□□□□□］</code>",
-        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［■□□□□］</code>",
-        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［■■■□□］</code>",
-        f"{case['emoji']} <b>{case['name']}</b>\\n\\n🎁 <code>［■■■■■］</code>",
-        f"{case['emoji']} <b>{case['name']}</b>\\n\\n✨ Определяем приз…",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n🔒 Кейс запущен…",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n🎁 <code>［□□□□□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n🎁 <code>［■□□□□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n🎁 <code>［■■■□□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n🎁 <code>［■■■■□］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n🎁 <code>［■■■■■］</code>",
+        f"{case['emoji']} <b>{case['name']}</b>\n\n✨ Определяем приз…",
     ]
     for frame in frames:
         try:
@@ -2652,17 +2658,17 @@ async def cases_open(callback: CallbackQuery):
         profit = prize - cost
         sign = "+" if profit >= 0 else ""
         result_text = (
-            f"{case['emoji']} <b>{case['name']}</b>\\n\\n"
-            f"🎉 выпало: <b>{prize:,} ₽</b>\\n"
-            f"📊 итог открытия: <b>{sign}{profit:,} ₽</b>\\n"
+            f"{case['emoji']} <b>{case['name']}</b>\n\n"
+            f"🎉 выпало: <b>{prize:,} ₽</b>\n"
+            f"📊 итог открытия: <b>{sign}{profit:,} ₽</b>\n"
             f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
         new_balance = await get_balance(user_id)
         result_text = (
-            f"{case['emoji']} <b>{case['name']}</b>\\n\\n"
-            f"💨 приз не выпал.\\n"
-            f"потрачено: <b>{cost:,} ₽</b>\\n"
+            f"{case['emoji']} <b>{case['name']}</b>\n\n"
+            f"💨 приз не выпал.\n"
+            f"потрачено: <b>{cost:,} ₽</b>\n"
             f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
 
@@ -2724,35 +2730,42 @@ async def show_public_top(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔙 В меню", callback_data="public_top:back_to_main")],
     ])
 
+    # Медали для топ-3
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+
     if kind == "balance":
         balances = await get_all_balances()
         if not balances:
             result_text = "🏆 <b>Топ по балансу</b>\n\nПока пусто — никто не играл."
         else:
-            result_text = "💰 <b>топ по балансу:</b>\n\n"
+            result_text = "💰 <b>Топ по балансу:</b>\n\n"
             for i, (uid, name, balance) in enumerate(balances[:10], 1):
-                result_text += f"{i}. {name} — <b>{balance:,} ₽</b>\n"
+                medal = medals.get(i, f"{i}.")
+                result_text += f"{medal} {name} — <b>{balance:,} ₽</b>\n"
             if len(balances) > 10:
                 result_text += f"\n...и ещё {len(balances) - 10} челиков"
+
     elif kind == "referrals":
         top = await get_top_referrals(10)
         if not top:
             result_text = "👥 <b>Топ по рефералам</b>\n\nПока пусто — никто никого не пригласил."
         else:
-            result_text = "👥 <b>топ по рефералам:</b>\n\n"
+            result_text = "👥 <b>Топ по рефералам:</b>\n\n"
             for i, (uid, count) in enumerate(top, 1):
                 name = await get_top_display_name(uid)
-                result_text += f"{i}. {name} — <b>{count}</b> реф.\n"
+                medal = medals.get(i, f"{i}.")
+                result_text += f"{medal} {name} — <b>{count}</b> реф.\n"
+
     elif kind == "level":
         top = await get_top_levels(10)
         if not top:
             result_text = "📈 <b>Топ по уровням</b>\n\nПока пусто — никто не получил XP."
         else:
-            result_text = "📈 <b>топ по уровням:</b>\n\n"
+            result_text = "📈 <b>Топ по уровням:</b>\n\n"
             for i, (uid, lvl) in enumerate(top, 1):
                 name = await get_top_display_name(uid)
-                result_text += f"{i}. {name} — <b>{lvl}</b> ур.\n"
-
+                medal = medals.get(i, f"{i}.")
+                result_text += f"{medal} {name} — <b>{lvl}</b> ур.\n"
     else:
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
