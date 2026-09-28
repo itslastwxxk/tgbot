@@ -2052,9 +2052,9 @@ def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="📦 Кейсы"), KeyboardButton(text="🥊 Дуэли")],
-        [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
+        [KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
+        [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="📋 Задания")],
         [KeyboardButton(text="📋 Профиль")],
-        [KeyboardButton(text="💎 ДОНАТ 💎")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -2771,15 +2771,88 @@ async def show_work_menu(message: Message, state: FSMContext):
         logger.warning("Файл images/work.png не найден.")
         await message.answer(text, reply_markup=get_work_keyboard())
 
+def get_shop_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🛒 Магазин"), KeyboardButton(text="💎 Магазин за токены")],
+            [KeyboardButton(text="🔙 Назад")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+# --- Ежедневные задания ---
+def daily_task_key(user_id: int) -> str:
+    return f"daily_tasks:{user_id}:{time.strftime('%Y-%m-%d', time.gmtime())}"
+
+async def daily_tasks_data(user_id: int):
+    key = daily_task_key(user_id)
+    data = await redis_client.hgetall(key)
+    if not data:
+        await redis_client.hset(key, mapping={"mine": "0", "business": "0", "mine_claimed": "0", "business_claimed": "0"})
+        await redis_client.expire(key, 172800)
+        data = await redis_client.hgetall(key)
+    return data
+
+@router.message(F.text == "📋 Задания")
+async def daily_tasks_handler(message: Message):
+    uid = message.from_user.id
+    d = await daily_tasks_data(uid)
+    mine = int(d.get("mine", 0)); biz = int(d.get("business", 0))
+    text = ("📋 <b>Ежедневные задания</b>\n\n"
+            f"⛏ Нафармить в шахте 10 раз: <b>{min(mine,10)}/10</b> — награда <b>5 000 ₽</b> + 20 XP\n"
+            f"🏪 Купить бизнес: <b>{'выполнено' if biz else 'не выполнено'}</b> — награда <b>15 000 ₽</b> + 50 XP\n\n"
+            "Награду можно получить здесь после выполнения.")
+    rows=[]
+    if mine >= 10 and d.get("mine_claimed","0") != "1": rows.append([InlineKeyboardButton(text="🎁 Забрать награду за шахту", callback_data="task_claim:mine")])
+    if biz and d.get("business_claimed","0") != "1": rows.append([InlineKeyboardButton(text="🎁 Забрать награду за бизнес", callback_data="task_claim:business")])
+    await message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
+
+@router.callback_query(F.data.startswith("task_claim:"))
+async def daily_task_claim(callback: CallbackQuery):
+    uid=callback.from_user.id; task=callback.data.split(":",1)[1]; d=await daily_tasks_data(uid); key=daily_task_key(uid)
+    needed=10 if task=="mine" else 1
+    field="mine" if task=="mine" else "business"
+    claimed=field+"_claimed"
+    if int(d.get(field,0)) < needed or d.get(claimed,"0")=="1":
+        await callback.answer("Задание ещё не выполнено или награда уже получена", show_alert=True); return
+    reward=5000 if task=="mine" else 15000
+    xp=20 if task=="mine" else 50
+    await redis_client.hset(key, claimed, "1")
+    await add_to_balance(uid,reward); await add_xp(uid,xp)
+    await callback.answer(f"Получено: {reward:,} ₽ и {xp} XP", show_alert=True)
+    try: await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest: pass
+
 @router.message(F.text == "🛒 Магаз")
-async def show_shop_menu(message: Message):
-    await message.answer("Раздел «Магаз» пока в разработке — скоро зальём.")
+async def show_shop_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🛒 <b>Магазин</b>\n\nВыбери, какой магазин открыть:",
+        parse_mode="HTML",
+        reply_markup=get_shop_keyboard(),
+    )
+
+
+@router.message(F.text == "🛒 Магазин")
+async def show_regular_shop(message: Message):
+    await message.answer(
+        "🛒 <b>Обычный магазин</b>\n\nРаздел пока в разработке.",
+        parse_mode="HTML",
+        reply_markup=get_shop_keyboard(),
+    )
+
+
+@router.message(F.text == "🔙 Назад")
+async def shop_back_to_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await send_main_menu(message, message.from_user.id)
 
 # --- Магазин за Токены (ТК) ---
 DONATE_SHOP_ITEMS = [
     {
         "id": "pickaxe_upgrade",
-        "emoji": "🔧",
+        "emoji": "⛏️",
         "name": "Повышение уровня кирки",
         "price": 20,
         "desc": "мгновенно поднимает уровень твоей кирки на 1, без затрат ₽",
@@ -2835,7 +2908,7 @@ def _donate_carousel_text(idx: int, user_id: int, tokens: int):
 
 
 async def donate_carousel_view(idx: int, user_id: int, tokens: int):
-    """Возвращает (text, kb, image_path_or_None) для карусели."""
+    """Возвращает текст и клавиатуру карточки без изображений."""
     idx = max(0, min(idx, len(DONATE_SHOP_ITEMS) - 1))
     item = DONATE_SHOP_ITEMS[idx]
     can_buy = tokens >= item["price"]
@@ -2868,47 +2941,25 @@ async def donate_carousel_view(idx: int, user_id: int, tokens: int):
         rows.append([InlineKeyboardButton(text="❌ Недоступно", callback_data="donate_noop")])
     rows.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="donate_close")])
 
-    image_path = item.get("image")
-    if image_path and not os.path.isfile(image_path):
-        image_path = None
-
-    return text, InlineKeyboardMarkup(inline_keyboard=rows), image_path
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _send_donate_carousel(bot_obj, chat_id: int, idx: int, user_id: int,
                                 reply_to_msg_id: int | None = None):
     """Удаляет старое сообщение (если есть) и отправляет новую карточку товара."""
     tokens = await get_tokens(user_id)
-    text, kb, image_path = await donate_carousel_view(idx, user_id, tokens)
-
-    # Удаляем предыдущее сообщение карусели
+    text, kb = await donate_carousel_view(idx, user_id, tokens)
     if reply_to_msg_id:
         try:
-            await bot_obj.delete_message(chat_id, reply_to_msg_id)
+            await bot_obj.edit_message_text(chat_id=chat_id, message_id=reply_to_msg_id, text=text, parse_mode="HTML", reply_markup=kb)
+            return reply_to_msg_id
         except TelegramBadRequest:
             pass
-
-    if image_path:
-        photo = FSInputFile(image_path)
-        sent = await bot_obj.send_photo(
-            chat_id=chat_id,
-            photo=photo,
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=kb,
-        )
-        return sent.message_id
-    else:
-        sent = await bot_obj.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=kb,
-        )
-        return sent.message_id
+    sent = await bot_obj.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
+    return sent.message_id
 
 
-@router.message(F.text == "💎 ДОНАТ 💎")
+@router.message(F.text == "💎 Магазин за токены")
 async def donate_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
     msg_id = await _send_donate_carousel(message.bot, message.chat.id, 0, user_id)
@@ -2997,19 +3048,19 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
 # ============================================================
 CASES = {
     "1": {"emoji": "🗿", "name": "каменный кейс", "cost": 6000,
-        "outcomes": [(5, 0), (30, 3000), (25, 5000), (20, 8000), (15, 9000), (5, 12000)]},
+        "outcomes": [(12, 0), (40, 3000), (38, 9500), (10, 12000)]},
     "2": {"emoji": "🥉", "name": "бронзовый кейс", "cost": 10000,
-        "outcomes": [(5, 0), (30, 5000), (25, 8000), (20, 14000), (15, 16000), (5, 20000)]},
+        "outcomes": [(12, 0), (40, 5000), (38, 16000), (10, 20000)]},
     "3": {"emoji": "🥈", "name": "серебряный кейс", "cost": 30000,
-        "outcomes": [(5, 0), (30, 15000), (25, 24000), (20, 40000), (15, 48000), (5, 60000)]},
+        "outcomes": [(12, 0), (40, 15000), (38, 48000), (10, 60000)]},
     "4": {"emoji": "🥇", "name": "золотой кейс", "cost": 100000,
-        "outcomes": [(5, 0), (30, 50000), (25, 80000), (20, 140000), (15, 160000), (5, 200000)]},
+        "outcomes": [(12, 0), (40, 50000), (38, 160000), (10, 200000)]},
     "5": {"emoji": "💎", "name": "алмазный кейс", "cost": 500000,
-            "outcomes": [(5, 0), (30, 250000), (25, 400000), (20, 700000), (15, 800000), (5, 1000000)]},
+            "outcomes": [(12, 0), (40, 250000), (38, 750000), (10, 1000000)]},
     "6": {"emoji": "💠", "name": "платиновый кейс", "cost": 1000000,
-            "outcomes": [(5, 0), (30, 500000), (25, 800000), (20, 1400000), (15, 1600000), (5, 2000000)]},
+            "outcomes": [(12, 0), (40, 500000), (38, 1500000), (10, 2000000)]},
     "7": {"emoji": "⚜️", "name": "элитный кейс", "cost": 2000000,
-            "outcomes": [(5, 0), (30, 1000000), (25, 1600000), (20, 2600000), (15, 3200000), (5, 4000000)]},
+            "outcomes": [(12, 0), (40, 1000000), (38, 3000000), (10, 4000000)]},
 }
 CASE_ORDER = ["1", "2", "3", "4", "5", "6", "7"]
 CASE_OPEN_COOLDOWN = 3  # секунда между открытиями кейсов
@@ -3042,13 +3093,13 @@ def get_case_text(index: int) -> str:
         "",
         f"💸 стоимость открытия: <b>{case['cost']:,} ₽</b>",
         "",
-        "<b>🎁 призы и шансы выпадения:</b>",
+        "<b>🎁 что может выпасть:</b>",
     ]
     quote_lines = []
     for chance, prize in case["outcomes"]:
         profit = prize - case["cost"]
         sign = "+" if profit >= 0 else ""
-        quote_lines.append(f"💰 <b>{prize:,} ₽</b> ({sign}{profit:,} ₽) — шанс <b>{chance}%</b>")
+        quote_lines.append(f"💰 <b>{prize:,} ₽</b> ({sign}{profit:,} ₽)")
     lines.append(f"<blockquote>{chr(10).join(quote_lines)}</blockquote>")
     return "\n".join(lines)
 
@@ -3484,6 +3535,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
         )
         return
 
+    await redis_client.hincrby(daily_task_key(user_id), "mine", 1)
     pickaxe_lvl = await get_pickaxe_level(user_id)
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
@@ -4125,6 +4177,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
             "last_collected": time.time(),
         }
         await save_biz(user_id, new_biz)
+        await redis_client.hset(daily_task_key(user_id), "business", "1")
         text, kb = biz_manage_view(new_biz)
         await callback.message.edit_text(
             f"✅ взял «{biz_def['name']}» за <b>{biz_def['price']:,} ₽</b>!\n\n" + text,
