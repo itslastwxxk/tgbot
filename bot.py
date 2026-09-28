@@ -2052,9 +2052,8 @@ def get_main_keyboard():
     keyboard = [
         [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
         [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="📦 Кейсы"), KeyboardButton(text="🥊 Дуэли")],
-        [KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
-        [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="📋 Задания")],
-        [KeyboardButton(text="📋 Профиль")],
+        [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
+        [KeyboardButton(text="📋 Профиль"), KeyboardButton(text="📋 Задания")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -2781,48 +2780,116 @@ def get_shop_keyboard():
     )
 
 
-# --- Ежедневные задания ---
-def daily_task_key(user_id: int) -> str:
-    return f"daily_tasks:{user_id}:{time.strftime('%Y-%m-%d', time.gmtime())}"
+# --- Задания с ротацией раз в 12 часов ---
+TASK_ROTATION_SECONDS = 12 * 60 * 60
 
-async def daily_tasks_data(user_id: int):
+
+def daily_task_key(user_id: int) -> str:
+    # Сохраняем один текущий квест на игрока, а не по календарному дню.
+    return f"player_task:{user_id}"
+
+
+async def ensure_player_task(user_id: int):
+    """Возвращает активное задание; создаёт новое, если 12 часов истекли."""
     key = daily_task_key(user_id)
     data = await redis_client.hgetall(key)
-    if not data:
-        await redis_client.hset(key, mapping={"mine": "0", "business": "0", "mine_claimed": "0", "business_claimed": "0"})
-        await redis_client.expire(key, 172800)
-        data = await redis_client.hgetall(key)
-    return data
+    now = int(time.time())
+    try:
+        created_at = int(data.get("created_at", 0))
+    except (TypeError, ValueError):
+        created_at = 0
+
+    if data and created_at and now - created_at < TASK_ROTATION_SECONDS:
+        return data
+
+    # Динамическая шахта: награда зависит от текущей кирки.
+    pickaxe_level = await get_pickaxe_level(user_id)
+    mine_income = get_mine_reward_for_pickaxe(pickaxe_level)
+    mine_target = random.choice([20, 30, 40])
+    mine_reward = max(1_000, int(mine_income * mine_target * 0.5))
+
+    # Бизнес-задание выбирается из доступного игроку списка.
+    # При отсутствии бизнеса выбираем бизнес не дороже ~2.5x баланса,
+    # но всегда оставляем варианты начального уровня.
+    balance = await get_balance(user_id)
+    owned_business = await get_biz(user_id)
+    available = [b for b in BUSINESS_LIST if not owned_business and b["price"] <= max(100_000, balance * 1.5)]
+    if not available:
+        available = [b for b in BUSINESS_LIST[:3]] if not owned_business else BUSINESS_LIST[:3]
+    biz_def = random.choice(available)
+    biz_reward = max(5_000, int(round(biz_def["price"] * 0.45 / 1000) * 1000))
+
+    task_type = random.choice(["mine", "business"]) if not owned_business else "mine"
+    if task_type == "mine":
+        task = {
+            "type": "mine", "target": str(mine_target), "progress": "0",
+            "reward": str(mine_reward), "xp": str(max(10, mine_target * 2)),
+            "description": f"Нафарми в шахте {mine_target} раз (твоя кирка приносит {mine_income:,} ₽ за фарм).",
+        }
+    else:
+        task = {
+            "type": "business", "target": str(biz_def["price"]), "progress": "0",
+            "reward": str(biz_reward), "xp": str(max(25, min(500, biz_def["price"] // 10_000))),
+            "business_name": biz_def["name"],
+            "description": f"Приобрети бизнес «{biz_def['name']}» за {biz_def['price']:,} ₽.",
+        }
+
+    task.update({"created_at": str(now), "claimed": "0"})
+    await redis_client.delete(key)
+    await redis_client.hset(key, mapping=task)
+    await redis_client.expire(key, TASK_ROTATION_SECONDS * 3)
+    return await redis_client.hgetall(key)
+
 
 @router.message(F.text == "📋 Задания")
 async def daily_tasks_handler(message: Message):
     uid = message.from_user.id
-    d = await daily_tasks_data(uid)
-    mine = int(d.get("mine", 0)); biz = int(d.get("business", 0))
-    text = ("📋 <b>Ежедневные задания</b>\n\n"
-            f"⛏ Нафармить в шахте 10 раз: <b>{min(mine,10)}/10</b> — награда <b>5 000 ₽</b> + 20 XP\n"
-            f"🏪 Купить бизнес: <b>{'выполнено' if biz else 'не выполнено'}</b> — награда <b>15 000 ₽</b> + 50 XP\n\n"
-            "Награду можно получить здесь после выполнения.")
-    rows=[]
-    if mine >= 10 and d.get("mine_claimed","0") != "1": rows.append([InlineKeyboardButton(text="🎁 Забрать награду за шахту", callback_data="task_claim:mine")])
-    if biz and d.get("business_claimed","0") != "1": rows.append([InlineKeyboardButton(text="🎁 Забрать награду за бизнес", callback_data="task_claim:business")])
+    d = await ensure_player_task(uid)
+    task_type = d.get("type", "mine")
+    target = int(d.get("target", 1))
+    progress = min(int(d.get("progress", 0)), target)
+    reward = int(d.get("reward", 0))
+    xp = int(d.get("xp", 0))
+    created_at = int(d.get("created_at", time.time()))
+    remaining = max(0, TASK_ROTATION_SECONDS - (int(time.time()) - created_at))
+    hours, rem = divmod(remaining, 3600)
+    minutes = rem // 60
+    status = "✅ Выполнено" if progress >= target else "⏳ В процессе"
+    text = (
+        "📋 <b>Текущее задание</b>\n\n"
+        f"• {d.get('description', 'Выполни задание')}\n"
+        f"• Прогресс: <b>{progress}/{target}</b>\n"
+        f"• Статус: <b>{status}</b>\n\n"
+        f"🏆 Награда: <b>{reward:,} ₽</b> + <b>{xp} XP</b>\n"
+        f"🔄 Новое задание через: <b>{hours:02d}:{minutes:02d}</b>"
+    )
+    rows = []
+    if progress >= target and d.get("claimed", "0") != "1":
+        rows.append([InlineKeyboardButton(text="🎁 Забрать награду", callback_data="task_claim:active")])
     await message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
 
-@router.callback_query(F.data.startswith("task_claim:"))
+
+@router.callback_query(F.data == "task_claim:active")
 async def daily_task_claim(callback: CallbackQuery):
-    uid=callback.from_user.id; task=callback.data.split(":",1)[1]; d=await daily_tasks_data(uid); key=daily_task_key(uid)
-    needed=10 if task=="mine" else 1
-    field="mine" if task=="mine" else "business"
-    claimed=field+"_claimed"
-    if int(d.get(field,0)) < needed or d.get(claimed,"0")=="1":
-        await callback.answer("Задание ещё не выполнено или награда уже получена", show_alert=True); return
-    reward=5000 if task=="mine" else 15000
-    xp=20 if task=="mine" else 50
-    await redis_client.hset(key, claimed, "1")
-    await add_to_balance(uid,reward); await add_xp(uid,xp)
+    uid = callback.from_user.id
+    d = await ensure_player_task(uid)
+    target = int(d.get("target", 1))
+    progress = int(d.get("progress", 0))
+    if progress < target or d.get("claimed", "0") == "1":
+        await callback.answer("Задание ещё не выполнено или награда уже получена", show_alert=True)
+        return
+    reward = int(d.get("reward", 0))
+    xp = int(d.get("xp", 0))
+    key = daily_task_key(uid)
+    await redis_client.hset(key, "claimed", "1")
+    await add_to_balance(uid, reward)
+    await add_xp(uid, xp)
     await callback.answer(f"Получено: {reward:,} ₽ и {xp} XP", show_alert=True)
-    try: await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest: pass
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
 
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message, state: FSMContext):
@@ -3535,7 +3602,9 @@ async def handle_mine_farm(message: Message, state: FSMContext):
         )
         return
 
-    await redis_client.hincrby(daily_task_key(user_id), "mine", 1)
+    active_task = await ensure_player_task(user_id)
+    if active_task.get("type") == "mine" and active_task.get("claimed", "0") != "1":
+        await redis_client.hincrby(daily_task_key(user_id), "progress", 1)
     pickaxe_lvl = await get_pickaxe_level(user_id)
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
@@ -4177,7 +4246,9 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
             "last_collected": time.time(),
         }
         await save_biz(user_id, new_biz)
-        await redis_client.hset(daily_task_key(user_id), "business", "1")
+        active_task = await ensure_player_task(user_id)
+        if active_task.get("type") == "business" and active_task.get("claimed", "0") != "1" and biz_def["name"] == active_task.get("business_name"):
+            await redis_client.hset(daily_task_key(user_id), "progress", active_task.get("target", "1"))
         text, kb = biz_manage_view(new_biz)
         await callback.message.edit_text(
             f"✅ взял «{biz_def['name']}» за <b>{biz_def['price']:,} ₽</b>!\n\n" + text,
