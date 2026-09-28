@@ -136,7 +136,7 @@ class AdminForm(StatesGroup):
     waiting_for_search = State()
     waiting_for_amount = State()
     waiting_for_level = State()
-    waiting_for_tk_amount: State = State()
+    waiting_for_tk_amount = State()
 
 class DuelForm(StatesGroup):
     waiting_for_target = State()
@@ -2779,6 +2779,47 @@ def get_shop_keyboard():
         resize_keyboard=True,
     )
 
+# --- Уведомление о выполнении задания ---
+
+async def notify_task_completed(bot: Bot, user_id: int) -> None:
+    """Проверяет, выполнено ли задание, и отправляет уведомление один раз."""
+    key = daily_task_key(user_id)
+    data = await redis_client.hgetall(key)
+    if not data:
+        return
+
+    target = int(data.get("target", 1))
+    progress = int(data.get("progress", 0))
+    notified = data.get("notified", "0") == "1"
+
+    if progress >= target and not notified:
+        await redis_client.hset(key, "notified", "1")
+        text = (
+            "✅ <b>Ты выполнил задание!</b>\n\n"
+            "зайди в «📋 Задания» и забери награду 🎁\n"
+        )
+        try:
+            await bot.send_message(user_id, text, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass  # бот заблокирован пользователем — игнорируем
+
+
+async def bump_task_progress(user_id: int, task_type: str, amount: int = 1, **filters) -> None:
+    """Увеличивает прогресс активного задания, если тип и фильтры совпадают."""
+    d = await ensure_player_task(user_id)
+    if d.get("type") != task_type or d.get("claimed", "0") == "1":
+        return
+    for k, v in filters.items():
+        if d.get(k) != v:
+            return
+    target = int(d.get("target", 1))
+    progress = int(d.get("progress", 0))
+    if progress >= target:
+        return
+    new_progress = min(progress + amount, target)
+    await redis_client.hset(daily_task_key(user_id), "progress", str(new_progress))
+    if new_progress >= target:
+        await notify_task_completed(bot, user_id)
 
 # --- Задания с ротацией раз в 12 часов ---
 TASK_ROTATION_SECONDS = 12 * 60 * 60
@@ -2805,7 +2846,7 @@ async def ensure_player_task(user_id: int):
     # Динамическая шахта: награда зависит от текущей кирки.
     pickaxe_level = await get_pickaxe_level(user_id)
     mine_income = get_mine_reward_for_pickaxe(pickaxe_level)
-    mine_target = random.choice([20, 30, 40])
+    mine_target = random.choice([20, 30])
     mine_reward = max(1_000, int(mine_income * mine_target * 0.5))
 
     # Бизнес-задание выбирается из доступного игроку списка.
@@ -2819,19 +2860,58 @@ async def ensure_player_task(user_id: int):
     biz_def = random.choice(available)
     biz_reward = max(5_000, int(round(biz_def["price"] * 0.45 / 1000) * 1000))
 
-    task_type = random.choice(["mine", "business"]) if not owned_business else "mine"
+    # Пул заданий: шахта/бизнес доступны всем,
+    # трейдинг и казино появляются с соответствующих уровней.
+    stats = await get_user_stats(user_id)
+    user_level = stats["level"]
+
+    variants = ["mine"]
+    if not owned_business:
+        variants.append("business")
+    if user_level >= TRADING_UNLOCK_LEVEL:
+        variants.append("trade")
+    if user_level >= CASINO_UNLOCK_LEVEL:
+        variants.append("casino")
+
+    task_type = random.choice(variants)
+
     if task_type == "mine":
         task = {
             "type": "mine", "target": str(mine_target), "progress": "0",
             "reward": str(mine_reward), "xp": str(max(10, mine_target * 2)),
             "description": f"Нафарми в шахте {mine_target} раз (твоя кирка приносит {mine_income:,} ₽ за фарм).",
         }
-    else:
+    elif task_type == "business":
         task = {
             "type": "business", "target": str(biz_def["price"]), "progress": "0",
             "reward": str(biz_reward), "xp": str(max(25, min(500, biz_def["price"] // 10_000))),
             "business_name": biz_def["name"],
             "description": f"Приобрети бизнес «{biz_def['name']}» за {biz_def['price']:,} ₽.",
+        }
+    elif task_type == "trade":
+        mode = random.choice(["low", "mid", "high"])
+        wins_needed = {"low": 5, "mid": 3, "high": 2}[mode]
+        mode_names = {"low": "низком", "mid": "среднем", "high": "высоком"}
+        trade_reward = {"low": 25_000, "mid": 45_000, "high": 80_000}[mode]
+        task = {
+            "type": "trade", "mode": mode, "target": str(wins_needed), "progress": "0",
+            "reward": str(trade_reward), "xp": str(25 * wins_needed),
+            "description": f"выиграй в трейдинге {wins_needed} раз на {mode_names[mode]} риске.",
+        }
+    else:  # casino
+        casino_variants = [
+            {"kind": "zero", "target": 1, "reward": 100_000, "xp": 120,
+             "description": "выиграй в рулетке, поставив на зеро (🟢 0)."},
+            {"kind": "color", "target": 3, "reward": 45_000, "xp": 60,
+             "description": "выиграй в рулетке 3 раза, поставив на красное или чёрное."},
+            {"kind": "play", "target": 5, "reward": 15_000, "xp": 40,
+             "description": "сыграй 5 раз в рулетке (любые ставки)."},
+        ]
+        v = random.choice(casino_variants)
+        task = {
+            "type": "casino", "kind": v["kind"], "target": str(v["target"]), "progress": "0",
+            "reward": str(v["reward"]), "xp": str(v["xp"]),
+            "description": v["description"],
         }
 
     task.update({"created_at": str(now), "claimed": "0"})
@@ -3479,11 +3559,6 @@ async def handle_daily_back_to_menu(callback: CallbackQuery, state: FSMContext):
 
 
 # --- ВОЗВРАТЫ ---
-@router.message(F.text == "🔙 Назад")
-async def handle_back(message: Message, state: FSMContext):
-    await state.clear()
-    await send_main_menu(message, message.from_user.id)
-
 @router.message(F.text.in_({"🔙 В главное меню", "🔙 В меню"}))
 async def handle_back_to_main(message: Message, state: FSMContext):
     await state.clear()
@@ -3602,9 +3677,7 @@ async def handle_mine_farm(message: Message, state: FSMContext):
         )
         return
 
-    active_task = await ensure_player_task(user_id)
-    if active_task.get("type") == "mine" and active_task.get("claimed", "0") != "1":
-        await redis_client.hincrby(daily_task_key(user_id), "progress", 1)
+    await bump_task_progress(user_id, "mine")
     pickaxe_lvl = await get_pickaxe_level(user_id)
     reward = get_mine_reward_for_pickaxe(pickaxe_lvl)
     pickaxe_name = PICKAXE_LEVELS[pickaxe_lvl]["name"]
@@ -3962,6 +4035,7 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
             f"чистая прибыль: +<b>{profit:,} ₽</b> (выплата {payout:,} ₽, x{multiplier})"
         )
         await log_trade(user_id, mode, amount, profit, True)
+        await bump_task_progress(user_id, "trade", mode=mode)
     else:
         # Проигрыш: ставка уже списана перед анимацией.
         result_text = (
@@ -4247,8 +4321,11 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         }
         await save_biz(user_id, new_biz)
         active_task = await ensure_player_task(user_id)
-        if active_task.get("type") == "business" and active_task.get("claimed", "0") != "1" and biz_def["name"] == active_task.get("business_name"):
-            await redis_client.hset(daily_task_key(user_id), "progress", active_task.get("target", "1"))
+        if (active_task.get("type") == "business"
+                and active_task.get("claimed", "0") != "1"
+                and biz_def["name"] == active_task.get("business_name")):
+            await bump_task_progress(user_id, "business",
+                                     amount=int(active_task.get("target", "1")))
         text, kb = biz_manage_view(new_biz)
         await callback.message.edit_text(
             f"✅ взял «{biz_def['name']}» за <b>{biz_def['price']:,} ₽</b>!\n\n" + text,
@@ -4581,12 +4658,12 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
 async def casino_roulette(message: Message, state: FSMContext):
     await state.clear()
 
-    photo = FSInputFile("images/roulette.png")
-
-    await message.answer_photo(
-        photo=photo,
-        reply_markup=ReplyKeyboardRemove()
-    )
+    try:
+        photo = FSInputFile("images/roulette.png")
+        await message.answer_photo(photo=photo, reply_markup=ReplyKeyboardRemove())
+    except FileNotFoundError:
+        logger.warning("Файл images/roulette.png не найден.")
+        await message.answer("🎡", reply_markup=ReplyKeyboardRemove())
 
     await roulette_show_amount(message, state)
 
@@ -4781,7 +4858,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 
     random.shuffle(spin_frames)
 
-    delays = [0.8, 0.9, 0.10, 0.11, 0.11, 0.11, 0.11, 0.15, 0.16, 0.17, 0.20, 0.22, 0.23]
+    delays = [0.8, 0.9, 1.0, 1.1, 1.1, 1.1, 1.1, 1.15, 1.16, 1.17, 1.2, 1.22, 1.25]
 
     for i, frame in enumerate(spin_frames):
         try:
@@ -4812,6 +4889,14 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
     color = roulette_color(number)
     won, payout_mult = roulette_bet_result(bet, number)
 
+    # Прогресс заданий казино
+    await bump_task_progress(user_id, "casino", kind="play")
+    if won:
+        if bet == "0":
+            await bump_task_progress(user_id, "casino", kind="zero")
+        elif bet in ("red", "black"):
+            await bump_task_progress(user_id, "casino", kind="color")
+
     if won:
         winnings = amount * (payout_mult + 1)
         await add_to_balance(user_id, winnings)
@@ -4822,7 +4907,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             f"выпало: {color} <b>{number}</b>\n"
             f"твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"✅ <b>ВЫЙГРЫШ!</b>\n"
-            f"🎉 пополнение: +{amount:,} ₽\n"
+            f"🎉 чистыми: +{winnings - amount:,} ₽ (выплата {winnings:,} ₽)\n"
             f"💰 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
@@ -4979,13 +5064,13 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         await callback.answer("дуэль уже обработана.", show_alert=True)
         return
 
-    await callback.answer()
-
- # --- Проверка кулдауна у принимающего ---
+    # --- Проверка кулдауна у принимающего ---
     can_duel, remaining = await check_duel_cooldown(callback.from_user.id)
     if not can_duel:
         await callback.answer(f"⏳ дуэль можно принять через {remaining} сек.", show_alert=True)
         return
+
+    await callback.answer()
     
     ch_balance = await get_balance(duel["challenger_id"])
     tg_balance = await get_balance(duel["target_id"])
