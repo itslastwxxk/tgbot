@@ -25,6 +25,8 @@ from dotenv import load_dotenv
 import redis.asyncio as redis
 import random
 import re
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont
 
 load_dotenv()
@@ -2795,7 +2797,7 @@ async def notify_task_completed(bot: Bot, user_id: int) -> None:
     if progress >= target and not notified:
         await redis_client.hset(key, "notified", "1")
         text = (
-            "✅ <b>Ты выполнил задание!</b>\n\n"
+            "✅ <b>ты выполнил задание!</b>\n\n"
             "зайди в «📋 Задания» и забери награду 🎁\n"
         )
         try:
@@ -2821,132 +2823,394 @@ async def bump_task_progress(user_id: int, task_type: str, amount: int = 1, **fi
     if new_progress >= target:
         await notify_task_completed(bot, user_id)
 
-# --- Задания с ротацией раз в 12 часов ---
-TASK_ROTATION_SECONDS = 12 * 60 * 60
+# ============================================================
+# ЗАДАНИЯ — ВСЯ НАСТРОЙКА ЗДЕСЬ
+# ============================================================
+# Система заданий настраивается в трёх местах ниже:
+#   1. TASK_GENERATORS — функции, создающие задания каждого типа.
+#   2. TASK_WEIGHTS    — как часто выпадает каждый тип (пропорции, не %).
+#   3. TASK_MIN_LEVEL  — минимальный уровень для выпадения типа.
+#
+# КАК ДОБАВИТЬ НОВЫЙ ТИП ЗАДАНИЯ:
+#   1. Напиши генератор — функцию async def gen_xxx_task(user_id) -> dict.
+#      Обязательные поля возвращаемого словаря:
+#        type        — строка-идентификатор типа
+#        target      — сколько нужно сделать
+#        progress    — "0"
+#        reward      — награда в ₽
+#        xp          — награда в XP
+#        description — текст задания для игрока
+#      Плюс любые ФИЛЬТРЫ (например mode="low") — они сравниваются
+#      при подсчёте прогресса.
+#   2. Добавь тип в TASK_WEIGHTS и при необходимости в TASK_MIN_LEVEL.
+#   3. В нужном месте кода вызови:
+#        await bump_task_progress(user_id, "xxx", фильтр1=значение, ...)
+#      Прогресс увеличится только если активное задание того же типа
+#      и все фильтры совпали. Без фильтров — засчитается любое задание
+#      этого типа.
+
+# Задания обновляются по календарному дню (в полночь по часовому поясу ниже).
+# Часовой пояс можно поменять в .env: TASK_TZ=Europe/Moscow
+TASK_TZ_NAME = os.getenv("TASK_TZ", "Europe/Moscow")
+try:
+    TASK_TZ = ZoneInfo(TASK_TZ_NAME)
+except Exception:
+    logger.warning(f"Часовой пояс {TASK_TZ_NAME} не найден (нужен pip install tzdata), использую UTC+3.")
+    TASK_TZ = timezone(timedelta(hours=3))
+
+# Платное обновление задания игроком
+TASK_REROLL_COST = 50_000                 # цена обновления, ₽
+TASK_REROLL_COOLDOWN = 12 * 60 * 60       # не чаще раза в 12 часов
+TASK_TTL_SECONDS = 3 * 24 * 60 * 60       # сколько хранить задание в Redis
+
+
+def _task_day(ts: float | None = None) -> str:
+    """Календарная дата (YYYY-MM-DD) в часовом поясе заданий."""
+    return datetime.fromtimestamp(ts if ts is not None else time.time(), TASK_TZ).strftime("%Y-%m-%d")
+
+
+def _seconds_until_next_task_day() -> int:
+    """Сколько секунд осталось до полуночи (смены заданий)."""
+    now = datetime.now(TASK_TZ)
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(1, int((midnight - now).total_seconds()))
+
+
+def task_reroll_key(user_id: int) -> str:
+    return f"player_task_reroll:{user_id}"
+
+# Минимальный уровень для выпадения типа задания
+TASK_MIN_LEVEL = {
+    "trade": TRADING_UNLOCK_LEVEL,
+    "casino": CASINO_UNLOCK_LEVEL,
+    "duel": DUEL_UNLOCK_LEVEL,
+    "duel_win": DUEL_UNLOCK_LEVEL,
+    "business": BUSINESS_UNLOCK_LEVEL,
+}
+
+# Веса выпадения (пропорции, не проценты). Чем больше — тем чаще выпадает.
+TASK_WEIGHTS = {
+    "mine": 30,
+    "business": 20,
+    "trade": 20,
+    "casino": 15,
+    "duel": 15,
+    "duel_win": 10,
+}
+
+
+# ---------------- ГЕНЕРАТОРЫ ЗАДАНИЙ ----------------
+# Каждая функция получает user_id и возвращает словарь полей задания.
+
+async def gen_mine_task(user_id: int) -> dict:
+    """⛏ Задание на фарм в шахте. Награда зависит от текущей кирки."""
+    pickaxe_level = await get_pickaxe_level(user_id)
+    income = get_mine_reward_for_pickaxe(pickaxe_level)
+    target = random.choice([20, 30])
+    return {
+        "type": "mine",
+        "target": str(target),
+        "progress": "0",
+        "reward": str(max(1_000, int(income * target * 0.5))),
+        "xp": str(max(20, target * 2)),
+        "description": f"нафарми в шахте {target} раз (твоя кирка приносит {income:,} ₽ за клик).",
+    }
+
+
+async def gen_business_task(user_id: int) -> dict:
+    """🏪 Задание на покупку бизнеса. Награда ~45% от цены."""
+    balance = await get_balance(user_id)
+    available = [b for b in BUSINESS_LIST if b["price"] <= max(100_000, int(balance * 1.5))]
+    if not available:
+        available = BUSINESS_LIST[:3]
+    biz = random.choice(available)
+    return {
+        "type": "business",
+        "target": str(biz["price"]),
+        "progress": "0",
+        "reward": str(max(5_000, int(round(biz["price"] * 0.45 / 1000) * 1000))),
+        "xp": str(max(35, min(500, biz["price"] // 10_000))),
+        "business_name": biz["name"],
+        "description": f"приобрети бизнес «{biz['name']}» за {biz['price']:,} ₽.",
+    }
+
+
+async def gen_trade_task(user_id: int) -> dict:
+    """📈 Задание на победы в трейдинге на выбранном риске."""
+    mode = random.choice(["low", "mid", "high"])
+    wins = {"low": 12, "mid": 10, "high": 5}[mode]
+    mode_names = {"low": "низком", "mid": "среднем", "high": "высоком"}
+    return {
+        "type": "trade",
+        "mode": mode,
+        "target": str(wins),
+        "progress": "0",
+        "reward": "200000",
+        "xp": str(35 * wins),
+        "description": f"выиграй в трейдинге {wins} раз на {mode_names[mode]} риске.",
+    }
+
+
+async def gen_casino_task(user_id: int) -> dict:
+    """🎰 Задание на рулетку: зеро / цвет / просто сыграть."""
+    variants = [
+        {"kind": "zero", "target": 1, "reward": 250_000, "xp": 250,
+         "description": "выиграй в рулетке, поставив на зеро (🟢 0)."},
+        {"kind": "color", "target": 5, "reward": 150_000, "xp": 150,
+         "description": "выиграй в рулетке 3 раза, поставив на красное или чёрное."},
+        {"kind": "play", "target": 10, "reward": 150_000, "xp": 150,
+         "description": "сыграй 5 раз в рулетке (любые ставки)."},
+    ]
+    v = random.choice(variants)
+    return {
+        "type": "casino",
+        "kind": v["kind"],
+        "target": str(v["target"]),
+        "progress": "0",
+        "reward": str(v["reward"]),
+        "xp": str(v["xp"]),
+        "description": v["description"],
+    }
+
+
+async def gen_duel_task(user_id: int) -> dict:
+    """🥊 Задание: сыграть N дуэлей (победа/поражение/ничья — всё считается)."""
+    target = random.choice([5, 7, 10])
+    return {
+        "type": "duel",
+        "target": str(target),
+        "progress": "0",
+        "reward": str(30_000 * target),
+        "xp": str(60 * target),
+        "description": f"сыграй {target} дуэлей (победа или поражение — неважно).",
+    }
+
+
+async def gen_duel_win_task(user_id: int) -> dict:
+    """🏆 Задание: выиграть N дуэлей."""
+    target = random.choice([3, 5, 7])
+    return {
+        "type": "duel_win",
+        "target": str(target),
+        "progress": "0",
+        "reward": str(45_000 * target),
+        "xp": str(150 * target),
+        "description": f"выиграй {target} дуэлей.",
+    }
+
+
+# Реестр генераторов: тип -> функция генератора
+TASK_GENERATORS = {
+    "mine": gen_mine_task,
+    "business": gen_business_task,
+    "trade": gen_trade_task,
+    "casino": gen_casino_task,
+    "duel": gen_duel_task,
+    "duel_win": gen_duel_win_task,
+}
+
+# Эмодзи и название типа для отображения в меню заданий
+TASK_TYPE_INFO = {
+    "mine": ("⛏", "Шахта"),
+    "business": ("🏪", "Бизнес"),
+    "trade": ("📈", "Трейдинг"),
+    "casino": ("🎰", "Казино"),
+    "duel": ("🥊", "Дуэли"),
+    "duel_win": ("🏆", "Дуэли — победы"),
+}
 
 
 def daily_task_key(user_id: int) -> str:
-    # Сохраняем один текущий квест на игрока, а не по календарному дню.
+    # Один активный квест на игрока, пересоздаётся по таймеру ротации.
     return f"player_task:{user_id}"
 
 
-async def ensure_player_task(user_id: int):
-    """Возвращает активное задание; создаёт новое, если 12 часов истекли."""
-    key = daily_task_key(user_id)
-    data = await redis_client.hgetall(key)
-    now = int(time.time())
-    try:
-        created_at = int(data.get("created_at", 0))
-    except (TypeError, ValueError):
-        created_at = 0
-
-    if data and created_at and now - created_at < TASK_ROTATION_SECONDS:
-        return data
-
-    # Динамическая шахта: награда зависит от текущей кирки.
-    pickaxe_level = await get_pickaxe_level(user_id)
-    mine_income = get_mine_reward_for_pickaxe(pickaxe_level)
-    mine_target = random.choice([20, 30])
-    mine_reward = max(1_000, int(mine_income * mine_target * 0.5))
-
-    # Бизнес-задание выбирается из доступного игроку списка.
-    # При отсутствии бизнеса выбираем бизнес не дороже ~2.5x баланса,
-    # но всегда оставляем варианты начального уровня.
-    balance = await get_balance(user_id)
-    owned_business = await get_biz(user_id)
-    available = [b for b in BUSINESS_LIST if not owned_business and b["price"] <= max(100_000, balance * 1.5)]
-    if not available:
-        available = [b for b in BUSINESS_LIST[:3]] if not owned_business else BUSINESS_LIST[:3]
-    biz_def = random.choice(available)
-    biz_reward = max(5_000, int(round(biz_def["price"] * 0.45 / 1000) * 1000))
-
-    # Пул заданий: шахта/бизнес доступны всем,
-    # трейдинг и казино появляются с соответствующих уровней.
+async def _choose_task_type(user_id: int, exclude: str | None = None) -> str:
+    """Выбирает тип задания с учётом уровня и наличия бизнеса."""
     stats = await get_user_stats(user_id)
     user_level = stats["level"]
+    owned_business = await get_biz(user_id)
 
-    variants = ["mine"]
-    if not owned_business:
-        variants.append("business")
-    if user_level >= TRADING_UNLOCK_LEVEL:
-        variants.append("trade")
-    if user_level >= CASINO_UNLOCK_LEVEL:
-        variants.append("casino")
+    candidates = []
+    for task_type, weight in TASK_WEIGHTS.items():
+        if task_type == "business" and owned_business:
+            continue  # бизнес уже куплен — задание на покупку не выдаём
+        min_lvl = TASK_MIN_LEVEL.get(task_type, 1)
+        if user_level < min_lvl:
+            continue
+        candidates.append((task_type, weight))
 
-    task_type = random.choice(variants)
+    if not candidates:
+        candidates = [("mine", 1)]
 
-    if task_type == "mine":
-        task = {
-            "type": "mine", "target": str(mine_target), "progress": "0",
-            "reward": str(mine_reward), "xp": str(max(10, mine_target * 2)),
-            "description": f"Нафарми в шахте {mine_target} раз (твоя кирка приносит {mine_income:,} ₽ за фарм).",
-        }
-    elif task_type == "business":
-        task = {
-            "type": "business", "target": str(biz_def["price"]), "progress": "0",
-            "reward": str(biz_reward), "xp": str(max(25, min(500, biz_def["price"] // 10_000))),
-            "business_name": biz_def["name"],
-            "description": f"Приобрети бизнес «{biz_def['name']}» за {biz_def['price']:,} ₽.",
-        }
-    elif task_type == "trade":
-        mode = random.choice(["low", "mid", "high"])
-        wins_needed = {"low": 5, "mid": 3, "high": 2}[mode]
-        mode_names = {"low": "низком", "mid": "среднем", "high": "высоком"}
-        trade_reward = {"low": 25_000, "mid": 45_000, "high": 80_000}[mode]
-        task = {
-            "type": "trade", "mode": mode, "target": str(wins_needed), "progress": "0",
-            "reward": str(trade_reward), "xp": str(25 * wins_needed),
-            "description": f"выиграй в трейдинге {wins_needed} раз на {mode_names[mode]} риске.",
-        }
-    else:  # casino
-        casino_variants = [
-            {"kind": "zero", "target": 1, "reward": 100_000, "xp": 120,
-             "description": "выиграй в рулетке, поставив на зеро (🟢 0)."},
-            {"kind": "color", "target": 3, "reward": 45_000, "xp": 60,
-             "description": "выиграй в рулетке 3 раза, поставив на красное или чёрное."},
-            {"kind": "play", "target": 5, "reward": 15_000, "xp": 40,
-             "description": "сыграй 5 раз в рулетке (любые ставки)."},
-        ]
-        v = random.choice(casino_variants)
-        task = {
-            "type": "casino", "kind": v["kind"], "target": str(v["target"]), "progress": "0",
-            "reward": str(v["reward"]), "xp": str(v["xp"]),
-            "description": v["description"],
-        }
+    # при ручном обновлении стараемся не выдавать тот же тип задания
+    if exclude and any(c[0] != exclude for c in candidates):
+        candidates = [c for c in candidates if c[0] != exclude]
 
-    task.update({"created_at": str(now), "claimed": "0"})
+    types = [c[0] for c in candidates]
+    weights = [c[1] for c in candidates]
+    return random.choices(types, weights=weights, k=1)[0]
+
+
+async def _create_player_task(user_id: int, exclude_type: str | None = None) -> dict:
+    """Создаёт новое задание взамен текущего."""
+    key = daily_task_key(user_id)
+    now = int(time.time())
+    task_type = await _choose_task_type(user_id, exclude_type)
+    task = await TASK_GENERATORS[task_type](user_id)
+    task.update({"created_at": str(now), "day": _task_day(now), "claimed": "0"})
+
     await redis_client.delete(key)
     await redis_client.hset(key, mapping=task)
-    await redis_client.expire(key, TASK_ROTATION_SECONDS * 3)
+    await redis_client.expire(key, TASK_TTL_SECONDS)
     return await redis_client.hgetall(key)
 
 
-@router.message(F.text == "📋 Задания")
-async def daily_tasks_handler(message: Message):
-    uid = message.from_user.id
+async def ensure_player_task(user_id: int):
+    """Возвращает активное задание; создаёт новое, если наступил новый календарный день."""
+    data = await redis_client.hgetall(daily_task_key(user_id))
+    if data:
+        day = data.get("day")
+        if not day:
+            # задания, созданные до перехода на календарные дни
+            try:
+                day = _task_day(int(data.get("created_at", 0)))
+            except (TypeError, ValueError):
+                day = None
+        if day == _task_day():
+            return data
+    return await _create_player_task(user_id)
+
+
+async def _render_task_view(uid: int):
+    """Собирает текст и клавиатуру экрана заданий."""
     d = await ensure_player_task(uid)
+
     task_type = d.get("type", "mine")
+    emoji, type_name = TASK_TYPE_INFO.get(task_type, ("📋", "Задание"))
     target = int(d.get("target", 1))
     progress = min(int(d.get("progress", 0)), target)
     reward = int(d.get("reward", 0))
     xp = int(d.get("xp", 0))
-    created_at = int(d.get("created_at", time.time()))
-    remaining = max(0, TASK_ROTATION_SECONDS - (int(time.time()) - created_at))
-    hours, rem = divmod(remaining, 3600)
+    done = progress >= target
+    claimed = d.get("claimed", "0") == "1"
+
+    hours, rem = divmod(_seconds_until_next_task_day(), 3600)
     minutes = rem // 60
-    status = "✅ Выполнено" if progress >= target else "⏳ В процессе"
+
+    # Полоска прогресса
+    bar_len = 10
+    filled = progress * bar_len // target if target else bar_len
+    bar = "█" * filled + "░" * (bar_len - filled)
+
+    status = "✅ выполнено!" if done else "⏳ в процессе"
     text = (
-        "📋 <b>Текущее задание</b>\n\n"
-        f"• {d.get('description', 'Выполни задание')}\n"
-        f"• Прогресс: <b>{progress}/{target}</b>\n"
-        f"• Статус: <b>{status}</b>\n\n"
-        f"🏆 Награда: <b>{reward:,} ₽</b> + <b>{xp} XP</b>\n"
-        f"🔄 Новое задание через: <b>{hours:02d}:{minutes:02d}</b>"
+        f"📋 <b>Текущее задание</b>\n\n"
+        f"{emoji} <b>{type_name}</b>\n"
+        f"• {d.get('description', 'Выполни задание')}\n\n"
+        f"📊 прогресс: <b>{progress}/{target}</b>\n"
+        f"[{bar}]\n"
+        f"• статус: <b>{status}</b>\n\n"
+        f"🏆 награда: <b>{reward:,} ₽</b> + <b>{xp} XP</b>\n"
+        f"🔄 новое задание через: <b>{hours:02d}:{minutes:02d}</b>"
     )
+
     rows = []
-    if progress >= target and d.get("claimed", "0") != "1":
+    if done and not claimed:
         rows.append([InlineKeyboardButton(text="🎁 Забрать награду", callback_data="task_claim:active")])
-    await message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
+
+    if not done:
+        cd_left = await redis_client.ttl(task_reroll_key(uid))
+        if cd_left and cd_left > 0:
+            rh, rr = divmod(cd_left, 3600)
+            text += f"\n\n🔁 обновить задание за деньги можно через: <b>{rh:02d}:{rr // 60:02d}</b>"
+        else:
+            text += f"\n\n🔁 можно обновить задание за <b>{TASK_REROLL_COST:,} ₽</b> (раз в 12 часов)"
+            rows.append([InlineKeyboardButton(
+                text=f"🔄 Обновить задание · {TASK_REROLL_COST:,} ₽",
+                callback_data="task_reroll:ask",
+            )])
+
+    return text, (InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
+
+
+async def _edit_task_view(callback: CallbackQuery):
+    text, markup = await _render_task_view(callback.from_user.id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    except TelegramBadRequest:
+        pass
+
+
+@router.message(F.text == "📋 Задания")
+async def daily_tasks_handler(message: Message):
+    text, markup = await _render_task_view(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
+@router.callback_query(F.data == "task_reroll:ask")
+async def task_reroll_ask(callback: CallbackQuery):
+    uid = callback.from_user.id
+    d = await ensure_player_task(uid)
+    if int(d.get("progress", 0)) >= int(d.get("target", 1)):
+        await callback.answer("Задание уже выполнено — сначала забери награду.", show_alert=True)
+        return
+    cd_left = await redis_client.ttl(task_reroll_key(uid))
+    if cd_left and cd_left > 0:
+        rh, rr = divmod(cd_left, 3600)
+        await callback.answer(f"Обновлять можно раз в 12 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
+        return
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"✅ Да, за {TASK_REROLL_COST:,} ₽", callback_data="task_reroll:yes"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="task_reroll:no"),
+    ]])
+    try:
+        await callback.message.edit_text(
+            f"🔄 <b>Обновить задание?</b>\n\n"
+            f"Текущее задание и его прогресс сгорят, выдадим новое.\n"
+            f"Цена: <b>{TASK_REROLL_COST:,} ₽</b>. Следующее обновление — через 12 часов.",
+            parse_mode="HTML",
+            reply_markup=markup,
+        )
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "task_reroll:no")
+async def task_reroll_cancel(callback: CallbackQuery):
+    await _edit_task_view(callback)
+    await callback.answer("Отменено")
+
+
+@router.callback_query(F.data == "task_reroll:yes")
+async def task_reroll_confirm(callback: CallbackQuery):
+    uid = callback.from_user.id
+    d = await ensure_player_task(uid)
+    if int(d.get("progress", 0)) >= int(d.get("target", 1)):
+        await callback.answer("Задание уже выполнено — сначала забери награду.", show_alert=True)
+        await _edit_task_view(callback)
+        return
+
+    # Ставим блокировку на 12 часов атомарно (защита от двойного нажатия)
+    locked = await redis_client.set(task_reroll_key(uid), str(int(time.time())), nx=True, ex=TASK_REROLL_COOLDOWN)
+    if not locked:
+        cd_left = await redis_client.ttl(task_reroll_key(uid))
+        rh, rr = divmod(max(cd_left, 0), 3600)
+        await callback.answer(f"Обновлять можно раз в 12 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
+        await _edit_task_view(callback)
+        return
+
+    if not await deduct_balance(uid, TASK_REROLL_COST):
+        await redis_client.delete(task_reroll_key(uid))  # деньги не списаны — кулдаун не тратим
+        balance = await get_balance(uid)
+        await callback.answer(f"Недостаточно средств. Нужно {TASK_REROLL_COST:,} ₽, баланс: {balance:,} ₽", show_alert=True)
+        await _edit_task_view(callback)
+        return
+
+    await _create_player_task(uid, exclude_type=d.get("type"))
+    await callback.answer("Задание обновлено!")
+    await _edit_task_view(callback)
 
 
 @router.callback_query(F.data == "task_claim:active")
@@ -5197,6 +5461,15 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     await set_duel_cooldown(duel["target_id"])
 
     await update_duel_status(duel_id, "finished")
+
+    # Прогресс заданий «сыграй дуэли» — засчитывается обоим участникам
+    await bump_task_progress(duel["challenger_id"], "duel")
+    await bump_task_progress(duel["target_id"], "duel")
+    # Прогресс заданий «выиграй дуэли» — только победителю
+    if ch_value > tg_value:
+        await bump_task_progress(duel["challenger_id"], "duel_win")
+    elif tg_value > ch_value:
+        await bump_task_progress(duel["target_id"], "duel_win")
 
     # ... отправка result_text обоим игрокам ...
 
