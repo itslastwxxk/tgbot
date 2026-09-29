@@ -2911,7 +2911,7 @@ async def gen_mine_task(user_id: int) -> dict:
     """⛏ Задание на фарм в шахте. Награда зависит от текущей кирки."""
     pickaxe_level = await get_pickaxe_level(user_id)
     income = get_mine_reward_for_pickaxe(pickaxe_level)
-    target = random.choice([20, 30])
+    target = random.choice([10, 15, 20])
     return {
         "type": "mine",
         "target": str(target),
@@ -3301,7 +3301,7 @@ DONATE_SHOP_ITEMS = [
         "emoji": "⛏️",
         "name": "Повышение уровня кирки",
         "price": 20,
-        "desc": "мгновенно поднимает уровень твоей кирки на 1, без затрат ₽",
+        "desc": "мгновенно поднимает уровень твоей кирки на 1",
         "image": "images/pickaxe.png",
     },
     {
