@@ -293,7 +293,7 @@ REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистр
 MINE_COOLDOWN = 2
 MINE_STAMINA_MAX = 10             # сколько раз подряд можно фармить шахту
 MINE_STAMINA_REGEN_SECONDS = 60  # 1 единица выносливости в минуту
-MATH_REWARD = 500
+MATH_REWARD = 1500
 MATH_COOLDOWN = 10
 RAW_PRICE = 1
 
@@ -306,7 +306,8 @@ PICKAXE_LEVELS = [
     {"name": "железная",    "reward": 1500,  "cost": 36000},
     {"name": "свинцовая",    "reward": 2800,  "cost": 84000},
     {"name": "серебряная",    "reward": 4500,  "cost": 100000},
-    {"name": "вольфрамовая",    "reward": 8000,  "cost": 200000},
+    {"name": "67-ая",    "reward": 6700,  "cost": 670},
+    {"name": "вольфрамовая",    "reward": 9000,  "cost": 180000},
     {"name": "костяная",    "reward": 12000,  "cost": 250000},
     {"name": "золотая",     "reward": 18000,  "cost": 300000},
     {"name": "карамельная",    "reward": 21000,  "cost": 300000},
@@ -316,12 +317,13 @@ PICKAXE_LEVELS = [
     {"name": "аметистовая", "reward": 41000,  "cost": 600000},
     {"name": "кошмарная",    "reward": 47000,  "cost": 1000000},
     {"name": "кобальтовая",    "reward": 54000,  "cost": 1500000},
-    {"name": "палладиевая",    "reward": 67000,  "cost": 2000000},
-    {"name": "смертоносная",    "reward": 77000,  "cost": 3000000},
-    {"name": "мифриловая",    "reward": 88000,  "cost": 4500000},
-    {"name": "незеритовая", "reward": 100000,  "cost": 6000000},
-    {"name": "адамантитовая", "reward": 115000,  "cost": 7500000},
-    {"name": "титановая",    "reward": 135000,  "cost": 9000000},
+    {"name": "палладиевая",    "reward": 67000,  "cost": 2500000},
+    {"name": "смертоносная",    "reward": 77000,  "cost": 3500000},
+    {"name": "мифриловая",    "reward": 88000,  "cost": 5000000},
+    {"name": "незеритовая", "reward": 100000,  "cost": 6500000},
+    {"name": "адамантитовая", "reward": 115000,  "cost": 8000000},
+    {"name": "титановая",    "reward": 135000,  "cost": 10000000},
+    {"name": "секретная",    "reward": 200000,  "cost": 20000000},
 ]
 
 TRADING_MIN_BALANCE = 20000
