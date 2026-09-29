@@ -1435,10 +1435,10 @@ UNLOCK_LEVELS = {
     "📋 Профиль": PROFILE_UNLOCK_LEVEL,
     "🧮 Математика": MATH_UNLOCK_LEVEL,
     "🥊 Дуэли": DUEL_UNLOCK_LEVEL,
-    "📈 Трейдинг": TRADING_UNLOCK_LEVEL,
+    "📈 Трейдинг\n\n переходи в 'Работы' и жми 'Трейдинг'": TRADING_UNLOCK_LEVEL,
     "🏪 Бизнесы": BUSINESS_UNLOCK_LEVEL,
     "🎰 Казино": CASINO_UNLOCK_LEVEL,
-    "🎁 Ежедневный бонус": BONUS_UNLOCK_LEVEL,
+    "🎁 Ежедневный бонус\n\n переходи в главное меню и жми 'Бонус'": BONUS_UNLOCK_LEVEL,
     "📦 Кейсы": CASE_UNLOCK_LEVEL,
 }
 
@@ -2863,7 +2863,9 @@ except Exception:
 
 # Платное обновление задания игроком
 TASK_REROLL_COST = 75_000                 # цена обновления, ₽
-TASK_REROLL_COOLDOWN = 12 * 60 * 60       # не чаще раза в 12 часов
+TASK_ROTATION_SECONDS = 8 * 60 * 60       # активное задание меняется раз в 8 часов
+TASK_REROLL_COST = 75_000                 # цена ручного обновления, ₽
+TASK_REROLL_COOLDOWN = 8 * 60 * 60        # ручное обновление — раз в 8 часов
 TASK_TTL_SECONDS = 3 * 24 * 60 * 60       # сколько хранить задание в Redis
 
 
@@ -2872,11 +2874,13 @@ def _task_day(ts: float | None = None) -> str:
     return datetime.fromtimestamp(ts if ts is not None else time.time(), TASK_TZ).strftime("%Y-%m-%d")
 
 
-def _seconds_until_next_task_day() -> int:
-    """Сколько секунд осталось до полуночи (смены заданий)."""
-    now = datetime.now(TASK_TZ)
-    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return max(1, int((midnight - now).total_seconds()))
+def _seconds_until_next_task_day(created_at: int | str | None = None) -> int:
+    """Сколько секунд осталось до ротации конкретного задания (8 часов после выдачи)."""
+    try:
+        created = int(float(created_at)) if created_at is not None else int(time.time())
+    except (TypeError, ValueError):
+        created = int(time.time())
+    return max(0, created + TASK_ROTATION_SECONDS - int(time.time()))
 
 
 def task_reroll_key(user_id: int) -> str:
@@ -2917,7 +2921,7 @@ async def gen_mine_task(user_id: int) -> dict:
         "target": str(target),
         "progress": "0",
         "reward": str(max(1_000, int(income * target * 0.5))),
-        "xp": str(max(20, target * 2)),
+        "xp": str(max(20, target * 15)),
         "description": f"нафарми в шахте {target} раз (твоя кирка приносит {income:,} ₽ за клик).",
     }
 
@@ -3102,17 +3106,14 @@ async def _create_player_task(user_id: int, exclude_type: str | None = None) -> 
 
 
 async def ensure_player_task(user_id: int):
-    """Возвращает активное задание; создаёт новое, если наступил новый календарный день."""
+    """Возвращает активное задание; автоматически обновляет его через 8 часов."""
     data = await redis_client.hgetall(daily_task_key(user_id))
     if data:
-        day = data.get("day")
-        if not day:
-            # задания, созданные до перехода на календарные дни
-            try:
-                day = _task_day(int(data.get("created_at", 0)))
-            except (TypeError, ValueError):
-                day = None
-        if day == _task_day():
+        try:
+            created_at = int(float(data.get("created_at", 0)))
+        except (TypeError, ValueError):
+            created_at = 0
+        if created_at and int(time.time()) < created_at + TASK_ROTATION_SECONDS:
             return data
     return await _create_player_task(user_id)
 
@@ -3130,8 +3131,10 @@ async def _render_task_view(uid: int):
     done = progress >= target
     claimed = d.get("claimed", "0") == "1"
 
-    hours, rem = divmod(_seconds_until_next_task_day(), 3600)
+    seconds_left = _seconds_until_next_task_day(d.get("created_at"))
+    hours, rem = divmod(seconds_left, 3600)
     minutes = rem // 60
+    seconds = rem % 60
 
     # Полоска прогресса
     bar_len = 10
@@ -3147,7 +3150,7 @@ async def _render_task_view(uid: int):
         f"[{bar}]\n"
         f"• статус: <b>{status}</b>\n\n"
         f"🏆 награда: <b>{reward:,} ₽</b> + <b>{xp} XP</b>\n"
-        f"🔄 новое задание через: <b>{hours:02d}:{minutes:02d}</b>"
+        f"🔄 новое задание через: <b>{hours:02d}:{minutes:02d}:{seconds:02d}</b>"
     )
 
     rows = []
@@ -3160,7 +3163,7 @@ async def _render_task_view(uid: int):
             rh, rr = divmod(cd_left, 3600)
             text += f"\n\n🔁 обновить задание за деньги можно через: <b>{rh:02d}:{rr // 60:02d}</b>"
         else:
-            text += f"\n\n🔁 можно обновить задание за <b>{TASK_REROLL_COST:,} ₽</b> (раз в 12 часов)"
+            text += f"\n\n🔁 можно обновить задание за <b>{TASK_REROLL_COST:,} ₽</b> (раз в 8 часов)"
             rows.append([InlineKeyboardButton(
                 text=f"🔄 Обновить задание · {TASK_REROLL_COST:,} ₽",
                 callback_data="task_reroll:ask",
@@ -3193,7 +3196,7 @@ async def task_reroll_ask(callback: CallbackQuery):
     cd_left = await redis_client.ttl(task_reroll_key(uid))
     if cd_left and cd_left > 0:
         rh, rr = divmod(cd_left, 3600)
-        await callback.answer(f"Обновлять можно раз в 12 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
+        await callback.answer(f"Обновлять можно раз в 8 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
         return
     markup = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"✅ Да, за {TASK_REROLL_COST:,} ₽", callback_data="task_reroll:yes"),
@@ -3203,7 +3206,7 @@ async def task_reroll_ask(callback: CallbackQuery):
         await callback.message.edit_text(
             f"🔄 <b>Обновить задание?</b>\n\n"
             f"Текущее задание и его прогресс сгорят, выдадим новое.\n"
-            f"Цена: <b>{TASK_REROLL_COST:,} ₽</b>. Следующее обновление — через 12 часов.",
+            f"Цена: <b>{TASK_REROLL_COST:,} ₽</b>. Следующее обновление — через 8 часов.",
             parse_mode="HTML",
             reply_markup=markup,
         )
@@ -3232,7 +3235,7 @@ async def task_reroll_confirm(callback: CallbackQuery):
     if not locked:
         cd_left = await redis_client.ttl(task_reroll_key(uid))
         rh, rr = divmod(max(cd_left, 0), 3600)
-        await callback.answer(f"Обновлять можно раз в 12 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
+        await callback.answer(f"Обновлять можно раз в 8 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
         await _edit_task_view(callback)
         return
 
@@ -3301,7 +3304,7 @@ DONATE_SHOP_ITEMS = [
         "emoji": "⛏️",
         "name": "Повышение уровня кирки",
         "price": 20,
-        "desc": "мгновенно поднимает уровень твоей кирки на 1",
+        "desc": "\n поднимает уровень твоей кирки на 1",
         "image": "images/pickaxe.png",
     },
     {
@@ -3309,8 +3312,29 @@ DONATE_SHOP_ITEMS = [
         "emoji": "🔋",
         "name": "Восстановление выносливости",
         "price": 5,
-        "desc": "мгновенно восстанавливает выносливость в шахте до максимума",
+        "desc": "\n восстанавливает выносливость в шахте до максимума",
         "image": "images/battery.png",
+    },
+    {
+        "id": "cash_300000",
+        "emoji": "💵",
+        "name": "300 000 ₽ на баланс",
+        "price": 10,
+        "desc": "\n начисляет 300 000 ₽ на твой основной баланс",
+    },
+    {
+        "id": "platinum_case_token",
+        "emoji": "💠",
+        "name": "Платиновый кейс",
+        "price": 35,
+        "desc": "\n выдаёт 1 платиновый кейс. Открой его в разделе «Кейсы» без оплаты ₽",
+    },
+    {
+        "id": "elite_case_token",
+        "emoji": "⚜️",
+        "name": "Элитный кейс",
+        "price": 60,
+        "desc": "\n выдаёт 1 элитный кейс. Открой его в разделе «Кейсы» без оплаты ₽",
     },
 ]
 
@@ -3336,6 +3360,7 @@ def _donate_carousel_text(idx: int, user_id: int, tokens: int):
         f"{item['desc']}{extra_line}\n\n"
         f"💠 Цена: <b>{item['price']} ТК</b>\n"
         f"Твой баланс: <b>{tokens} ТК</b>"
+        "\n\nТокены покупаются за реальные деньги 1 ТК = 1 рубль.\n Чтобы купить пиши в поддержку @kommersant_support"
     )
 
     nav = []
@@ -3478,8 +3503,17 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
             "mine_stamina_empty_at": "",
         })
         await callback.answer("🔋 выносливость восстановлена до максимума!", show_alert=True)
+    elif item["id"] == "cash_300000":
+        new_balance = await add_to_balance(user_id, 300_000)
+        await callback.answer(f"💵 Начислено 300 000 ₽! Баланс: {new_balance:,} ₽", show_alert=True)
+    elif item["id"] == "platinum_case_token":
+        await redis_client.hincrby(f"user:{user_id}", "case_inventory:6", 1)
+        await callback.answer("💠 Платиновый кейс добавлен в инвентарь! Открой его в разделе «Кейсы».", show_alert=True)
+    elif item["id"] == "elite_case_token":
+        await redis_client.hincrby(f"user:{user_id}", "case_inventory:7", 1)
+        await callback.answer("⚜️ Элитный кейс добавлен в инвентарь! Открой его в разделе «Кейсы».", show_alert=True)
 
-    # Обновляем карусель: удаляем старое сообщение, отправляем новое
+    # Обновляем карточку товара в том же сообщении
     data = await state.get_data()
     old_msg_id = data.get("donate_msg_id", callback.message.message_id)
     new_msg_id = await _send_donate_carousel(
@@ -3561,7 +3595,7 @@ def get_case_keyboard(index: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=case["emoji"], callback_data="cases_noop"),
             InlineKeyboardButton(text="▶️", callback_data=f"cases_nav:{next_index}"),
         ],
-        [InlineKeyboardButton(text=f"📦 Открыть за {case['cost']:,} ₽", callback_data=f"cases_open:{index}")],
+        [InlineKeyboardButton(text="📦 Открыть кейс", callback_data=f"cases_open:{index}")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="cases_back")],
     ])
 
@@ -3627,7 +3661,24 @@ async def cases_open(callback: CallbackQuery):
         return
     _case_cooldown_cache[user_id] = now
 
-    if not await deduct_balance(user_id, cost):
+    inventory_field = f"case_inventory:{CASE_ORDER[index]}"
+    inventory_count = int(await redis_client.hget(f"user:{user_id}", inventory_field) or 0)
+    used_inventory_case = inventory_count > 0 and CASE_ORDER[index] in ("6", "7")
+    if used_inventory_case:
+        # Списываем один купленный за токены кейс атомарно, чтобы нельзя было открыть его дважды.
+        consume_case_script = """
+        local count = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '0')
+        if count > 0 then
+            redis.call('HINCRBY', KEYS[1], ARGV[1], -1)
+            return 1
+        end
+        return 0
+        """
+        consumed = await redis_client.eval(consume_case_script, 1, f"user:{user_id}", inventory_field)
+        if int(consumed) != 1:
+            await callback.answer("Кейс уже использован. Попробуй ещё раз.", show_alert=True)
+            return
+    elif not await deduct_balance(user_id, cost):
         balance = await get_balance(user_id)
         await callback.answer(f"Недостаточно средств. Баланс: {balance:,} ₽", show_alert=True)
         return
@@ -3661,15 +3712,16 @@ async def cases_open(callback: CallbackQuery):
         result_text = (
             f"{case['emoji']} <b>{case['name']}</b>\n\n"
             f"🎉 выпало: <b>{prize:,} ₽</b>\n"
-            f"💳 баланс: <b>{new_balance:,} ₽</b>"
+            + ("🎟 использован кейс из токен-магазина\n" if used_inventory_case else "")
+            + f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
         new_balance = await get_balance(user_id)
         result_text = (
             f"{case['emoji']} <b>{case['name']}</b>\n\n"
             f"💨 приз не выпал.\n"
-            f"потрачено: <b>{cost:,} ₽</b>\n"
-            f"💳 баланс: <b>{new_balance:,} ₽</b>"
+            + ("🎟 использован кейс из токен-магазина\n" if used_inventory_case else f"потрачено: <b>{cost:,} ₽</b>\n")
+            + f"💳 баланс: <b>{new_balance:,} ₽</b>"
         )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
