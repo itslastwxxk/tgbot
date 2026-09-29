@@ -131,6 +131,9 @@ class RouletteForm(StatesGroup):
     waiting_for_amount = State()
     waiting_for_bet = State()
 
+class MinesGameForm(StatesGroup):
+    waiting_for_amount = State()
+
 class MineForm(StatesGroup):
     in_mine = State()
 
@@ -2078,7 +2081,7 @@ def get_help_menu_keyboard():
 def get_casino_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🎡 Рулетка")],
+            [KeyboardButton(text="🎡 Рулетка"), KeyboardButton(text="💣 Мины")],
             [KeyboardButton(text="🔙 В меню")]
         ],
         resize_keyboard=True
@@ -2859,7 +2862,7 @@ except Exception:
     TASK_TZ = timezone(timedelta(hours=3))
 
 # Платное обновление задания игроком
-TASK_REROLL_COST = 50_000                 # цена обновления, ₽
+TASK_REROLL_COST = 75_000                 # цена обновления, ₽
 TASK_REROLL_COOLDOWN = 12 * 60 * 60       # не чаще раза в 12 часов
 TASK_TTL_SECONDS = 3 * 24 * 60 * 60       # сколько хранить задание в Redis
 
@@ -2883,6 +2886,7 @@ def task_reroll_key(user_id: int) -> str:
 TASK_MIN_LEVEL = {
     "trade": TRADING_UNLOCK_LEVEL,
     "casino": CASINO_UNLOCK_LEVEL,
+    "mines_game": CASINO_UNLOCK_LEVEL,
     "duel": DUEL_UNLOCK_LEVEL,
     "duel_win": DUEL_UNLOCK_LEVEL,
     "business": BUSINESS_UNLOCK_LEVEL,
@@ -2894,6 +2898,7 @@ TASK_WEIGHTS = {
     "business": 20,
     "trade": 20,
     "casino": 15,
+    "mines_game": 15,
     "duel": 15,
     "duel_win": 10,
 }
@@ -2973,6 +2978,34 @@ async def gen_casino_task(user_id: int) -> dict:
     }
 
 
+async def gen_mines_game_task(user_id: int) -> dict:
+    """💣 Задание на мини-игру «Мины» (считаются игры со ставкой от MINES_TASK_MIN_BET)."""
+    bet_note = f"ставка от {MINES_TASK_MIN_BET:,} ₽"
+    variants = [
+        {"kind": "play", "target": 3, "reward": 100_000, "xp": 100,
+         "description": f"сыграй 3 раза в «Мины» ({bet_note})."},
+        {"kind": "cells", "target": 12, "reward": 100_000, "xp": 100,
+         "description": f"открой 12 безопасных ячеек в «Минах» суммарно ({bet_note})."},
+        {"kind": "win", "target": 2, "reward": 150_000, "xp": 150,
+         "description": f"забери выигрыш в «Минах» 2 раза ({bet_note})."},
+        {"kind": "mult", "target": 1, "reward": 200_000, "xp": 200, "min_mult": 3,
+         "description": f"забери выигрыш в «Минах» с множителем не меньше x3 ({bet_note})."},
+    ]
+    v = random.choice(variants)
+    task = {
+        "type": "mines_game",
+        "kind": v["kind"],
+        "target": str(v["target"]),
+        "progress": "0",
+        "reward": str(v["reward"]),
+        "xp": str(v["xp"]),
+        "description": v["description"],
+    }
+    if "min_mult" in v:
+        task["min_mult"] = str(v["min_mult"])
+    return task
+
+
 async def gen_duel_task(user_id: int) -> dict:
     """🥊 Задание: сыграть N дуэлей (победа/поражение/ничья — всё считается)."""
     target = random.choice([5, 7, 10])
@@ -3005,6 +3038,7 @@ TASK_GENERATORS = {
     "business": gen_business_task,
     "trade": gen_trade_task,
     "casino": gen_casino_task,
+    "mines_game": gen_mines_game_task,
     "duel": gen_duel_task,
     "duel_win": gen_duel_win_task,
 }
@@ -3015,6 +3049,7 @@ TASK_TYPE_INFO = {
     "business": ("🏪", "Бизнес"),
     "trade": ("📈", "Трейдинг"),
     "casino": ("🎰", "Казино"),
+    "mines_game": ("💣", "Мины"),
     "duel": ("🥊", "Дуэли"),
     "duel_win": ("🏆", "Дуэли — победы"),
 }
@@ -5197,6 +5232,351 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("roulette_mul:"))
 async def roulette_change_amount_outside_state(callback: CallbackQuery):
     await callback.answer("Сначала открой рулетку и введи ставку.", show_alert=True)
+
+# ============================================================
+# КАЗИНО: МИНЫ
+# ============================================================
+# Поле 5x5, часть ячеек — мины. Игрок делает ставку и открывает ячейки:
+# каждая безопасная повышает множитель, мина сжигает ставку, а кнопкой
+# «Забрать» можно в любой момент получить ставка × множитель.
+# Игра хранится в Redis, поэтому переживает перезапуск бота, а если
+# игрок вышел из меню, то при входе в «Мины» игра продолжится.
+
+MINES_GRID = 5
+MINES_CELLS = MINES_GRID * MINES_GRID    # 25 ячеек
+MINES_COUNT = 5                          # мин на поле
+MINES_RTP = 0.95                         # возврат игрокам (5% — преимущество казино)
+MINES_MAX_MULT = 500.0                   # потолок множителя (дальше — авто-выплата)
+MINES_GAME_TTL = 7 * 24 * 60 * 60        # сколько хранить незавершённую игру
+MINES_TASK_MIN_BET = 1_000               # ставка меньше этой не идёт в задания (защита от фарма)
+
+_mines_locks: dict[int, asyncio.Lock] = {}
+
+
+def _mines_lock(user_id: int) -> asyncio.Lock:
+    return _mines_locks.setdefault(user_id, asyncio.Lock())
+
+
+def mines_key(user_id: int) -> str:
+    return f"mines_game:{user_id}"
+
+
+def mines_multiplier(opened: int) -> float:
+    """Множитель после N открытых безопасных ячеек (с учётом преимущества казино)."""
+    if opened <= 0:
+        return 1.0
+    fair = 1.0
+    for i in range(opened):
+        fair *= (MINES_CELLS - i) / (MINES_CELLS - MINES_COUNT - i)
+    return min(MINES_MAX_MULT, round(fair * MINES_RTP, 2))
+
+
+async def _mines_load(user_id: int) -> dict | None:
+    d = await redis_client.hgetall(mines_key(user_id))
+    if not d:
+        return None
+    return {
+        "gid": d.get("gid", ""),
+        "bet": int(d.get("bet", 0)),
+        "mines": {int(x) for x in d.get("mines", "").split(",") if x},
+        "opened": [int(x) for x in d.get("opened", "").split(",") if x],
+    }
+
+
+def mines_keyboard(game: dict, reveal: bool = False, hit: int | None = None) -> InlineKeyboardMarkup:
+    opened = set(game["opened"])
+    rows = []
+    for r in range(MINES_GRID):
+        row = []
+        for c in range(MINES_GRID):
+            i = r * MINES_GRID + c
+            if reveal:
+                if i == hit:
+                    text = "💥"
+                elif i in game["mines"]:
+                    text = "💣"
+                elif i in opened:
+                    text = "💎"
+                else:
+                    text = "▫️"
+                cb = "mines_noop"
+            elif i in opened:
+                text, cb = "💎", "mines_noop"
+            else:
+                text, cb = "❓", f"mines_open:{game['gid']}:{i}"
+            row.append(InlineKeyboardButton(text=text, callback_data=cb))
+        rows.append(row)
+
+    if reveal:
+        rows.append([
+            InlineKeyboardButton(text="🔄 Играть снова", callback_data="mines_again"),
+            InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu"),
+        ])
+    elif game["opened"]:
+        payout = int(game["bet"] * mines_multiplier(len(game["opened"])))
+        rows.append([InlineKeyboardButton(
+            text=f"💰 Забрать {payout:,} ₽", callback_data=f"mines_cash:{game['gid']}"
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def mines_text(game: dict) -> str:
+    opened = len(game["opened"])
+    safe_total = MINES_CELLS - MINES_COUNT
+    mult = mines_multiplier(opened)
+    payout = int(game["bet"] * mult)
+    return (
+        f"💣 <b>Мины</b>\n\n"
+        f"💰 Ставка: <b>{game['bet']:,} ₽</b>\n"
+        f"💣 Мин на поле: <b>{MINES_COUNT}</b>\n"
+        f"🔓 Открыто ячеек: <b>{opened}/{safe_total}</b>\n"
+        f"🤑 Выигрыш: <b>x{mult:.2f}</b> (+{payout - game['bet']:,} ₽)\n\n"
+        f"ℹ️ Нажми на ячейку для открытия"
+    )
+
+
+def get_mines_amount_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В казино", callback_data="casino_menu")],
+    ])
+
+
+async def _mines_start(target: Message, user_id: int, state: FSMContext, remove_reply_kb: bool):
+    """Точка входа: продолжает активную игру или просит ввести ставку."""
+    await state.clear()
+    if remove_reply_kb:
+        await target.answer("💣", reply_markup=ReplyKeyboardRemove())
+
+    game = await _mines_load(user_id)
+    if game:
+        await target.answer("🔄 У тебя есть незавершённая игра, продолжаем:")
+        await target.answer(mines_text(game), parse_mode="HTML", reply_markup=mines_keyboard(game))
+        return
+
+    balance = await get_balance(user_id)
+    await state.set_state(MinesGameForm.waiting_for_amount)
+    sent = await target.answer(
+        f"💣 <b>Мины</b>\n\n"
+        f"💰 Твой баланс: <b>{balance:,} ₽</b>\n\n"
+        f"Введи сумму ставки:",
+        parse_mode="HTML",
+        reply_markup=get_mines_amount_keyboard(),
+    )
+    await state.update_data(amount_msg_id=sent.message_id)
+
+
+@router.message(F.text == "💣 Мины")
+async def casino_mines(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, CASINO_UNLOCK_LEVEL):
+        return
+    await _mines_start(message, message.from_user.id, state, remove_reply_kb=True)
+
+
+@router.callback_query(F.data == "mines_again")
+async def mines_again(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    # убираем кнопки «Играть снова / В казино» у старого поля, само поле остаётся
+    kb = callback.message.reply_markup
+    if kb:
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb.inline_keyboard[:-1])
+            )
+        except TelegramBadRequest:
+            pass
+    await _mines_start(callback.message, callback.from_user.id, state, remove_reply_kb=False)
+
+
+@router.callback_query(F.data == "mines_noop")
+async def mines_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+@router.message(MinesGameForm.waiting_for_amount)
+async def process_mines_amount(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+
+    try:
+        amount = parse_amount(message.text)
+    except (TypeError, ValueError, AttributeError):
+        await message.answer("❌ Введи целое число, например: 52000")
+        return
+    if amount <= 0:
+        await message.answer("❌ Ставка должна быть больше 0.")
+        return
+
+    async with _mines_lock(user_id):
+        if await redis_client.exists(mines_key(user_id)):
+            game = await _mines_load(user_id)
+            await state.clear()
+            await message.answer("🔄 У тебя есть незавершённая игра, продолжаем:")
+            await message.answer(mines_text(game), parse_mode="HTML", reply_markup=mines_keyboard(game))
+            return
+
+        if not await deduct_balance(user_id, amount):
+            balance = await get_balance(user_id)
+            await message.answer(
+                f"❌ Не хватает денег.\nБаланс: {balance:,} ₽\nВведи меньше:"
+            )
+            return
+
+        mines = random.sample(range(MINES_CELLS), MINES_COUNT)
+        gid = uuid.uuid4().hex[:6]
+        await redis_client.hset(mines_key(user_id), mapping={
+            "gid": gid,
+            "bet": str(amount),
+            "mines": ",".join(map(str, mines)),
+            "opened": "",
+        })
+        await redis_client.expire(mines_key(user_id), MINES_GAME_TTL)
+
+    data = await state.get_data()
+    amount_msg_id = data.get("amount_msg_id")
+    if amount_msg_id:
+        try:
+            await message.bot.edit_message_reply_markup(
+                chat_id=message.chat.id, message_id=amount_msg_id, reply_markup=None
+            )
+        except TelegramBadRequest:
+            pass
+    await state.clear()
+
+    game = {"gid": gid, "bet": amount, "mines": set(mines), "opened": []}
+    await message.answer(mines_text(game), parse_mode="HTML", reply_markup=mines_keyboard(game))
+
+
+async def _mines_edit(callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup):
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+    except TelegramBadRequest:
+        pass
+
+
+async def _mines_stale(callback: CallbackQuery):
+    await callback.answer("Эта игра уже завершена.", show_alert=True)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+
+async def _mines_task_hook(user_id: int, bet: int, event: str, opened: int = 0) -> None:
+    """Прогресс заданий «Мины». event: safe (безопасная ячейка), lose (мина), win (выплата)."""
+    if bet < MINES_TASK_MIN_BET:
+        return
+    if event == "safe":
+        await bump_task_progress(user_id, "mines_game", kind="cells")
+        return
+    # игра завершена
+    await bump_task_progress(user_id, "mines_game", kind="play")
+    if event != "win":
+        return
+    await bump_task_progress(user_id, "mines_game", kind="win")
+    d = await ensure_player_task(user_id)
+    if (d.get("type") == "mines_game" and d.get("kind") == "mult"
+            and mines_multiplier(opened) >= float(d.get("min_mult", 0))):
+        await bump_task_progress(user_id, "mines_game", kind="mult")
+
+
+async def _mines_cashout_text(user_id: int, game: dict, prefix: str) -> str:
+    opened = len(game["opened"])
+    mult = mines_multiplier(opened)
+    payout = int(game["bet"] * mult)
+    new_balance = await add_to_balance(user_id, payout)
+    return (
+        f"{prefix}\n\n"
+        f"🔓 Открыто ячеек: <b>{opened}</b>\n"
+        f"🤑 Множитель: <b>x{mult:.2f}</b>\n"
+        f"🎉 Чистыми: <b>+{payout - game['bet']:,} ₽</b> (выплата {payout:,} ₽)\n"
+        f"💰 баланс: <b>{new_balance:,} ₽</b>"
+    )
+
+
+@router.callback_query(F.data.startswith("mines_open:"))
+async def mines_open(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    try:
+        _, gid, idx_raw = callback.data.split(":")
+        idx = int(idx_raw)
+    except ValueError:
+        await callback.answer()
+        return
+
+    async with _mines_lock(user_id):
+        game = await _mines_load(user_id)
+        if not game or game["gid"] != gid:
+            await _mines_stale(callback)
+            return
+        if idx in game["opened"] or not (0 <= idx < MINES_CELLS):
+            await callback.answer()
+            return
+
+        # --- мина: игра окончена, ставка сгорает ---
+        if idx in game["mines"]:
+            await redis_client.delete(mines_key(user_id))
+            balance = await get_balance(user_id)
+            text = (
+                f"💥 <b>Бабах! Ты попал на мину.</b>\n\n"
+                f"💸 Списание: <b>-{game['bet']:,} ₽</b>\n"
+                f"🔓 Открыто ячеек: <b>{len(game['opened'])}</b>\n"
+                f"💰 баланс: <b>{balance:,} ₽</b>"
+            )
+            markup = mines_keyboard(game, reveal=True, hit=idx)
+            outcome = "lose"
+        else:
+            # --- безопасная ячейка ---
+            game["opened"].append(idx)
+            opened = len(game["opened"])
+            mult = mines_multiplier(opened)
+            if opened >= MINES_CELLS - MINES_COUNT or mult >= MINES_MAX_MULT:
+                # открыто всё безопасное (или достигнут потолок) — авто-выплата
+                await redis_client.delete(mines_key(user_id))
+                text = await _mines_cashout_text(user_id, game, "🏆 <b>Максимальный выигрыш! Выплата произведена.</b>")
+                markup = mines_keyboard(game, reveal=True)
+                outcome = "auto"
+            else:
+                await redis_client.hset(mines_key(user_id), "opened", ",".join(map(str, game["opened"])))
+                text = mines_text(game)
+                markup = mines_keyboard(game)
+                outcome = "safe"
+
+    if outcome == "lose":
+        await callback.answer("💥 Мина!")
+    elif outcome == "auto":
+        await callback.answer("🏆 Победа!")
+    else:
+        await callback.answer("💎")
+    await _mines_edit(callback, text, markup)
+
+    # Прогресс заданий
+    if outcome in ("safe", "auto"):
+        await _mines_task_hook(user_id, game["bet"], "safe")
+    if outcome == "lose":
+        await _mines_task_hook(user_id, game["bet"], "lose")
+    elif outcome == "auto":
+        await _mines_task_hook(user_id, game["bet"], "win", len(game["opened"]))
+
+
+@router.callback_query(F.data.startswith("mines_cash:"))
+async def mines_cash(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    gid = callback.data.split(":", 1)[1]
+
+    async with _mines_lock(user_id):
+        game = await _mines_load(user_id)
+        if not game or game["gid"] != gid:
+            await _mines_stale(callback)
+            return
+        if not game["opened"]:
+            await callback.answer("Сначала открой хотя бы одну ячейку.", show_alert=True)
+            return
+        await redis_client.delete(mines_key(user_id))
+        text = await _mines_cashout_text(user_id, game, "✅ <b>Выигрыш забран!</b>")
+
+    await callback.answer("💰 Выплата получена!")
+    await _mines_edit(callback, text, mines_keyboard(game, reveal=True))
+    await _mines_task_hook(user_id, game["bet"], "win", len(game["opened"]))
+
 
 # ============================================================
 # ДУЭЛИ
