@@ -3300,22 +3300,6 @@ async def shop_back_to_menu(message: Message, state: FSMContext):
 # --- Магазин за Токены (ТК) ---
 DONATE_SHOP_ITEMS = [
     {
-        "id": "pickaxe_upgrade",
-        "emoji": "⛏️",
-        "name": "Повышение уровня кирки",
-        "price": 20,
-        "desc": "\n поднимает уровень твоей кирки на 1",
-        "image": "images/pickaxe.png",
-    },
-    {
-        "id": "stamina_refill",
-        "emoji": "🔋",
-        "name": "Восстановление выносливости",
-        "price": 5,
-        "desc": "\n восстанавливает выносливость в шахте до максимума",
-        "image": "images/battery.png",
-    },
-    {
         "id": "cash_300000",
         "emoji": "💵",
         "name": "300 000 ₽ на баланс",
@@ -3335,6 +3319,22 @@ DONATE_SHOP_ITEMS = [
         "name": "Элитный кейс",
         "price": 60,
         "desc": "\n выдаёт 1 элитный кейс. Открой его в разделе «Кейсы» без оплаты ₽",
+    },
+    {
+        "id": "pickaxe_upgrade",
+        "emoji": "⛏️",
+        "name": "Повышение уровня кирки",
+        "price": 30,
+        "desc": "\n поднимает уровень твоей кирки на 1",
+        "image": "images/pickaxe.png",
+    },
+    {
+        "id": "stamina_refill",
+        "emoji": "🔋",
+        "name": "Восстановление выносливости",
+        "price": 10,
+        "desc": "\n восстанавливает выносливость в шахте до максимума",
+        "image": "images/battery.png",
     },
 ]
 
@@ -5294,7 +5294,7 @@ async def roulette_change_amount_outside_state(callback: CallbackQuery):
 
 MINES_GRID = 5
 MINES_CELLS = MINES_GRID * MINES_GRID    # 25 ячеек
-MINES_COUNT = 5                          # мин на поле
+MINES_COUNT = 6                          # мин на поле
 MINES_RTP = 0.95                         # возврат игрокам (5% — преимущество казино)
 MINES_MAX_MULT = 500.0                   # потолок множителя (дальше — авто-выплата)
 MINES_GAME_TTL = 7 * 24 * 60 * 60        # сколько хранить незавершённую игру
