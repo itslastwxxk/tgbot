@@ -1062,7 +1062,7 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
     end
 
     local new_count = redis.call('HINCRBY', KEYS[2], 'referral_count', 1)
-    redis.call('HSET', KEYS[1], 'referrer', ARGV[1], 'referral_reward_pending', '1', 'referral_signup_notified', '0')
+    redis.call('HSET', KEYS[1], 'referrer', ARGV[1], 'referral_reward_pending', '1')
     redis.call('ZADD', KEYS[3], new_count, ARGV[1])
     return new_count
     """
@@ -1078,8 +1078,15 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
     if not new_count:
         return None
 
-    # Уведомление отправляется после ввода ника, чтобы здесь можно было
-    # показать именно ник нового пользователя, а не ник пригласившего.
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"🎉 По твоей ссылке кто-то зарегистрировался!\n"
+            f"🎁 Награда будет начислена, когда новичок достигнет 3 уровня.\n"
+            f"👥 Всего рефералов: {new_count}"
+        )
+    except Exception:
+        pass
     return int(new_count), referrer_name
 
 
@@ -2548,19 +2555,37 @@ async def cmd_start(message: Message, state: FSMContext):
     name = await get_user_name(user_id)
 
     if not name:
-        # ВАЖНО: до ввода ника реферал не засчитываем.
-        # Сохраняем только ID пригласившего в FSM, а регистрация реферала
-        # произойдёт атомарно после успешного ввода ника.
+        # Засчитываем реферала сразу при первом /start по реферальной ссылке.
+        # Имя нового игрока для этого не требуется: process_referral атомарно
+        # привязывает реферала и увеличивает счётчик пригласившего.
+        ref_bonus_text = ""
         if referrer_id and referrer_id != user_id:
-            await state.update_data(referrer_id=referrer_id)
+            result = await process_referral(user_id, referrer_id)
+            if result:
+                ref_bonus_text = (
+                    f"\n🎁 тебя пригласил <b>{result[1]}</b>! "
+                    f"бонус за приглашение будет начислен после 3 уровня: "
+                    f"+<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
+                )
 
         await message.answer(
             "👋 <b>дарова!</b> напиши свой эксклюзивный ник\n"
-            "можно использовать русс/англ буквы и цифры",
+            "можно использовать русс/англ буквы и цифры\n"
+            f"{ref_bonus_text}",
             parse_mode="HTML",
         )
         await state.set_state(NameForm.waiting_for_name)
         return
+
+    # Возвращающийся пользователь — обработать реферал сразу
+    if referrer_id and referrer_id != user_id:
+        result = await process_referral(user_id, referrer_id)
+        if result:
+            await message.answer(
+                f"🎁 тебя пригласил <b>{result[1]}</b>! "
+                f"награда будет начислена после 3 уровня: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
+                parse_mode="HTML",
+            )
 
     # Если пользователь уже достиг 3 уровня (например, бот был перезапущен
     # или раньше выплата не сработала), проверяем накопившуюся выплату здесь.
@@ -2638,26 +2663,6 @@ async def process_name(message: Message, state: FSMContext):
             await message.answer(f"⚠️ ник «{name}» уже у игрока {existing_id}. Перезапишу.")
 
     await save_user_name(user_id, name)
-
-    # Только после успешного ввода ника регистрируем реферала атомарно.
-    # До этого момента счётчик пригласившего не изменяется.
-    data = await state.get_data()
-    pending_referrer_id = data.get("referrer_id")
-    if pending_referrer_id and int(pending_referrer_id) != user_id:
-        result = await process_referral(user_id, int(pending_referrer_id))
-        if result:
-            referral_count = result[0]
-            try:
-                await bot.send_message(
-                    int(pending_referrer_id),
-                    f"🎉 По твоей ссылке зарегистрировался <b>{name}</b>!\n"
-                    f"🎁 Награда будет начислена, когда он достигнет 3 уровня.\n"
-                    f"👥 Всего рефералов: <b>{referral_count}</b>",
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-
     await state.clear()
 
     # Реферал уже засчитан на первом /start. Здесь ничего повторно не начисляем.
