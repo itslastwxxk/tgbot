@@ -1042,33 +1042,57 @@ async def add_to_referral_earnings(user_id: int, amount: int):
     await redis_client.hincrby(f"user:{user_id}", "referral_earnings", amount)
 
 async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str] | None:
-    """Регистрирует реферала; выплаты начисляются после достижения 5 уровня."""
-    if new_user_id == referrer_id or await get_referrer(new_user_id):
+    """Атомарно регистрирует реферала; выплаты начисляются после достижения 3 уровня."""
+    if new_user_id == referrer_id:
         return None
+
     referrer_name = await get_user_name(referrer_id)
     if not referrer_name:
         return None
 
-    await set_referrer(new_user_id, referrer_id)
-    new_count = await increment_referral_count(referrer_id)
-    await redis_client.hset(
-        f"user:{new_user_id}", mapping={"referral_reward_pending": "1"}
+    new_user_key = f"user:{new_user_id}"
+    referrer_key = f"user:{referrer_id}"
+
+    # Одна Lua-операция: проверка + привязка + счётчик + pending-флаг.
+    # Это исключает гонку при двух одновременных /start или повторных callback.
+    script = """
+    local new_referrer = redis.call('HGET', KEYS[1], 'referrer')
+    if new_referrer and new_referrer ~= '' then
+        return 0
+    end
+
+    local new_count = redis.call('HINCRBY', KEYS[2], 'referral_count', 1)
+    redis.call('HSET', KEYS[1], 'referrer', ARGV[1], 'referral_reward_pending', '1')
+    redis.call('ZADD', KEYS[3], new_count, ARGV[1])
+    return new_count
+    """
+
+    new_count = await redis_client.eval(
+        script,
+        3,
+        new_user_key,
+        referrer_key,
+        "referrals_top",
+        str(referrer_id),
     )
+    if not new_count:
+        return None
+
     try:
         await bot.send_message(
             referrer_id,
             f"🎉 По твоей ссылке зарегистрировался {referrer_name}!\n"
-            f"🎁 Награда будет начислена, когда новичок достигнет 5 уровня.\n"
+            f"🎁 Награда будет начислена, когда новичок достигнет 3 уровня.\n"
             f"👥 Всего рефералов: {new_count}"
         )
     except Exception:
         pass
-    return new_count, referrer_name
+    return int(new_count), referrer_name
 
 
 async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
-    """Выдаёт выплаты за реферала ровно один раз при достижении 5 уровня."""
-    if level < 5:
+    """Выдаёт выплаты за реферала ровно один раз при достижении 3 уровня."""
+    if level < 3:
         return False
     user_key = f"user:{new_user_id}"
     pending = await redis_client.hget(user_key, "referral_reward_pending")
@@ -1088,13 +1112,13 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
     try:
         await bot.send_message(
             referrer_id,
-            f"🎉 Твой реферал достиг 5 уровня!\n"
+            f"🎉 Твой реферал достиг 3 уровня!\n"
             f"💰 Награда: +<b>{REFERRAL_REWARD:,} ₽</b>",
             parse_mode="HTML",
         )
         await bot.send_message(
             new_user_id,
-            f"🎁 Ты достиг 5 уровня! Бонус за приглашение: "
+            f"🎁 Ты достиг 3 уровня! Бонус за приглашение: "
             f"<b>+{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
             parse_mode="HTML",
         )
@@ -1353,8 +1377,8 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
     new_stats = {"xp": new_xp, "level": new_level}
     _stats_cache[user_id] = new_stats
 
-    # Выплаты за реферала — только при переходе на 5 уровень или выше.
-    if old_level < 5 <= new_level:
+    # Выплаты за реферала — только при переходе на 3 уровень или выше.
+    if old_level < 3 <= new_level:
         await pay_referral_reward_if_eligible(user_id, new_level)
 
     return new_xp, new_level, leveled_up
@@ -2519,15 +2543,23 @@ async def cmd_start(message: Message, state: FSMContext):
     name = await get_user_name(user_id)
 
     if not name:
-        # Новый пользователь — сохраняем pending referrer в state
+        # Засчитываем реферала сразу при первом /start по реферальной ссылке.
+        # Имя нового игрока для этого не требуется: process_referral атомарно
+        # привязывает реферала и увеличивает счётчик пригласившего.
+        ref_bonus_text = ""
         if referrer_id and referrer_id != user_id:
-            referrer_name = await get_user_name(referrer_id)
-            if referrer_name:
-                await state.update_data(pending_referrer=referrer_id)
+            result = await process_referral(user_id, referrer_id)
+            if result:
+                ref_bonus_text = (
+                    f"\n🎁 тебя пригласил <b>{result[1]}</b>! "
+                    f"бонус за приглашение будет начислен после 3 уровня: "
+                    f"+<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
+                )
 
         await message.answer(
             "👋 <b>дарова!</b> напиши свой эксклюзивный ник\n"
-            "можно использовать русс/англ буквы и цифры\n",
+            "можно использовать русс/англ буквы и цифры\n"
+            f"{ref_bonus_text}",
             parse_mode="HTML",
         )
         await state.set_state(NameForm.waiting_for_name)
@@ -2539,7 +2571,7 @@ async def cmd_start(message: Message, state: FSMContext):
         if result:
             await message.answer(
                 f"🎁 тебя пригласил <b>{result[1]}</b>! "
-                f"бонус за регистрацию: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
+                f"награда будет начислена после 3 уровня: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
                 parse_mode="HTML",
             )
 
@@ -2612,22 +2644,11 @@ async def process_name(message: Message, state: FSMContext):
         if existing_id and existing_id != user_id:
             await message.answer(f"⚠️ ник «{name}» уже у игрока {existing_id}. Перезапишу.")
 
-    # Получаем pending_referrer ДО очистки state
-    data = await state.get_data()
-    pending_referrer = data.get("pending_referrer")
-
     await save_user_name(user_id, name)
     await state.clear()
 
-    # Обрабатываем реферал
+    # Реферал уже засчитан на первом /start. Здесь ничего повторно не начисляем.
     ref_bonus_text = ""
-    if pending_referrer:
-        result = await process_referral(user_id, pending_referrer)
-        if result:
-            ref_bonus_text = (
-                f"\n🎁 тебя пригласил <b>{result[1]}</b>! "
-                f"бонус: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
-            )
 
     # Новый игрок проходит короткое обучение; флаг сохраняется в Redis.
     tutorial_done = await redis_client.hget(f"user:{user_id}", "tutorial_done")
@@ -4287,8 +4308,8 @@ async def handle_ref(message: Message):
         f"Твоя ссылка:\n`{ref_link}`\n\n"
         f"👥 Приглашено: {referral_count} чел.\n"
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
-        f"За каждого приглашённого — {REFERRAL_REWARD:,} ₽\n"
-        f"Новичку за регистрацию по ссылке — {REFERRAL_NEWBIE_BONUS:,} ₽"
+        f"💸 За каждого реферала, достигшего 3 уровня — {REFERRAL_REWARD:,} ₽\n"
+        f"🎁 Новичку — {REFERRAL_NEWBIE_BONUS:,} ₽ после достижения 3 уровня"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
@@ -4351,8 +4372,8 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
         f"Твоя ссылка:\n`{ref_link}`\n\n"
         f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
         f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
-        f"За каждого приглашённого — <b>{REFERRAL_REWARD:,} ₽</b>\n"
-        f"Новичку за регистрацию по ссылке — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>"
+        f"💸 За каждого реферала, достигшего 3 уровня — <b>{REFERRAL_REWARD:,} ₽</b>\n"
+        f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> после достижения 3 уровня"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
