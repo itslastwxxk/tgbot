@@ -1102,7 +1102,18 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
     if not referrer_id:
         return False
 
-    claimed = await redis_client.hsetnx(user_key, "referral_reward_pending", "0")
+    # Атомарно забираем право на выплату: меняем 1 -> 0 только если
+    # выплата ещё не была забрана. HSETNX здесь использовать нельзя —
+    # поле уже существует после регистрации реферала.
+    claim_script = """
+    local pending = redis.call('HGET', KEYS[1], 'referral_reward_pending')
+    if pending ~= '1' then
+        return 0
+    end
+    redis.call('HSET', KEYS[1], 'referral_reward_pending', '0')
+    return 1
+    """
+    claimed = await redis_client.eval(claim_script, 1, user_key)
     if not claimed:
         return False
 
@@ -1377,8 +1388,9 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
     new_stats = {"xp": new_xp, "level": new_level}
     _stats_cache[user_id] = new_stats
 
-    # Выплаты за реферала — только при переходе на 3 уровень или выше.
-    if old_level < 3 <= new_level:
+    # Выплата срабатывает на 3 уровне. Проверяем её каждый раз при начислении XP
+    # на уровне 3+, чтобы пользователь не потерял награду из-за сбоя/перезапуска.
+    if new_level >= 3:
         await pay_referral_reward_if_eligible(user_id, new_level)
 
     return new_xp, new_level, leveled_up
@@ -2574,6 +2586,12 @@ async def cmd_start(message: Message, state: FSMContext):
                 f"награда будет начислена после 3 уровня: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
                 parse_mode="HTML",
             )
+
+    # Если пользователь уже достиг 3 уровня (например, бот был перезапущен
+    # или раньше выплата не сработала), проверяем накопившуюся выплату здесь.
+    current_level = (await get_user_stats(user_id))["level"]
+    if current_level >= 3:
+        await pay_referral_reward_if_eligible(user_id, current_level)
 
     await send_main_menu(message, user_id)
 
@@ -4305,7 +4323,7 @@ async def handle_ref(message: Message):
 
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
-        f"Твоя ссылка:\n{ref_link}\n\n"
+        f"Твоя ссылка:\n`{ref_link}`\n\n"
         f"👥 Приглашено: {referral_count} чел.\n"
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 За каждого реферала, достигшего 3 уровня — {REFERRAL_REWARD:,} ₽\n"
@@ -4369,7 +4387,7 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
-        f"Твоя ссылка:\n{ref_link}\n\n"
+        f"Твоя ссылка:\n`{ref_link}`\n\n"
         f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
         f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
         f"💸 За каждого реферала, достигшего 3 уровня — <b>{REFERRAL_REWARD:,} ₽</b>\n"
