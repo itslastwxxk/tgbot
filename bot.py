@@ -3396,6 +3396,7 @@ async def donate_carousel_view(idx: int, user_id: int, tokens: int):
         f"{item['desc']}{extra_line}\n\n"
         f"💠 Цена: <b>{item['price']} ТК</b>\n"
         f"Твой баланс: <b>{tokens} ТК</b>"
+        "\n\nТокены покупаются за реальные деньги 1 ТК = 1 рубль.\n Чтобы купить пиши в поддержку @kommersant_support"
     )
 
     nav = []
