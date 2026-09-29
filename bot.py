@@ -142,6 +142,7 @@ class AdminForm(StatesGroup):
     waiting_for_amount = State()
     waiting_for_level = State()
     waiting_for_tk_amount = State()
+    waiting_for_broadcast = State()
 
 class DuelForm(StatesGroup):
     waiting_for_target = State()
@@ -291,7 +292,7 @@ REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистр
 # ============================================================
 MINE_COOLDOWN = 2
 MINE_STAMINA_MAX = 10             # сколько раз подряд можно фармить шахту
-MINE_STAMINA_REGEN_SECONDS = 600  # 10 минут на восстановление выносливости
+MINE_STAMINA_REGEN_SECONDS = 60  # 1 единица выносливости в минуту
 MATH_REWARD = 500
 MATH_COOLDOWN = 10
 RAW_PRICE = 1
@@ -1170,42 +1171,67 @@ async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple
 
 # --- Выносливость шахты ---
 async def get_mine_stamina(user_id: int) -> tuple[int, int]:
-    """Возвращает (текущая выносливость, секунд до полного восстановления — 0, если восстанавливать нечего)."""
+    """Возвращает текущую выносливость и секунды до следующей единицы."""
     now = time.time()
-    data = await redis_client.hgetall(f"user:{user_id}")
+    key = f"user:{user_id}"
+    data = await redis_client.hgetall(key)
     stamina_raw = data.get("mine_stamina")
     stamina = int(stamina_raw) if stamina_raw not in (None, "") else MINE_STAMINA_MAX
+    stamina = max(0, min(MINE_STAMINA_MAX, stamina))
 
-    empty_at_raw = data.get("mine_stamina_empty_at")
-    if stamina <= 0 and empty_at_raw:
-        try:
-            empty_at = float(empty_at_raw)
-        except (TypeError, ValueError):
-            empty_at = now
-        elapsed = now - empty_at
-        if elapsed >= MINE_STAMINA_REGEN_SECONDS:
-            stamina = MINE_STAMINA_MAX
-            await redis_client.hset(f"user:{user_id}", mapping={
-                "mine_stamina": str(stamina),
+    if stamina >= MINE_STAMINA_MAX:
+        if data.get("mine_stamina_regen_at") or data.get("mine_stamina_empty_at"):
+            await redis_client.hset(key, mapping={
+                "mine_stamina": str(MINE_STAMINA_MAX),
+                "mine_stamina_regen_at": "",
                 "mine_stamina_empty_at": "",
             })
-            return stamina, 0
-        return 0, int(MINE_STAMINA_REGEN_SECONDS - elapsed)
+        return MINE_STAMINA_MAX, 0
 
-    return stamina, 0
+    # Для старых сохранений используем время полного истощения как старт регена.
+    regen_raw = data.get("mine_stamina_regen_at") or data.get("mine_stamina_empty_at")
+    try:
+        regen_at = float(regen_raw) if regen_raw else now
+    except (TypeError, ValueError):
+        regen_at = now
+
+    elapsed = max(0, int(now - regen_at))
+    recovered = min(MINE_STAMINA_MAX - stamina, elapsed // MINE_STAMINA_REGEN_SECONDS)
+    if recovered:
+        stamina += recovered
+        regen_at += recovered * MINE_STAMINA_REGEN_SECONDS
+        if stamina >= MINE_STAMINA_MAX:
+            await redis_client.hset(key, mapping={
+                "mine_stamina": str(MINE_STAMINA_MAX),
+                "mine_stamina_regen_at": "",
+                "mine_stamina_empty_at": "",
+            })
+            return MINE_STAMINA_MAX, 0
+        await redis_client.hset(key, mapping={
+            "mine_stamina": str(stamina),
+            "mine_stamina_regen_at": str(regen_at),
+            "mine_stamina_empty_at": "",
+        })
+
+    wait = max(0, MINE_STAMINA_REGEN_SECONDS - int(now - regen_at))
+    return stamina, wait
 
 async def consume_mine_stamina(user_id: int) -> tuple[bool, int]:
-    """Списывает 1 единицу выносливости. Возвращает (успех, остаток выносливости либо секунды до восстановления)."""
+    """Списывает единицу выносливости, не сбрасывая уже накопленный реген."""
     stamina, wait = await get_mine_stamina(user_id)
     if stamina <= 0:
         return False, wait
 
-    stamina -= 1
-    updates = {"mine_stamina": str(stamina)}
-    if stamina == 0:
-        updates["mine_stamina_empty_at"] = str(time.time())
-    await redis_client.hset(f"user:{user_id}", mapping=updates)
-    return True, stamina
+    now = time.time()
+    key = f"user:{user_id}"
+    updates = {"mine_stamina": str(stamina - 1)}
+    data = await redis_client.hgetall(key)
+    regen_at = data.get("mine_stamina_regen_at") or data.get("mine_stamina_empty_at")
+    if stamina >= MINE_STAMINA_MAX or not regen_at:
+        updates["mine_stamina_regen_at"] = str(now)
+    updates["mine_stamina_empty_at"] = ""
+    await redis_client.hset(key, mapping=updates)
+    return True, stamina - 1
 
 # --- Кирка ---
 async def get_pickaxe_level(user_id: int) -> int:
@@ -1504,6 +1530,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
 def get_admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Найти игрока", callback_data="admin_find")],
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
         [
         InlineKeyboardButton(text="📊 Топ по балансу", callback_data="admin_top"),
         InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="admin_ref_top")
@@ -1582,6 +1609,75 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
         get_admin_keyboard(),
     )
     await state.update_data(admin_msg_id=callback.message.message_id)
+
+
+@router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(AdminForm.waiting_for_broadcast)
+    await state.update_data(admin_msg_id=callback.message.message_id)
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        "📢 <b>Рассылка всем пользователям</b>\n\n"
+        "Отправь одним сообщением текст, который нужно разослать. "
+        "Для отмены напиши /cancel.",
+    )
+
+
+@router.message(Command("cancel"), AdminForm.waiting_for_broadcast)
+async def admin_broadcast_cancel(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer("Рассылка отменена.")
+    sent = await message.answer("🛡 <b>Админ-панель</b>\n\nВыбирай действие:",
+                                parse_mode="HTML", reply_markup=get_admin_keyboard())
+    await state.update_data(admin_msg_id=sent.message_id)
+
+
+@router.message(AdminForm.waiting_for_broadcast)
+async def admin_broadcast_send(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    if not message.text or not message.text.strip():
+        await message.answer("Отправь текстовое сообщение для рассылки или /cancel для отмены.")
+        return
+
+    broadcast_text = message.text.strip()
+    sent_count = 0
+    failed_count = 0
+    user_ids = set()
+    try:
+        async for key in redis_client.scan_iter(match="user:*"):
+            suffix = key.rsplit(":", 1)[-1]
+            if suffix.isdigit():
+                user_ids.add(int(suffix))
+    except Exception as e:
+        logger.exception("Не удалось получить список пользователей для рассылки: %s", e)
+        await message.answer("❌ Не удалось получить список пользователей из Redis.")
+        return
+
+    await message.answer(f"📤 Начинаю рассылку для {len(user_ids)} пользователей…")
+    for uid in user_ids:
+        try:
+            await message.bot.send_message(uid, broadcast_text)
+            sent_count += 1
+            await asyncio.sleep(0.04)
+        except Exception as e:
+            failed_count += 1
+            logger.warning("Ошибка рассылки пользователю %s: %s", uid, e)
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"Успешно отправлено: <b>{sent_count}</b>\n"
+        f"Не доставлено: <b>{failed_count}</b>",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "admin_find")
