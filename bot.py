@@ -156,34 +156,34 @@ class TransferForm(StatesGroup):
 # КОНСТАНТЫ HELP
 # ============================================================
 HELP_TEXT_MAIN = (
-    "бот коммерсант - тут можно зарабатывать деньги, торговать, делать бизнес(и многое другое)\n\n"
-    "жми кнопки ниже, расскажу про каждый раздел."
-    "\n\n❗ если увидел какие-то ошибки, недочеты или есть идеи по улучшению бота — пиши в ПОДДЕРЖКУ @kommersant_support"
+    "<b>Коммерсант</b> — место, где можно зарабатывать, торговать и развивать свой бизнес.\n\n"
+    "Выбирай нужный раздел — расскажу, как всё работает."
+    "\n\n❗ Нашёл ошибку или есть идея по улучшению? Напиши в поддержку: @kommersant_support"
 )
 
 HELP_TEXT_TRADING = (
-    "трейдинг — это торговля на рынке криптовалюты с разной степенью риска.\n\n"
-    "как это работает:\n"
-    "1. выбираешь риск: низкий(высокий шанс победы, но выигрыш небольшой), средний(шанс 50 на 50, выигрыш х2), высокий(маленький шанс, но выигрыш х5 от ставки!!).\n"
-    "2. вводи сумму ставки\n"
-    "3. бот проверяет рынок и показывает результат.\n\n"
+    "<b>Трейдинг</b> — торговля с разным уровнем риска.\n\n"
+    "Как это работает:\n"
+    "1. Выбираешь уровень риска: низкий — высокий шанс и небольшой выигрыш; средний — шанс около 50% и выплата x2; высокий — небольшой шанс и выплата x5.\n"
+    "2. Вводишь сумму ставки.\n"
+    "3. Бот проводит сделку и показывает результат.\n\n"
 )
 
 HELP_TEXT_MINE = (
-    "шахта — самый простой способ заработать первые деньги.\n"
-    "можно прокачивать кирки, чем лучше кирка тем лучше руды ты можешь добывать"
+    "<b>Шахта</b> — простой способ начать зарабатывать.\n"
+    "Кирку можно улучшать: чем выше её уровень, тем больше награда за добычу."
 )
 
 HELP_TEXT_MATH = (
-    "математика — решил пример = получил деньги.\n\n"
+    "<b>Математика</b> — решаешь пример и получаешь награду.\n\n"
 )
 
 HELP_TEXT_BUSINESS = (
-    "бизнесы — это пассивный доход: ты покупаешь бизнес, и он приносит деньги каждую минуту.\n"
-    "бизнесу нужно сырьё. Если оно заканчивается, бизнес перестаёт работать и доход останавливается.\nуровень бизнеса можно повышать, чем выше уровень тем выше доход."
+    "<b>Бизнесы</b> — источник пассивного дохода. Купленный бизнес приносит деньги каждую минуту.\n"
+    "Бизнесу нужно сырьё. Когда оно заканчивается, производство останавливается. Уровень бизнеса можно повышать — это увеличивает доход.\nЕсли бизнес простаивает больше 5 дней его забирает государство"
 )
 
-HELP_TEXT_TOP = ("топ — лучшие пользователи в боте.\n\nигроки которые занимают топ 1-5 каждые 3 дня получают награды")
+HELP_TEXT_TOP = ("<b>Топ</b> — лучшие пользователи в боте.\n\nИгроки с 1-го по 5-е место получают награды каждые 3 дня.")
 
 GREETINGS = [
     "вечер в хату, {name}.",
@@ -1359,14 +1359,14 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
 
 async def notify_level_up(user_id: int, new_level: int):
     """Отправляет сообщение о новом уровне."""
-    text = f"🎉 <b>LEVEL UP!</b> Ты достиг {new_level} уровня!"
+    text = f"🎉 <b>LEVEL UP!</b> Ты достиг {new_level} уровня."
 
     unlocked = [name for name, lvl in UNLOCK_LEVELS.items() if lvl == new_level]
     if unlocked:
-        text += "\n\n<b>теперь доступно:</b>\n" + "\n".join(f"• {name}" for name in unlocked)
+        text += "\n\n<b>Теперь доступно:</b>\n" + "\n".join(f"• {name}" for name in unlocked)
 
     try:
-        await bot.send_message(user_id, text, parse_mode="HTML")
+        await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=await get_main_keyboard(user_id))
     except Exception:
         pass
 
@@ -1513,15 +1513,15 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     try:
         photo = FSInputFile("images/glmenu.png")
         if isinstance(target, CallbackQuery):
-            await target.message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_main_keyboard())
+            await target.message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=await get_main_keyboard(user_id))
         else:
-            await target.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_main_keyboard())
+            await target.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=await get_main_keyboard(user_id))
     except FileNotFoundError:
         logger.warning("Файл images/glmenu.png не найден.")
         if isinstance(target, CallbackQuery):
-            await target.message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+            await target.message.answer(text, parse_mode="HTML", reply_markup=await get_main_keyboard(user_id))
         else:
-            await target.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+            await target.answer(text, parse_mode="HTML", reply_markup=await get_main_keyboard(user_id))
 
 # ============================================================
 # АДМИН-ПАНЕЛЬ
@@ -2149,39 +2149,55 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
     await state.update_data(admin_msg_id=callback.message.message_id)
 
 # --- Клавиатуры ---
-def get_main_keyboard():
-    keyboard = [
-        [KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")],
-        [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="📦 Кейсы"), KeyboardButton(text="🥊 Дуэли")],
-        [KeyboardButton(text="🎁 Бонус"), KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")],
-        [KeyboardButton(text="📋 Профиль"), KeyboardButton(text="📋 Задания")]
-    ]
+async def get_main_keyboard(user_id: int):
+    level = (await get_user_stats(user_id))["level"]
+    keyboard = [[KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")]]
+
+    row = []
+    if level >= CASINO_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="🎰 Казино"))
+    if level >= CASE_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="📦 Кейсы"))
+    if level >= DUEL_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="🥊 Дуэли"))
+    if row:
+        keyboard.append(row)
+
+    row = []
+    if level >= BONUS_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="🎁 Бонус"))
+    row.extend([KeyboardButton(text="🔗 Реф"), KeyboardButton(text="🏆 Топ")])
+    keyboard.append(row)
+
+    row = []
+    if level >= PROFILE_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="📋 Профиль"))
+    row.append(KeyboardButton(text="📋 Задания"))
+    keyboard.append(row)
+
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def get_help_menu_keyboard():
-    keyboard = [
-        [
-            InlineKeyboardButton(text="📈 Трейдинг", callback_data="help_trading"),
-            InlineKeyboardButton(text="⛏ Шахта", callback_data="help_mine"),
-        ],
-        [
-            InlineKeyboardButton(text="🧮 Математика", callback_data="help_math"),
-            InlineKeyboardButton(text="🏪 Бизнесы", callback_data="help_business"),
-        ],
-        [InlineKeyboardButton(text="🏆 Топ", callback_data="help_top")],
-        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")],
-    ]
+async def get_help_menu_keyboard(user_id: int):
+    level = (await get_user_stats(user_id))["level"]
+    keyboard = []
+    if level >= TRADING_UNLOCK_LEVEL:
+        keyboard.append([InlineKeyboardButton(text="📈 Трейдинг", callback_data="help_trading")])
+    keyboard.append([InlineKeyboardButton(text="⛏ Шахта", callback_data="help_mine")])
+    if level >= MATH_UNLOCK_LEVEL:
+        keyboard.append([InlineKeyboardButton(text="🧮 Математика", callback_data="help_math")])
+    if level >= BUSINESS_UNLOCK_LEVEL:
+        keyboard.append([InlineKeyboardButton(text="🏪 Бизнесы", callback_data="help_business")])
+    keyboard.append([InlineKeyboardButton(text="🏆 Топ", callback_data="help_top")])
+    keyboard.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_casino_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🎡 Рулетка"), KeyboardButton(text="💣 Мины")],
-            [KeyboardButton(text="🔙 В меню")]
-        ],
-        resize_keyboard=True
-    )
+
+async def get_casino_keyboard(user_id: int):
+    level = (await get_user_stats(user_id))["level"]
+    keyboard = [[KeyboardButton(text="🎡 Рулетка"), KeyboardButton(text="💣 Мины")],
+                [KeyboardButton(text="🔙 В меню")]]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def get_roulette_amount_keyboard(amount: int):
@@ -2204,8 +2220,8 @@ def get_roulette_bet_keyboard(amount: int = 0):
             InlineKeyboardButton(text="⚫ чёрное", callback_data="roulette_bet:black"),
         ],
         [
-            InlineKeyboardButton(text="нечёт", callback_data="roulette_bet:odd"),
-            InlineKeyboardButton(text="чёт", callback_data="roulette_bet:even"),
+            InlineKeyboardButton(text="нечет", callback_data="roulette_bet:odd"),
+            InlineKeyboardButton(text="чет", callback_data="roulette_bet:even"),
         ],
         [
             InlineKeyboardButton(text="1–18", callback_data="roulette_bet:low"),
@@ -2220,14 +2236,21 @@ def get_roulette_bet_keyboard(amount: int = 0):
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def get_work_keyboard():
-    keyboard = [
-        [KeyboardButton(text="🔗 Реф"), KeyboardButton(text="⛏ Шахта")],
-        [KeyboardButton(text="📈 Трейдинг"), KeyboardButton(text="🧮 Математика")],
-        [KeyboardButton(text="🏪 Бизнесы")],
-        [KeyboardButton(text="🔙 В главное меню")]
-    ]
+async def get_work_keyboard(user_id: int):
+    level = (await get_user_stats(user_id))["level"]
+    keyboard = [[KeyboardButton(text="🔗 Реф"), KeyboardButton(text="⛏ Шахта")]]
+    row = []
+    if level >= TRADING_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="📈 Трейдинг"))
+    if level >= MATH_UNLOCK_LEVEL:
+        row.append(KeyboardButton(text="🧮 Математика"))
+    if row:
+        keyboard.append(row)
+    if level >= BUSINESS_UNLOCK_LEVEL:
+        keyboard.append([KeyboardButton(text="🏪 Бизнесы")])
+    keyboard.append([KeyboardButton(text="🔙 В главное меню")])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
 
 def get_mine_keyboard():
     keyboard = [
@@ -2396,7 +2419,7 @@ async def handle_trade_history(callback: CallbackQuery, state: FSMContext):
 async def handle_trade_history_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     balance = await get_balance(callback.from_user.id)
-    text = f"💰 твой баланс: <b>{balance:,} ₽</b>\nвыбери уровень риска:"
+    text = f"💰 Твой баланс: <b>{balance:,} ₽</b>\nвыбери уровень риска:"
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_trading_mode_keyboard())
     except TelegramBadRequest:
@@ -2524,7 +2547,7 @@ async def cmd_start(message: Message, state: FSMContext):
 async def cmd_help(message: Message):
     await message.answer(
         HELP_TEXT_MAIN,
-        reply_markup=get_help_menu_keyboard()
+        reply_markup=await get_help_menu_keyboard(message.from_user.id)
     )
 
 @router.message(Command("ping"))
@@ -2640,7 +2663,7 @@ async def show_profile(message: Message, state: FSMContext):
     bar = "█" * filled + "░" * (bar_len - filled)
 
     profile_text = (
-        f"📋 <b>твой профиль</b>\n\n"
+        f"📋 <b>профиль</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
@@ -2863,13 +2886,13 @@ async def transfer_process(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
-    text = f"<b>выбирай, где хочешь работать:</b>"
+    text = "💼 <b>Работа</b>\n\nВыбирай где хочешь поднять деньги"
     try:
         photo = FSInputFile("images/work.png")
-        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=get_work_keyboard())
+        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=await get_work_keyboard(message.from_user.id))
     except FileNotFoundError:
         logger.warning("Файл images/work.png не найден.")
-        await message.answer(text, reply_markup=get_work_keyboard())
+        await message.answer(text, reply_markup=await get_work_keyboard(message.from_user.id))
 
 def get_shop_keyboard():
     return ReplyKeyboardMarkup(
@@ -4043,23 +4066,25 @@ async def show_mine_menu(message: Message, state: FSMContext):
 async def handle_help_top(callback: CallbackQuery):
     text = HELP_TEXT_TOP
     try:
-        await callback.message.edit_text(text, reply_markup=get_help_menu_keyboard())
+        await callback.message.edit_text(text, reply_markup=await get_help_menu_keyboard(callback.from_user.id))
     except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=get_help_menu_keyboard())
+        await callback.message.answer(text, reply_markup=await get_help_menu_keyboard(callback.from_user.id))
     await callback.answer()
 
 
 @router.callback_query(F.data == "help_trading")
 async def handle_help_trading(callback: CallbackQuery):
+    if not await check_level_access(callback.message, callback.from_user.id, TRADING_UNLOCK_LEVEL):
+        return
     try:
         await callback.message.edit_text(
             HELP_TEXT_TRADING,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
     except TelegramBadRequest:
         await callback.message.answer(
             HELP_TEXT_TRADING,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
 
 @router.callback_query(F.data == "help_mine")
@@ -4067,38 +4092,42 @@ async def handle_help_mine(callback: CallbackQuery):
     try:
         await callback.message.edit_text(
             HELP_TEXT_MINE,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
     except TelegramBadRequest:
         await callback.message.answer(
             HELP_TEXT_MINE,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
 
 @router.callback_query(F.data == "help_math")
 async def handle_help_math(callback: CallbackQuery):
+    if not await check_level_access(callback.message, callback.from_user.id, MATH_UNLOCK_LEVEL):
+        return
     try:
         await callback.message.edit_text(
             HELP_TEXT_MATH,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
     except TelegramBadRequest:
         await callback.message.answer(
             HELP_TEXT_MATH,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
 
 @router.callback_query(F.data == "help_business")
 async def handle_help_business(callback: CallbackQuery):
+    if not await check_level_access(callback.message, callback.from_user.id, BUSINESS_UNLOCK_LEVEL):
+        return
     try:
         await callback.message.edit_text(
             HELP_TEXT_BUSINESS,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
     except TelegramBadRequest:
         await callback.message.answer(
             HELP_TEXT_BUSINESS,
-            reply_markup=get_help_menu_keyboard()
+            reply_markup=await get_help_menu_keyboard(callback.from_user.id)
         )
 
 @router.callback_query(F.data == "main_menu")
@@ -4146,7 +4175,7 @@ async def handle_mine_exit(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "Выбирай, чем займешься:",
-        reply_markup=get_work_keyboard()
+        reply_markup=await get_work_keyboard(message.from_user.id)
     )
 
 # --- Прокачка кирки: кнопка reply ---
@@ -4346,15 +4375,15 @@ async def handle_trading(message: Message, state: FSMContext):
             f"минимальный порог входа: <b>{TRADING_MIN_BALANCE:,} ₽</b>\n"
             "найди деньги и подключайся к трейдингу",
             parse_mode="HTML",
-            reply_markup=get_work_keyboard()
+            reply_markup=await get_work_keyboard(message.from_user.id)
         )
         return
 
     await message.answer("💻", reply_markup=ReplyKeyboardRemove())
     await message.answer(
-        "курсы не продам\n"
-        f"💰 твой баланс: <b>{balance:,} ₽</b>\n"
-        "выбери уровень риска:",
+        "ps: курсы не продам\n"
+        f"💰 Твой баланс: <b>{balance:,} ₽</b>\n"
+        "Выбери уровень риска:",
         parse_mode="HTML",
         reply_markup=get_trading_mode_keyboard()
     )
@@ -4512,7 +4541,7 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             f"❌ не хватает денег для трейдинга (нужно <b>{TRADING_MIN_BALANCE:,} ₽</b>).",
             parse_mode="HTML",
-            reply_markup=get_work_keyboard()
+            reply_markup=await get_work_keyboard(callback.from_user.id)
         )
         await state.clear()
         return
@@ -4523,8 +4552,8 @@ async def process_trade_continue(callback: CallbackQuery, state: FSMContext):
         pass
 
     await callback.message.answer(
-        f"💰 твой баланс: <b>{balance:,} ₽</b>\n"
-        "выбери уровень риска:",
+        f"💰 Твой баланс: <b>{balance:,} ₽</b>\n"
+        "Выбери уровень риска:",
         parse_mode="HTML",
         reply_markup=get_trading_mode_keyboard()
     )
@@ -4538,7 +4567,7 @@ async def process_trade_exit(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("ты закончил трейдинг, надеюсь ты в плюсе", reply_markup=get_work_keyboard())
+    await callback.message.answer("ты закончил трейдинг, надеюсь ты в плюсе", reply_markup=await get_work_keyboard(callback.from_user.id))
 
 @router.callback_query(F.data == "trade_cancel")
 async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
@@ -4548,7 +4577,7 @@ async def process_trade_cancel(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("❌ ставка отменена.", reply_markup=get_work_keyboard())
+    await callback.message.answer("❌ ставка отменена.", reply_markup=await get_work_keyboard(callback.from_user.id))
 
 # ============================================================
 # МАТЕМАТИКА
@@ -4658,7 +4687,7 @@ async def process_math_exit(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest:
         pass
     await state.clear()
-    await callback.message.answer("🚪 ты вышел с математики(правильно сделал)", reply_markup=get_work_keyboard())
+    await callback.message.answer("🚪 ты вышел с математики(правильно сделал)", reply_markup=await get_work_keyboard(callback.from_user.id))
 
 # ============================================================
 # БИЗНЕС
@@ -4706,8 +4735,8 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         except TelegramBadRequest:
             pass
         await callback.message.answer(
-            "выбирай, чем займешься:",
-            reply_markup=get_work_keyboard()
+            "Выбирай, чем займёшься:",
+            reply_markup=await get_work_keyboard(callback.from_user.id)
         )
         return
 
@@ -4948,7 +4977,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     biz = await get_biz(user_id)
     if not biz:
         await state.clear()
-        await message.answer("Бизнес не найден.", reply_markup=get_work_keyboard())
+        await message.answer("Бизнес не найден.", reply_markup=await get_work_keyboard(message.from_user.id))
         return
 
     await settle_and_save_biz(user_id, biz)
@@ -5014,8 +5043,8 @@ def roulette_bet_name(bet: str) -> str:
         "0": "🟢 зеро",
         "red": "🔴 красное",
         "black": "⚫ чёрное",
-        "odd": "нечёт",
-        "even": "чёт",
+        "odd": "нечет",
+        "even": "чет",
         "low": "1–18",
         "high": "19–36",
         "dozen1": "1-12",
@@ -5073,20 +5102,26 @@ async def roulette_show_amount(message: Message, state: FSMContext):
 
 @router.message(F.text == "🎰 Казино")
 async def show_casino(message: Message, state: FSMContext):
-    if not await check_level_access(message, message.from_user.id, CASINO_UNLOCK_LEVEL):
+    user_id = message.from_user.id
+    if not await check_level_access(message, user_id, CASINO_UNLOCK_LEVEL):
         return
     await state.clear()
-    text = "🎰 добро пожаловать в казино 'лохотрон'\n\nза какой стол хочешь сесть?"
+    text = "🎰 <b>Казино</b>\n\nВыбирай где хочешь проиграть деньги"
     try:
         photo = FSInputFile("images/casino.png")
-        await message.answer_photo(photo=photo, caption=text, reply_markup=get_casino_keyboard())
+        await message.answer_photo(photo=photo, caption=text, reply_markup=await get_casino_keyboard(user_id))
     except FileNotFoundError:
         logger.warning("Файл images/casino.png не найден.")
-        await message.answer(text, reply_markup=get_casino_keyboard())
+        await message.answer(text, reply_markup=await get_casino_keyboard(user_id))
 
 
 @router.callback_query(F.data == "casino_menu")
 async def casino_menu(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    level = (await get_user_stats(user_id))["level"]
+    if level < CASINO_UNLOCK_LEVEL:
+        await callback.answer(f"🔒 Казино открывается с {CASINO_UNLOCK_LEVEL} уровня.", show_alert=True)
+        return
     await callback.answer()
     await state.clear()
 
@@ -5096,12 +5131,14 @@ async def casino_menu(callback: CallbackQuery, state: FSMContext):
         pass
 
     await callback.message.answer(
-        "🎰 Казино\n\nза какой стол хочешь сесть?",
-        reply_markup=get_casino_keyboard()
+        "🎰 Казино\n\nВыбирай где хочешь проиграть деньги",
+        reply_markup=await get_casino_keyboard(user_id)
     )
 
 @router.message(F.text == "🎡 Рулетка")
 async def casino_roulette(message: Message, state: FSMContext):
+    if not await check_level_access(message, message.from_user.id, CASINO_UNLOCK_LEVEL):
+        return
     await state.clear()
 
     try:
