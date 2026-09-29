@@ -4323,7 +4323,7 @@ async def handle_ref(message: Message):
 
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
-        f"Твоя ссылка:\n`{ref_link}`\n\n"
+        f"Твоя ссылка:\n{ref_link}\n\n"
         f"👥 Приглашено: {referral_count} чел.\n"
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 За каждого реферала, достигшего 3 уровня — {REFERRAL_REWARD:,} ₽\n"
@@ -4387,7 +4387,7 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
-        f"Твоя ссылка:\n`{ref_link}`\n\n"
+        f"Твоя ссылка:\n{ref_link}\n\n"
         f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
         f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
         f"💸 За каждого реферала, достигшего 3 уровня — <b>{REFERRAL_REWARD:,} ₽</b>\n"
