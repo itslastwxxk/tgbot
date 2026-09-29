@@ -3374,7 +3374,6 @@ def _donate_carousel_text(idx: int, user_id: int, tokens: int):
         rows.append([InlineKeyboardButton(text=f"✅ Купить за {item['price']} ТК", callback_data=f"donate_buy:{idx}")])
     else:
         rows.append([InlineKeyboardButton(text="❌ Недоступно", callback_data="donate_noop")])
-    rows.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="donate_close")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -3410,7 +3409,6 @@ async def donate_carousel_view(idx: int, user_id: int, tokens: int):
         rows.append([InlineKeyboardButton(text=f"✅ Купить за {item['price']} ТК", callback_data=f"donate_buy:{idx}")])
     else:
         rows.append([InlineKeyboardButton(text="❌ Недоступно", callback_data="donate_noop")])
-    rows.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="donate_close")])
 
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
