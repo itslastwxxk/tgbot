@@ -5111,10 +5111,10 @@ async def show_casino(message: Message, state: FSMContext):
     text = "🎰 <b>Казино</b>\n\nВыбирай где хочешь проиграть деньги"
     try:
         photo = FSInputFile("images/casino.png")
-        await message.answer_photo(photo=photo, caption=text, reply_markup=await get_casino_keyboard(user_id))
+        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=await get_casino_keyboard(user_id))
     except FileNotFoundError:
         logger.warning("Файл images/casino.png не найден.")
-        await message.answer(text, reply_markup=await get_casino_keyboard(user_id))
+        await message.answer(text, parse_mode="HTML", reply_markup=await get_casino_keyboard(user_id))
 
 
 @router.callback_query(F.data == "casino_menu")
@@ -5343,7 +5343,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
 
     random.shuffle(spin_frames)
 
-    delays = [0.8, 0.9, 1.0, 1.1, 1.1, 1.1, 1.1, 1.15, 1.16, 1.17, 1.2, 1.22, 1.25]
+    delays = [0.2, 0.2, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4]
 
     for i, frame in enumerate(spin_frames):
         try:
