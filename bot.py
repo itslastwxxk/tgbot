@@ -120,6 +120,9 @@ class TradingForm(StatesGroup):
 class NameForm(StatesGroup):
     waiting_for_name = State()
 
+class TokenNameForm(StatesGroup):
+    waiting_for_name = State()
+
 class MathForm(StatesGroup):
     waiting_for_answer = State()
 
@@ -601,7 +604,7 @@ def biz_manage_view(biz):
         rows.append([InlineKeyboardButton(text=f"🛠 Починить за {repair_cost:,} ₽", callback_data="biz_repair")])
     rows.extend([
         [InlineKeyboardButton(text="💸 Продать", callback_data="biz_sell")],
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data="biz_refresh"), InlineKeyboardButton(text="🔙 Выйти", callback_data="biz_exit")],
+        [InlineKeyboardButton(text="🔙 Выйти", callback_data="biz_exit")],
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     return text, kb
@@ -1483,6 +1486,23 @@ async def get_all_balances(limit: int = 10) -> list[tuple[int, str, int]]:
         if len(results) >= limit:
             break
     return results
+
+
+async def get_public_rank(redis_key: str, user_id: int) -> int | None:
+    """Возвращает место игрока в публичном рейтинге без учёта админов."""
+    rows = await redis_client.zrevrange(redis_key, 0, -1, withscores=True)
+    place = 0
+    for uid_raw, _score in rows:
+        try:
+            uid = int(uid_raw)
+        except (TypeError, ValueError):
+            continue
+        if is_admin(uid):
+            continue
+        place += 1
+        if uid == user_id:
+            return place
+    return None
 
 
 async def rebuild_balance_leaderboard():
@@ -3503,10 +3523,17 @@ DONATE_SHOP_ITEMS = [
         "image": "images/pickaxe.png",
     },
     {
+        "id": "change_name",
+        "emoji": "✏️",
+        "name": "Смена ника",
+        "price": 40,
+        "desc": "\n позволяет бесплатно выбрать новый игровой ник",
+    },
+    {
         "id": "stamina_refill",
         "emoji": "🔋",
         "name": "Восстановление выносливости",
-        "price": 10,
+        "price": 5,
         "desc": "\n восстанавливает выносливость в шахте до максимума",
         "image": "images/battery.png",
     },
@@ -3658,6 +3685,21 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
             await callback.answer("у тебя уже максимальная кирка!", show_alert=True)
             return
 
+    if item["id"] == "change_name":
+        tokens = await get_tokens(user_id)
+        if tokens < item["price"]:
+            await callback.answer("Не хватает ТК!", show_alert=True)
+            return
+        await state.set_state(TokenNameForm.waiting_for_name)
+        await state.update_data(change_name_price=item["price"])
+        await callback.answer()
+        await callback.message.answer(
+            "✏️ Введи новый ник.\n"
+            "Можно использовать русские/английские буквы и цифры, 3–10 символов.\n"
+            "Ник должен быть свободен."
+        )
+        return
+
     ok = await deduct_tokens(user_id, item["price"])
     if not ok:
         await callback.answer("Не хватает ТК!", show_alert=True)
@@ -3694,6 +3736,44 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
         reply_to_msg_id=old_msg_id,
     )
     await state.update_data(donate_msg_id=new_msg_id, donate_idx=idx)
+
+
+@router.message(TokenNameForm.waiting_for_name)
+async def process_token_name_change(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    name = (message.text or "").strip()
+
+    if not is_valid_name(name):
+        await message.answer(
+            "❌ Ник — только буквы и цифры, 3–10 символов. Попробуй другой:"
+        )
+        return
+
+    if await is_name_taken(name):
+        current_name = await get_user_name(user_id)
+        if name != current_name:
+            await message.answer(f"❌ Ник «{name}» уже занят. Придумай другой:")
+            return
+
+    data = await state.get_data()
+    price = int(data.get("change_name_price", 40))
+
+    # Списываем ТК только после успешной проверки ника.
+    if not await deduct_tokens(user_id, price):
+        await state.clear()
+        await message.answer("❌ Не хватает ТК для смены ника.")
+        return
+
+    old_name = await get_user_name(user_id)
+    await save_user_name(user_id, name)
+    await state.clear()
+
+    tokens = await get_tokens(user_id)
+    await message.answer(
+        f"✅ Ник изменён: «{old_name or 'без ника'}» → «{name}»\n"
+        f"💠 Списано: {price} ТК\n"
+        f"💠 Осталось: {tokens} ТК"
+    )
 
 
 # ============================================================
@@ -3969,6 +4049,8 @@ async def show_public_top(callback: CallbackQuery):
                 result_text += f"{medal} {name} — <b>{balance:,} ₽</b>\n"
             if len(balances) > 10:
                 result_text += f"\n...и ещё {len(balances) - 10} челиков"
+            rank = await get_public_rank("leaderboard:balance", user_id)
+            result_text += f"\n📍 Твоё место: <b>{rank if rank is not None else '—'}</b>"
 
     elif kind == "referrals":
         top = await get_top_referrals(10)
@@ -3980,6 +4062,8 @@ async def show_public_top(callback: CallbackQuery):
                 name = await get_top_display_name(uid)
                 medal = medals.get(i, f"{i}.")
                 result_text += f"{medal} {name} — <b>{count}</b> реф.\n"
+            rank = await get_public_rank("referrals_top", user_id)
+            result_text += f"\n📍 Твоё место: <b>{rank if rank is not None else '—'}</b>"
 
     elif kind == "level":
         top = await get_top_levels(10)
@@ -3991,6 +4075,8 @@ async def show_public_top(callback: CallbackQuery):
                 name = await get_top_display_name(uid)
                 medal = medals.get(i, f"{i}.")
                 result_text += f"{medal} {name} — <b>{lvl}</b> ур.\n"
+            rank = await get_public_rank("leaderboard:level", user_id)
+            result_text += f"\n📍 Твоё место: <b>{rank if rank is not None else '—'}</b>"
     else:
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
@@ -4890,10 +4976,18 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         capacity = biz.get("raw_capacity", 30000)
         space = capacity - stock
         source_text = "основного баланса" if source == "user" else "со счёта бизнеса"
+        if source == "user":
+            source_balance = await get_balance(user_id)
+            balance_line = f"💳 твой баланс: <b>{source_balance:,} ₽</b>"
+        else:
+            source_balance = biz.get("balance", 0)
+            balance_line = f"🏪 баланс бизнеса: <b>{source_balance:,} ₽</b>"
+
         await callback.message.answer(
             f"введи количество сырья для закупки.\n"
             f"цена: {RAW_PRICE} ₽ за штуку\n"
             f"свободно на складе: <b>{space:,}</b>\n"
+            f"{balance_line}\n"
             f"оплата: {source_text}",
             parse_mode="HTML",
         )
