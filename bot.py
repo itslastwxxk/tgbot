@@ -4969,7 +4969,7 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         stock = biz.get("raw_stock", 0)
         capacity = biz.get("raw_capacity", 30000)
         space = capacity - stock
-        source_text = "основного баланса" if source == "user" else "со счёта бизнеса"
+        source_text = "основной баланс" if source == "user" else "со счёта бизнеса"
         if source == "user":
             source_balance = await get_balance(user_id)
             balance_line = f"💳 твой баланс: <b>{source_balance:,} ₽</b>"
