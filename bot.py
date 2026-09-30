@@ -342,6 +342,7 @@ XP_PER_MINE = 50
 MATH_XP_REWARD = 100
 XP_PER_TRADE = 100
 XP_PER_DUEL = 200
+REFERRAL_XP_REWARD = 1000
 
 # --- ЛВЛ РАЗБЛОКИРОВКИ ---
 PROFILE_UNLOCK_LEVEL = 1
@@ -893,6 +894,11 @@ async def resolve_target(target_str: str) -> int | None:
         return int(target_str)
     except ValueError:
         pass
+
+    # Сначала ищем по игровому нику, затем по Telegram @username.
+    target_id = await get_user_id_by_name_direct(target_str)
+    if target_id:
+        return target_id
     return await get_user_id_by_username(target_str)
 
 # --- Функции работы с именем ---
@@ -1078,12 +1084,15 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
     if not new_count:
         return None
 
+    # Реферал засчитан, но XP и деньги пригласившему пока не выдаются.
+    # Обе награды начисляются одной операцией после достижения рефералом 3 уровня.
     try:
         await bot.send_message(
             referrer_id,
-            f"🎉 По твоей ссылке кто-то зарегистрировался!\n"
-            f"🎁 Награда будет начислена, когда новичок достигнет 3 уровня.\n"
-            f"👥 Всего рефералов: {new_count}"
+            f"🎉 <b>По твоей ссылке кто-то зарегистрировался!!</b>\n"
+            f"👥 Всего рефералов: {new_count}\n"
+            f"🎁 Награда: <b>{REFERRAL_REWARD:,} ₽ + {REFERRAL_XP_REWARD} XP</b> после 3 уровня",
+            parse_mode="HTML"
         )
     except Exception:
         pass
@@ -1119,14 +1128,17 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
 
     await add_to_balance(referrer_id, REFERRAL_REWARD)
     await add_to_referral_earnings(referrer_id, REFERRAL_REWARD)
+    _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, REFERRAL_XP_REWARD)
     await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
     try:
         await bot.send_message(
             referrer_id,
             f"🎉 Твой реферал достиг 3 уровня!\n"
-            f"💰 Награда: +<b>{REFERRAL_REWARD:,} ₽</b>",
+            f"🎁 Награда: <b>+{REFERRAL_REWARD:,} ₽ + {REFERRAL_XP_REWARD} XP</b>",
             parse_mode="HTML",
         )
+        if referrer_leveled_up:
+            await notify_level_up(referrer_id, referrer_level)
         await bot.send_message(
             new_user_id,
             f"🎁 Ты достиг 3 уровня! Бонус за приглашение: "
@@ -4563,6 +4575,7 @@ async def handle_trade_direction(callback: CallbackQuery, state: FSMContext):
         await log_trade(user_id, mode, amount, -amount, False)
 
     _, new_level, leveled_up = await add_xp(user_id, XP_PER_TRADE)
+    result_text += f"\n✨ опыт: +<b>{XP_PER_TRADE} XP</b>"
     await msg.edit_text(result_text, parse_mode="HTML", reply_markup=get_trading_result_keyboard())
 
     if leveled_up:
@@ -6061,6 +6074,8 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 # --- XP и кулдаун для обоих ---
     _, ch_new_level, ch_up = await add_xp(duel["challenger_id"], XP_PER_DUEL)
     _, tg_new_level, tg_up = await add_xp(duel["target_id"], XP_PER_DUEL)
+
+    result_text += f"\n✨ опыт: +<b>{XP_PER_DUEL} XP</b> каждому участнику"
 
     await set_duel_cooldown(duel["challenger_id"])
     await set_duel_cooldown(duel["target_id"])
