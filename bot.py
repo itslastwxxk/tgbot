@@ -293,10 +293,12 @@ REFERRAL_REWARDS_BY_LEVEL = {
     0: (500_000, 1_000),
     10: (750_000, 1_250),
     20: (1_000_000, 1_500),
-    30: (1_500_000, 2_000),
-    40: (2_000_000, 2_750),
+    35: (1_500_000, 2_000),
+    50: (2_500_000, 3_000),
 }
 REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистрацию по ссылке
+REFERRAL_LEVEL_10_NEW_USER_BONUS = 500_000  # бонус рефералу при достижении 10 уровня
+REFERRAL_LEVEL_10_MULTIPLIER = 1  # пригласившему: та же сумма, что и выплата за 3 уровень
 
 def get_referral_reward(level: int) -> tuple[int, int]:
     """Возвращает (рубли, XP) за реферала для текущего уровня пригласившего."""
@@ -319,7 +321,7 @@ def get_referral_rewards_text() -> str:
             label = f"До {next_level} уровня" if next_level is not None else "Для всех уровней"
         else:
             label = f"С {min_level} уровня"
-        lines.append(f" • {label} — <b>{money:,} ₽ + {xp} XP</b>")
+        lines.append(f"• {label} — <b>{money:,} ₽ + {xp} XP</b>")
     return "\n".join(lines)
 
 
@@ -1145,58 +1147,95 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
 
 
 async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
-    """Выдаёт выплаты за реферала ровно один раз при достижении 3 уровня."""
-    if level < 3:
-        return False
+    """Выдаёт награду пригласившему на 3 уровне и дополнительную награду на 10 уровне."""
     user_key = f"user:{new_user_id}"
-    pending = await redis_client.hget(user_key, "referral_reward_pending")
-    if pending != "1":
-        return False
     referrer_id = await get_referrer(new_user_id)
     if not referrer_id:
         return False
 
-    # Атомарно забираем право на выплату: меняем 1 -> 0 только если
-    # выплата ещё не была забрана. HSETNX здесь использовать нельзя —
-    # поле уже существует после регистрации реферала.
-    claim_script = """
-    local pending = redis.call('HGET', KEYS[1], 'referral_reward_pending')
-    if pending ~= '1' then
-        return 0
-    end
-    redis.call('HSET', KEYS[1], 'referral_reward_pending', '0')
-    return 1
-    """
-    claimed = await redis_client.eval(claim_script, 1, user_key)
-    if not claimed:
-        return False
+    paid = False
 
-    # Только здесь, после достижения рефералом 3 уровня,
-    # выдаём пригласившему XP за реферала.
-    referrer_stats = await get_user_stats(referrer_id)
-    referral_money, referral_xp = get_referral_reward(referrer_stats["level"])
-    _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, referral_xp)
-    await add_to_balance(referrer_id, referral_money)
-    await add_to_referral_earnings(referrer_id, referral_money)
-    await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
-    try:
-        await bot.send_message(
-            referrer_id,
-            f"🎉 Твой реферал достиг 3 уровня!\n"
-            f"🎁 Награда: <b>+{referral_money:,} ₽ + {referral_xp} XP</b>",
-            parse_mode="HTML",
-        )
-        if referrer_leveled_up:
-            await notify_level_up(referrer_id, referrer_level)
-        await bot.send_message(
-            new_user_id,
-            f"🎁 Ты достиг 3 уровня! Бонус за приглашение: "
-            f"<b>+{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
-    return True
+    # Награда за достижение рефералом 3 уровня — один раз.
+    if level >= 3:
+        pending = await redis_client.hget(user_key, "referral_reward_pending")
+        if pending == "1":
+            claim_script = """
+            local pending = redis.call('HGET', KEYS[1], 'referral_reward_pending')
+            if pending ~= '1' then return 0 end
+            redis.call('HSET', KEYS[1], 'referral_reward_pending', '0')
+            return 1
+            """
+            claimed = await redis_client.eval(claim_script, 1, user_key)
+            if claimed:
+                referrer_stats = await get_user_stats(referrer_id)
+                referral_money, referral_xp = get_referral_reward(referrer_stats["level"])
+                _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, referral_xp)
+                await add_to_balance(referrer_id, referral_money)
+                await add_to_referral_earnings(referrer_id, referral_money)
+                # Сохраняем именно сумму, которую пригласивший получил за 3 уровень.
+                await redis_client.hset(user_key, "referral_level10_reward", str(referral_money))
+                await redis_client.hset(user_key, "referral_level10_pending", "1")
+                await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
+                paid = True
+                try:
+                    await bot.send_message(
+                        referrer_id,
+                        f"🎉 Твой реферал достиг 3 уровня!\n"
+                        f"🎁 Награда: <b>+{referral_money:,} ₽ + {referral_xp} XP</b>\n"
+                        f"🔥 Если он достигнет 10 уровня, ты получишь ещё <b>+{referral_money * REFERRAL_LEVEL_10_MULTIPLIER:,} ₽</b>.",
+                        parse_mode="HTML",
+                    )
+                    if referrer_leveled_up:
+                        await notify_level_up(referrer_id, referrer_level)
+                    await bot.send_message(
+                        new_user_id,
+                        f"🎁 Ты достиг 3 уровня! Бонус за приглашение: <b>+{REFERRAL_NEWBIE_BONUS:,} ₽</b>\n"
+                        f"🔥 За достижение 10 уровня получишь ещё <b>+{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>.",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+    # Дополнительная награда при достижении рефералом 10 уровня — один раз.
+    if level >= 10:
+        pending10 = await redis_client.hget(user_key, "referral_level10_pending")
+        if pending10 == "1":
+            claim10_script = """
+            local pending = redis.call('HGET', KEYS[1], 'referral_level10_pending')
+            if pending ~= '1' then return 0 end
+            redis.call('HSET', KEYS[1], 'referral_level10_pending', '0')
+            return 1
+            """
+            claimed10 = await redis_client.eval(claim10_script, 1, user_key)
+            if claimed10:
+                saved_reward = await redis_client.hget(user_key, "referral_level10_reward")
+                try:
+                    base_reward = int(saved_reward or 0)
+                except (TypeError, ValueError):
+                    base_reward = 0
+                bonus_to_referrer = base_reward * REFERRAL_LEVEL_10_MULTIPLIER
+                if bonus_to_referrer > 0:
+                    await add_to_balance(referrer_id, bonus_to_referrer)
+                    await add_to_referral_earnings(referrer_id, bonus_to_referrer)
+                await add_to_balance(new_user_id, REFERRAL_LEVEL_10_NEW_USER_BONUS)
+                paid = True
+                try:
+                    await bot.send_message(
+                        referrer_id,
+                        f"🔥 Твой реферал достиг 10 уровня!\n"
+                        f"💰 Дополнительная награда: <b>+{bonus_to_referrer:,} ₽</b>",
+                        parse_mode="HTML",
+                    )
+                    await bot.send_message(
+                        new_user_id,
+                        f"🏆 Ты достиг 10 уровня!\n"
+                        f"🎁 Бонус за 10 уровень: <b>+{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+    return paid
 
 async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
     # Берём полный рейтинг, чтобы после исключения админов набрать нужное число игроков.
@@ -4489,8 +4528,9 @@ async def handle_ref(message: Message):
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 <b>Награды за рефералов:</b>\n"
         f"{get_referral_rewards_text()}\n"
-        f"Награда начисляется, когда приглашённый тобой игрок достигает 3 уровня.\n"
-        f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> после достижения 3 уровня"
+        f"Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
+        f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> за 3 уровень.\n"
+        f"🔥 Если твой реферал достигнет 10 уровня тебе начисляется <b>та же сумма</b>, а рефералу — <b>{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
@@ -4551,21 +4591,22 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
         f"Твоя ссылка:\n{ref_link}\n\n"
-        f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
-        f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
+        f"👥 Приглашено: {referral_count} чел.\n"
+        f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 <b>Награды за рефералов:</b>\n"
         f"{get_referral_rewards_text()}\n"
-        f"Награда начисляется, когда приглашённый тобой игрок достигает 3 уровня.\n"
-        f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> после достижения 3 уровня"
+        f"Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
+        f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> за 3 уровень.\n"
+        f"🔥 Если твой реферал достигнет 10 уровня тебе начисляется <b>та же сумма</b>, а рефералу — <b>{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>."
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
     ])
     try:
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except TelegramBadRequest:
-        await callback.message.answer(text, parse_mode="Markdown", reply_markup=kb)
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 # --- ТРЕЙДИНГ ---
 @router.message(F.text == "📈 Трейдинг")
