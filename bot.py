@@ -376,6 +376,7 @@ TRADING_MODES = {
 ROULETTE_HOUSE_RIG = 0.01
 DUEL_TIMEOUT = 3600
 DUEL_COOLDOWN = 30
+ROULETTE_COOLDOWN = 10
 
 XP_PER_MINE = 50
 MATH_XP_REWARD = 200
@@ -1262,12 +1263,13 @@ async def get_top_display_name(user_id: int) -> str:
     return name
 
 # --- Дуэли: хелперы ---
-async def create_duel(challenger_id: int, target_id: int, amount: int) -> str:
+async def create_duel(challenger_id: int, target_id: int, amount: int, chat_id: int | None = None) -> str:
     duel_id = uuid.uuid4().hex[:8]
     await redis_client.hset(f"duel:{duel_id}", mapping={
         "challenger_id": str(challenger_id),
         "target_id": str(target_id),
         "amount": str(amount),
+        "chat_id": str(chat_id) if chat_id is not None else "",
         "status": "pending",
         "created_at": str(time.time()),
     })
@@ -1282,6 +1284,7 @@ async def get_duel(duel_id: str) -> dict | None:
         "challenger_id": int(data["challenger_id"]),
         "target_id": int(data["target_id"]),
         "amount": int(data["amount"]),
+        "chat_id": int(data["chat_id"]) if data.get("chat_id") else None,
         "status": data.get("status", "pending"),
     }
 
@@ -1556,6 +1559,17 @@ async def check_duel_cooldown(user_id: int) -> tuple[bool, int]:
 
 async def set_duel_cooldown(user_id: int):
     await redis_client.set(f"cooldown:duel:{user_id}", "1", ex=DUEL_COOLDOWN)
+
+# --- Кулдаун рулетки ---
+async def check_roulette_cooldown(user_id: int) -> tuple[bool, int]:
+    key = f"cooldown:roulette:{user_id}"
+    ttl = await redis_client.ttl(key)
+    if ttl > 0:
+        return False, ttl
+    return True, 0
+
+async def set_roulette_cooldown(user_id: int):
+    await redis_client.set(f"cooldown:roulette:{user_id}", "1", ex=ROULETTE_COOLDOWN)
 
 # --- Хранение последних 15 действий ---
 async def log_trade(user_id: int, mode: str, amount: int, result: float, win: bool):
@@ -2813,6 +2827,12 @@ async def process_name(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
     await send_main_menu(message, user_id)
+
+@router.message(Command("я"))
+async def command_me(message: Message, state: FSMContext):
+    """Показать профиль игрока по команде /я."""
+    await show_profile(message, state)
+
 
 @router.message(F.text == "📋 Профиль")
 async def show_profile(message: Message, state: FSMContext):
@@ -6018,6 +6038,213 @@ async def mines_cash(callback: CallbackQuery):
     await _mines_task_hook(user_id, game["bet"], "win", len(game["opened"]))
 
 
+
+# ============================================================
+# Ошибки групповых команд: не засоряем чат, отправляем игроку в ЛС
+# ============================================================
+async def group_command_error(message: Message, text: str, **kwargs):
+    if message.chat.type in ("group", "supergroup"):
+        try:
+            await bot.send_message(message.from_user.id, text, **kwargs)
+        except Exception:
+            # Если пользователь ещё не запускал бота в ЛС, Telegram не позволит написать ему.
+            # В таком случае удаляем сообщение команды и ничего не засоряем в группе.
+            pass
+        try:
+            await message.delete()
+        except Exception:
+            pass
+    else:
+        await message.answer(text, **kwargs)
+
+
+# ============================================================
+# КОМАНДЫ ДЛЯ ГРУПП: /дуэль и /рул
+# ============================================================
+
+@router.message(Command("дуэль"))
+async def command_duel(message: Message, state: FSMContext):
+    """Дуэль прямо из группы: /дуэль ник ставка."""
+    user_id = message.from_user.id
+
+    if not await check_level_access(message, user_id, DUEL_UNLOCK_LEVEL):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 3:
+        await group_command_error(message, "❌ Формат: <code>/дуэль ник ставка</code>\nПример: <code>/дуэль killer 69000</code>", parse_mode="HTML")
+        return
+
+    nick_str = parts[1].lstrip("@")
+    try:
+        amount = parse_amount(parts[2])
+    except ValueError:
+        await group_command_error(message, "❌ Ставка должна быть числом. Например: <code>/дуэль killer 69к</code>", parse_mode="HTML")
+        return
+
+    if amount <= 0:
+        await group_command_error(message, "❌ Ставка должна быть больше 0.")
+        return
+
+    can_duel, remaining = await check_duel_cooldown(user_id)
+    if not can_duel:
+        await group_command_error(message, f"⏳ дуэль можно кинуть только через {remaining} сек.")
+        return
+
+    balance = await get_balance(user_id)
+    if balance < amount:
+        await group_command_error(message, f"❌ не хватает денег. Баланс: {balance:,} ₽")
+        return
+
+    target_id = await resolve_target(nick_str)
+    if not target_id:
+        await group_command_error(message, f"❌ игрок «{nick_str}» не найден.")
+        return
+    if target_id == user_id:
+        await group_command_error(message, "❌ против себя играть нельзя.")
+        return
+
+    target_balance = await get_balance(target_id)
+    if target_balance < amount:
+        target_name = await get_user_name(target_id) or "Игрок"
+        await group_command_error(message, f"❌ у {target_name} недостаточно денег для этой ставки.")
+        return
+
+    target_name = await get_user_name(target_id) or nick_str
+    challenger_name = await get_user_name(user_id) or "Игрок"
+    duel_id = await create_duel(user_id, target_id, amount, message.chat.id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Принять", callback_data=f"duel_accept:{duel_id}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"duel_decline:{duel_id}"),
+    ]])
+
+    if message.chat.type in ("group", "supergroup"):
+        # Успешную команду НЕ удаляем — она остаётся в группе.
+        await message.answer(
+            f"🥊 <b>{challenger_name}</b> вызывает <b>{target_name}</b> на дуэль!\n"
+            f"💰 Ставка: <b>{amount:,} ₽</b>",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    else:
+        await message.answer(
+            f"🥊 ты вызвал <b>{target_name}</b> на дуэль на <b>{amount:,} ₽</b>.\nждём ответ...",
+            parse_mode="HTML",
+        )
+        try:
+            await bot.send_message(
+                target_id,
+                f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль на <b>{amount:,} ₽</b>.\nпринять?",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            await group_command_error(message, "❌ не удалось отправить вызов")
+            await redis_client.delete(f"duel:{duel_id}")
+
+    await state.clear()
+
+
+@router.message(Command("рул"))
+async def command_roulette(message: Message, state: FSMContext):
+    """Быстрая рулетка: /рул чет 1000, /рул крас 1000, /рул зеро 1000."""
+    user_id = message.from_user.id
+
+    if not await check_level_access(message, user_id, CASINO_UNLOCK_LEVEL):
+        return
+
+    can_spin, remaining = await check_roulette_cooldown(user_id)
+    if not can_spin:
+        await group_command_error(message, f"⏳ Рулетка доступна через {remaining} сек.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 3:
+        await group_command_error(message, 
+            "🎡 Формат: <code>/рул чет 1000</code>\n"
+            "Варианты: <code>чет</code>, <code>нечет</code>, <code>крас</code>, <code>черн</code>, <code>зеро</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    aliases = {
+        "чет": "even", "чёт": "even", "четное": "even", "чётное": "even",
+        "нечет": "odd", "нечёт": "odd", "нечетное": "odd", "нечётное": "odd",
+        "крас": "red", "красн": "red", "красное": "red",
+        "черн": "black", "чёрн": "black", "черное": "black", "чёрное": "black",
+        "зеро": "0", "ноль": "0", "0": "0",
+    }
+    first = parts[1].lower().lstrip("+")
+    second = parts[2]
+    bet = aliases.get(first)
+    amount_raw = second
+    if bet is None:
+        bet = aliases.get(parts[2].lower())
+        amount_raw = parts[1]
+
+    if bet is None:
+        await group_command_error(message, "❌ Ставка должна быть: чет, нечет, крас, черн или зеро.")
+        return
+
+    try:
+        amount = parse_amount(amount_raw)
+    except ValueError:
+        await group_command_error(message, "❌ Неверная сумма ставки. Пример: <code>/рул крас 1000</code>", parse_mode="HTML")
+        return
+
+    if amount <= 0:
+        await group_command_error(message, "❌ Ставка должна быть больше 0.")
+        return
+
+    if not await deduct_balance(user_id, amount):
+        balance = await get_balance(user_id)
+        await group_command_error(message, f"❌ Не хватает денег. Баланс: {balance:,} ₽")
+        return
+
+    await set_roulette_cooldown(user_id)
+
+    number = random.randint(0, 36)
+    won, payout_mult = roulette_bet_result(bet, number)
+
+    if won and random.random() < ROULETTE_HOUSE_RIG:
+        losing = [n for n in range(37) if not roulette_bet_result(bet, n)[0]]
+        if losing:
+            number = random.choice(losing)
+            won, payout_mult = roulette_bet_result(bet, number)
+
+    color = roulette_color(number)
+    bet_name = roulette_bet_name(bet)
+    if won:
+        winnings = amount * (payout_mult + 1)
+        await add_to_balance(user_id, winnings)
+        result = (
+            f"🎡 <b>РУЛЕТКА</b>\n"
+            f"выпало: {color} <b>{number}</b>\n"
+            f"ставка: <b>{bet_name}</b> — {amount:,} ₽\n"
+            f"✅ <b>ВЫИГРЫШ!</b> +{winnings - amount:,} ₽\n"
+            f"💰 баланс: <b>{await get_balance(user_id):,} ₽</b>"
+        )
+    else:
+        result = (
+            f"🎡 <b>РУЛЕТКА</b>\n"
+            f"выпало: {color} <b>{number}</b>\n"
+            f"ставка: <b>{bet_name}</b> — {amount:,} ₽\n"
+            f"❌ <b>ПРОИГРЫШ!</b> -{amount:,} ₽\n"
+            f"💰 баланс: <b>{await get_balance(user_id):,} ₽</b>"
+        )
+
+    await bump_task_progress(user_id, "casino", kind="play")
+    if won:
+        if bet == "0":
+            await bump_task_progress(user_id, "casino", kind="zero")
+        elif bet in ("red", "black"):
+            await bump_task_progress(user_id, "casino", kind="color")
+
+    await state.clear()
+    # Успешную команду НЕ удаляем — результат публикуется в группе.
+    await message.answer(result, parse_mode="HTML")
+
 # ============================================================
 # ДУЭЛИ
 # ============================================================
@@ -6099,7 +6326,7 @@ async def process_duel_challenge(message: Message, state: FSMContext):
         await message.answer(f"❌ у {target_name} недостаточно денег для этой ставки.")
         return
 
-    duel_id = await create_duel(user_id, target_id, amount)
+    duel_id = await create_duel(user_id, target_id, amount, message.chat.id)
     challenger_name = await get_user_name(user_id) or "Игрок"
     target_name = await get_user_name(target_id) or "Игрок"
 
@@ -6117,13 +6344,21 @@ async def process_duel_challenge(message: Message, state: FSMContext):
     ])
 
     try:
-        await bot.send_message(
-            target_id,
-            f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль на <b>{amount:,} ₽</b>.\n"
-            f"принять?",
-            parse_mode="HTML",
-            reply_markup=kb
-        )
+        if message.chat.type in ("group", "supergroup"):
+            await message.answer(
+                f"🥊 <b>{challenger_name}</b> вызывает <b>{target_name}</b> на дуэль на <b>{amount:,} ₽</b>.\n"
+                f"{target_name}, принять?",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        else:
+            await bot.send_message(
+                target_id,
+                f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль на <b>{amount:,} ₽</b>.\n"
+                f"принять?",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
     except Exception:
         await message.answer("❌ не удалось отправить вызов")
         await redis_client.delete(f"duel:{duel_id}")
@@ -6498,6 +6733,9 @@ async def reward_top_players():
 # --- Универсальный хендлер ---
 @router.message(F.text)
 async def handle_unknown_text(message: Message, state: FSMContext):
+    # В группах обычные сообщения не должны перехватываться ботом — люди могут свободно общаться.
+    if message.chat.type in ("group", "supergroup"):
+        return
     current_state = await state.get_state()
     if current_state is None:
         await message.answer("используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
