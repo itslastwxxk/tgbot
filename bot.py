@@ -2801,7 +2801,7 @@ async def transfer_no_note(callback: CallbackQuery, state: FSMContext):
         return
     await state.update_data(transfer_note="")
     await state.set_state(TransferForm.waiting_for_amount)
-    await callback.message.edit_text("✍️ комментарий пропущен. теперь напиши сумму перевода.\nдля отмены введи /cancel.")
+    await callback.message.edit_text("✍️ комментарий пропущен.\n теперь напиши сумму перевода.\nдля отмены введи /cancel.")
     await callback.answer()
 
 @router.callback_query(F.data == "transfer_cancel")
