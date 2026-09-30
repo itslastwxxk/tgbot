@@ -343,20 +343,28 @@ DUEL_TIMEOUT = 3600
 DUEL_COOLDOWN = 30
 
 XP_PER_MINE = 50
-MATH_XP_REWARD = 100
+MATH_XP_REWARD = 200
 XP_PER_TRADE = 100
-XP_PER_DUEL = 200
+XP_PER_DUEL = 300
 REFERRAL_XP_REWARD = 1000
+
+# --- НАГРАДЫ ЗА ПОВЫШЕНИЕ УРОВНЯ ---
+# За каждый достигнутый уровень игрок получает деньги.
+# Сумма растёт вместе с уровнем: 1 уровень = 10 000 ₽, 2 = 20 000 ₽ и т.д.
+LEVEL_MONEY_REWARD_BASE = 15_000
+
+def level_money_reward(level: int) -> int:
+    return LEVEL_MONEY_REWARD_BASE * level
 
 # --- ЛВЛ РАЗБЛОКИРОВКИ ---
 PROFILE_UNLOCK_LEVEL = 1
 BONUS_UNLOCK_LEVEL = 2
 MATH_UNLOCK_LEVEL = 3
-DUEL_UNLOCK_LEVEL = 5
-CASE_UNLOCK_LEVEL = 8
-TRADING_UNLOCK_LEVEL = 10
-BUSINESS_UNLOCK_LEVEL = 11
-CASINO_UNLOCK_LEVEL = 15
+DUEL_UNLOCK_LEVEL = 6
+CASE_UNLOCK_LEVEL = 5
+TRADING_UNLOCK_LEVEL = 8
+BUSINESS_UNLOCK_LEVEL = 15
+CASINO_UNLOCK_LEVEL = 10
 
 # ============================================================
 # БИЗНЕСЫ: КОНСТАНТЫ
@@ -1396,6 +1404,12 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
     new_level = xp_to_level(new_xp)
     leveled_up = new_level > old_level
 
+    # Если за одно начисление XP игрок перескочил сразу несколько уровней,
+    # выдаём награду за КАЖДЫЙ достигнутый уровень.
+    if leveled_up:
+        for reached_level in range(old_level + 1, new_level + 1):
+            await add_to_balance(user_id, level_money_reward(reached_level))
+
     await redis_client.hset(f"user:{user_id}:stats", mapping={
         "xp": str(new_xp),
         "level": str(new_level),
@@ -1414,12 +1428,29 @@ async def add_xp(user_id: int, amount: int) -> tuple[int, int, bool]:
     return new_xp, new_level, leveled_up
 
 async def notify_level_up(user_id: int, new_level: int):
-    """Отправляет сообщение о новом уровне."""
-    text = f"🎉 <b>LEVEL UP!</b> Ты достиг {new_level} уровня."
+    """Сообщает о новом уровне, награде и ближайшем будущем прокачки."""
+    current_reward = level_money_reward(new_level)
+    text = (
+        f"🎉 <b>LEVEL UP!</b> Ты достиг {new_level} уровня!\n\n"
+        f"💰 Награда за уровень: <b>+{current_reward:,} ₽</b>"
+    )
 
     unlocked = [name for name, lvl in UNLOCK_LEVELS.items() if lvl == new_level]
     if unlocked:
         text += "\n\n<b>Теперь доступно:</b>\n" + "\n".join(f"• {name}" for name in unlocked)
+
+    # Сразу показываем, что игрок получит на следующем уровне.
+    next_level = new_level + 1
+    next_reward = level_money_reward(next_level)
+    next_unlocks = [name for name, lvl in UNLOCK_LEVELS.items() if lvl == next_level]
+    text += (
+        f"\n\n<b>⬆️ При следующем повышении на ({next_level} уровень):</b>\n"
+        f"💰 награда: <b>+{next_reward:,} ₽</b>"
+    )
+    if next_unlocks:
+        text += "\n🔓 откроется:\n" + "\n".join(f"• {name}" for name in next_unlocks)
+    else:
+        text += "\n🔓 новых функций на этом уровне пока нет."
 
     try:
         await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=await get_main_keyboard(user_id))
