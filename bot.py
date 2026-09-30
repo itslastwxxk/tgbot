@@ -2611,15 +2611,9 @@ async def cmd_start(message: Message, state: FSMContext):
         await state.set_state(NameForm.waiting_for_name)
         return
 
-    # Возвращающийся пользователь — обработать реферал сразу
-    if referrer_id and referrer_id != user_id:
-        result = await process_referral(user_id, referrer_id)
-        if result:
-            await message.answer(
-                f"🎁 тебя пригласил <b>{result[1]}</b>! "
-                f"награда будет начислена после 3 уровня: +<b>{REFERRAL_NEWBIE_BONUS:,} ₽</b>",
-                parse_mode="HTML",
-            )
+    # Уже зарегистрированный пользователь при переходе по реферальной ссылке
+    # ничего не получает и реферал не засчитывается.
+    # Реферал обрабатывается только в ветке нового пользователя выше.
 
     # Если пользователь уже достиг 3 уровня (например, бот был перезапущен
     # или раньше выплата не сработала), проверяем накопившуюся выплату здесь.
