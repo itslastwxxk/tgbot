@@ -287,8 +287,41 @@ TOP_REWARD_CONFIGS = [
 # ============================================================
 # КОНСТАНТЫ РЕФЕРАЛЬНОЙ СИСТЕМЫ
 # ============================================================
-REFERRAL_REWARD = 500000        # награда пригласившему
+# Награды за реферала зависят от уровня пригласившего.
+# До 10 уровня — базовая награда; с 10/20/30 уровня открываются новые размеры.
+REFERRAL_REWARDS_BY_LEVEL = {
+    0: (500_000, 1_000),
+    10: (750_000, 1_250),
+    20: (1_000_000, 1_500),
+    30: (1_500_000, 2_000),
+    40: (2_000_000, 2_750),
+}
 REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистрацию по ссылке
+
+def get_referral_reward(level: int) -> tuple[int, int]:
+    """Возвращает (рубли, XP) за реферала для текущего уровня пригласившего."""
+    reward = REFERRAL_REWARDS_BY_LEVEL[0]
+    for min_level in sorted(REFERRAL_REWARDS_BY_LEVEL):
+        if level >= min_level:
+            reward = REFERRAL_REWARDS_BY_LEVEL[min_level]
+    return reward
+
+def get_referral_rewards_text() -> str:
+    """Формирует описание наград из REFERRAL_REWARDS_BY_LEVEL.
+    Поэтому текст в разделе «Реф» всегда соответствует константам выше.
+    """
+    levels = sorted(REFERRAL_REWARDS_BY_LEVEL)
+    lines = []
+    for i, min_level in enumerate(levels):
+        money, xp = REFERRAL_REWARDS_BY_LEVEL[min_level]
+        if i == 0:
+            next_level = levels[i + 1] if len(levels) > 1 else None
+            label = f"До {next_level} уровня" if next_level is not None else "Для всех уровней"
+        else:
+            label = f"С {min_level} уровня"
+        lines.append(f" • {label} — <b>{money:,} ₽ + {xp} XP</b>")
+    return "\n".join(lines)
+
 
 # ============================================================
 # ЭКОНОМИКА: КОНСТАНТЫ
@@ -1103,7 +1136,7 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
             referrer_id,
             f"🎉 <b>По твоей ссылке кто-то зарегистрировался!!</b>!\n"
             f"👥 Всего рефералов: {new_count}\n"
-            f"🎁 Награда: <b>{REFERRAL_REWARD:,} ₽ + {REFERRAL_XP_REWARD} XP</b> будут начислены, когда игрок достигнет 3 уровня.",
+            f"🎁 Награда за реферала по твоему текущему уровню: <b>{get_referral_reward((await get_user_stats(referrer_id))["level"])[0]:,} ₽ + {get_referral_reward((await get_user_stats(referrer_id))["level"])[1]} XP</b> будет начислена, когда игрок достигнет 3 уровня.",
             parse_mode="HTML"
         )
     except Exception:
@@ -1140,15 +1173,17 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
 
     # Только здесь, после достижения рефералом 3 уровня,
     # выдаём пригласившему XP за реферала.
-    _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, REFERRAL_XP_REWARD)
-    await add_to_balance(referrer_id, REFERRAL_REWARD)
-    await add_to_referral_earnings(referrer_id, REFERRAL_REWARD)
+    referrer_stats = await get_user_stats(referrer_id)
+    referral_money, referral_xp = get_referral_reward(referrer_stats["level"])
+    _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, referral_xp)
+    await add_to_balance(referrer_id, referral_money)
+    await add_to_referral_earnings(referrer_id, referral_money)
     await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
     try:
         await bot.send_message(
             referrer_id,
             f"🎉 Твой реферал достиг 3 уровня!\n"
-            f"🎁 Награда: <b>+{REFERRAL_REWARD:,} ₽ + {REFERRAL_XP_REWARD} XP</b>",
+            f"🎁 Награда: <b>+{referral_money:,} ₽ + {referral_xp} XP</b>",
             parse_mode="HTML",
         )
         if referrer_leveled_up:
@@ -4452,8 +4487,10 @@ async def handle_ref(message: Message):
         f"Твоя ссылка:\n{ref_link}\n\n"
         f"👥 Приглашено: {referral_count} чел.\n"
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
-        f"💸 За каждого реферала, достигшего 3 уровня — {REFERRAL_REWARD:,} ₽\n"
-        f"🎁 Новичку — {REFERRAL_NEWBIE_BONUS:,} ₽ после достижения 3 уровня"
+        f"💸 <b>Награды за рефералов:</b>\n"
+        f"{get_referral_rewards_text()}\n"
+        f"Награда начисляется, когда приглашённый тобой игрок достигает 3 уровня.\n"
+        f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> после достижения 3 уровня"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
@@ -4516,7 +4553,9 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
         f"Твоя ссылка:\n{ref_link}\n\n"
         f"👥 Приглашено: <b>{referral_count}</b> чел.\n"
         f"💰 Заработано с рефералов: <b>{referral_earnings:,} ₽</b>\n\n"
-        f"💸 За каждого реферала, достигшего 3 уровня — <b>{REFERRAL_REWARD:,} ₽</b>\n"
+        f"💸 <b>Награды за рефералов:</b>\n"
+        f"{get_referral_rewards_text()}\n"
+        f"Награда начисляется, когда приглашённый тобой игрок достигает 3 уровня.\n"
         f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> после достижения 3 уровня"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
