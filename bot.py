@@ -1084,14 +1084,14 @@ async def process_referral(new_user_id: int, referrer_id: int) -> tuple[int, str
     if not new_count:
         return None
 
-    # Реферал засчитан, но XP и деньги пригласившему пока не выдаются.
-    # Обе награды начисляются одной операцией после достижения рефералом 3 уровня.
+    # Опыт за реферала НЕ начисляется при регистрации.
+    # Он будет выдан пригласившему только после достижения рефералом 3 уровня.
     try:
         await bot.send_message(
             referrer_id,
-            f"🎉 <b>По твоей ссылке кто-то зарегистрировался!!</b>\n"
+            f"🎉 <b>По твоей ссылке кто-то зарегистрировался!!</b>!\n"
             f"👥 Всего рефералов: {new_count}\n"
-            f"🎁 Награда: <b>{REFERRAL_REWARD:,} ₽ + {REFERRAL_XP_REWARD} XP</b> после 3 уровня",
+            f"🎁 Награда: <b>{REFERRAL_REWARD:,} ₽ + {REFERRAL_XP_REWARD} XP</b> будут начислены, когда игрок достигнет 3 уровня.",
             parse_mode="HTML"
         )
     except Exception:
@@ -1126,9 +1126,11 @@ async def pay_referral_reward_if_eligible(new_user_id: int, level: int) -> bool:
     if not claimed:
         return False
 
+    # Только здесь, после достижения рефералом 3 уровня,
+    # выдаём пригласившему XP за реферала.
+    _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, REFERRAL_XP_REWARD)
     await add_to_balance(referrer_id, REFERRAL_REWARD)
     await add_to_referral_earnings(referrer_id, REFERRAL_REWARD)
-    _, referrer_level, referrer_leveled_up = await add_xp(referrer_id, REFERRAL_XP_REWARD)
     await add_to_balance(new_user_id, REFERRAL_NEWBIE_BONUS)
     try:
         await bot.send_message(
@@ -6068,7 +6070,7 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
             f"💰 ставка: {duel['amount']:,} ₽\n\n"
             f"🎲 {ch_name}: {ch_value}\n"
             f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🤝 <b>ничья!</b> неньги возвращены."
+            f"🤝 <b>ничья!</b> деньги возвращены."
         )
 
 # --- XP и кулдаун для обоих ---
