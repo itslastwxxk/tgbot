@@ -6468,6 +6468,7 @@ async def main():
             os.remove(LOCK_FILE)
         logger.info("Бот остановлен.")
 
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
