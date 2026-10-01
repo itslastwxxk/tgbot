@@ -14,6 +14,7 @@ from aiogram.types import BufferedInputFile
 from io import BytesIO
 from aiogram.types import ReplyKeyboardRemove, FSInputFile
 from aiogram.exceptions import TelegramBadRequest
+import html
 import asyncio
 import logging
 import os
@@ -2830,8 +2831,44 @@ async def process_name(message: Message, state: FSMContext):
 
 @router.message(Command("я"))
 async def command_me(message: Message, state: FSMContext):
-    """Показать профиль игрока по команде /я."""
-    await show_profile(message, state)
+    """Новый профиль игрока по команде /я."""
+    await state.clear()
+    user_id = message.from_user.id
+
+    balance = await get_balance(user_id)
+    tokens = await get_tokens(user_id)
+    stats = await get_user_stats(user_id)
+    name = await get_user_name(user_id) or message.from_user.first_name or "Игрок"
+
+    level = stats["level"]
+    total_xp = stats["xp"]
+    xp_needed = xp_for_next_level(level)
+    xp_earned = xp_in_current_level(total_xp, level)
+    percent = min(100, int((xp_earned / xp_needed) * 100)) if xp_needed > 0 else 100
+
+    bar_len = 15
+    filled = percent * bar_len // 100
+    bar = "█" * filled + "░" * (bar_len - filled)
+    
+    profile_text = (
+        f"👤 <b>профиль игрока {html.escape(name)}</b>\n\n"
+        f"💰 баланс: <b>{balance:,} ₽</b>\n"
+        f"💎 токены: <b>{tokens} ТК</b>\n"
+        f"📈 уровень: <b>{level}</b>\n"
+        f"⚡ XP: <b>{xp_earned:,} / {xp_needed:,}</b>\n"
+        f"📊 [{bar}] {percent}%"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Перевести деньги", callback_data="transfer_start")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
+    ])
+
+    await message.answer(
+        profile_text,
+        parse_mode="HTML",
+        reply_markup=kb
+    )
 
 
 @router.message(F.text == "📋 Профиль")
@@ -2858,7 +2895,7 @@ async def show_profile(message: Message, state: FSMContext):
     bar = "█" * filled + "░" * (bar_len - filled)
 
     profile_text = (
-        f"📋 <b>профиль</b>\n\n"
+        f"📋 <b>твой профиль</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
