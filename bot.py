@@ -1292,6 +1292,80 @@ async def get_duel(duel_id: str) -> dict | None:
 async def update_duel_status(duel_id: str, status: str):
     await redis_client.hset(f"duel:{duel_id}", "status", status)
 
+async def send_duel_group_result(duel: dict, result_text: str):
+    """Публикует итог дуэли в группу, если вызов был создан в группе."""
+    chat_id = duel.get("chat_id")
+    if not chat_id:
+        return
+    try:
+        await bot.send_message(chat_id, result_text, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+
+async def get_latest_pending_duel_for_target(target_id: int) -> tuple[str, dict] | None:
+    """Возвращает самый свежий ожидающий вызов для игрока."""
+    latest = None
+    latest_created = -1.0
+
+    async for key in redis_client.scan_iter(match="duel:*", count=100):
+        if isinstance(key, bytes):
+            key = key.decode()
+        duel_id = key.split(":", 1)[1]
+        duel = await get_duel(duel_id)
+        if not duel or duel["status"] != "pending":
+            continue
+        if duel["target_id"] != target_id:
+            continue
+
+        raw = await redis_client.hget(f"duel:{duel_id}", "created_at")
+        try:
+            created_at = float(raw or 0)
+        except (TypeError, ValueError):
+            created_at = 0.0
+
+        if created_at > latest_created:
+            latest_created = created_at
+            latest = (duel_id, duel)
+
+    return latest
+
+
+class _DuelCommandMessageProxy:
+    """Прокси сообщения для переиспользования callback-логики из команд."""
+    def __init__(self, processing_message: Message, duel: dict):
+        self.processing_message = processing_message
+        self.duel = duel
+
+    async def edit_text(self, text, **kwargs):
+        return await self.processing_message.edit_text(text, **kwargs)
+
+    async def answer(self, text, **kwargs):
+        # Ответ в ЛС игроку.
+        await self.processing_message.answer(text, **kwargs)
+
+        # Если вызов был из группы — результат также публикуется там.
+        chat_id = self.duel.get("chat_id")
+        if chat_id and chat_id != self.processing_message.chat.id:
+            try:
+                await bot.send_message(chat_id, text, **kwargs)
+            except Exception:
+                pass
+
+
+class _DuelCommandCallbackAdapter:
+    """Минимальный интерфейс CallbackQuery для /принять и /отклонить."""
+    def __init__(self, user, processing_message: Message, duel_id: str, duel: dict):
+        self.from_user = user
+        self.data = duel_id
+        self.message = _DuelCommandMessageProxy(processing_message, duel)
+
+    async def answer(self, text=None, **kwargs):
+        if text:
+            await self.message.processing_message.answer(text)
+
+
 # --- Фарм ---
 async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
@@ -6420,6 +6494,23 @@ async def process_duel_challenge(message: Message, state: FSMContext):
                 parse_mode="HTML",
                 reply_markup=kb,
             )
+
+            # Дополнительно отправляем тот же вызов в ЛС игроку.
+            # В ЛС можно ответить командами /принять или /отклонить.
+            try:
+                await bot.send_message(
+                    target_id,
+                    f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль!\n"
+                    f"💰 Ставка: <b>{amount:,} ₽</b>\n\n"
+                    f"✅ Принять: <code>/принять</code>\n"
+                    f"❌ Отклонить: <code>/отклонить</code>",
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                # Если пользователь запретил боту писать в ЛС,
+                # вызов в группе всё равно остаётся рабочим.
+                pass
         else:
             await bot.send_message(
                 target_id,
@@ -6433,6 +6524,40 @@ async def process_duel_challenge(message: Message, state: FSMContext):
         await redis_client.delete(f"duel:{duel_id}")
 
     await state.clear()
+
+
+@router.message(Command("принять"))
+async def command_duel_accept(message: Message, state: FSMContext):
+    """Принять последний ожидающий вызов."""
+    if message.chat.type in ("group", "supergroup"):
+        return
+
+    found = await get_latest_pending_duel_for_target(message.from_user.id)
+    if not found:
+        await message.answer("❌ У тебя нет ожидающих вызовов на дуэль.")
+        return
+
+    duel_id, duel = found
+    processing = await message.answer("⏳ Принимаю вызов на дуэль...")
+    adapter = _DuelCommandCallbackAdapter(message.from_user, processing, duel_id, duel)
+    await duel_accept(adapter, state)
+
+
+@router.message(Command("отклонить"))
+async def command_duel_decline(message: Message, state: FSMContext):
+    """Отклонить последний ожидающий вызов."""
+    if message.chat.type in ("group", "supergroup"):
+        return
+
+    found = await get_latest_pending_duel_for_target(message.from_user.id)
+    if not found:
+        await message.answer("❌ У тебя нет ожидающих вызовов на дуэль.")
+        return
+
+    duel_id, duel = found
+    processing = await message.answer("⏳ Отклоняю вызов на дуэль...")
+    adapter = _DuelCommandCallbackAdapter(message.from_user, processing, duel_id, duel)
+    await duel_decline(adapter, state)
 
 
 @router.callback_query(F.data.startswith("duel_accept:"))
@@ -6587,6 +6712,34 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     await set_duel_cooldown(duel["target_id"])
 
     await update_duel_status(duel_id, "finished")
+    # Сразу публикуем итог в исходной группе.
+    challenger_name = await get_user_name(duel["challenger_id"]) or "Игрок"
+    target_name = await get_user_name(duel["target_id"]) or "Игрок"
+    winner_id = winner_id if "winner_id" in locals() else None
+    if winner_id == duel["challenger_id"]:
+        winner_name = challenger_name
+        loser_name = target_name
+    elif winner_id == duel["target_id"]:
+        winner_name = target_name
+        loser_name = challenger_name
+    else:
+        winner_name = None
+        loser_name = None
+
+    if winner_name:
+        group_result = (
+            f"🥊 <b>Итог дуэли!</b>\n\n"
+            f"🏆 Победитель: <b>{winner_name}</b>\n"
+            f"💀 Проигравший: <b>{loser_name}</b>\n"
+            f"💰 Ставка: <b>{duel['amount']:,} ₽</b>"
+        )
+    else:
+        group_result = (
+            f"🥊 <b>Итог дуэли!</b>\n"
+            f"Ставка: <b>{duel['amount']:,} ₽</b>"
+        )
+
+    await send_duel_group_result(duel, group_result)
 
     # Прогресс заданий «сыграй дуэли» — засчитывается обоим участникам
     await bump_task_progress(duel["challenger_id"], "duel")
