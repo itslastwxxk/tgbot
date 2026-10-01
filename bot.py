@@ -6784,34 +6784,39 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     # --- Доставка итога ---
     # 1) В группу (если вызов был создан там) итог публикуется один раз.
-    # 2) Принявшему:
-    #    - принимал в ЛС (кнопка или /принять) — его сообщение со стартом
-    #      редактируется прямо в итог, дубль в ЛС не шлём;
-    #    - принимал кнопкой в группе — кнопки у вызова убираем, итог
-    #      дополнительно продублирован ему в ЛС.
-    # 3) Вызывающему итог всегда приходит в ЛС.
-    if callback.message.chat.id == duel["target_id"]:
-        try:
-            await callback.message.edit_text(result_text, parse_mode="HTML")
-        except TelegramBadRequest:
-            try:
-                await bot.send_message(duel["target_id"], result_text, parse_mode="HTML")
-            except Exception:
-                pass
-    else:
+    # 2) Принявшему итог приходит ВСЕГДА новым сообщением в ЛС.
+    #    Если принимал кнопкой в группе — только убираем кнопки у вызова.
+    # 3) Вызывающему итог дублируем в ЛС, ТОЛЬКО если он не увидит его
+    #    в группе (не состоит в ней или бот не может проверить).
+    await send_duel_group_result(duel, result_text)
+
+    # Принявшему: новое сообщение, никаких правок старого
+    if callback.message.chat.id != duel["target_id"]:
+        # принимал кнопкой в группе — чистим кнопки у сообщения-вызова
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        try:
-            await bot.send_message(duel["target_id"], result_text, parse_mode="HTML")
-        except Exception:
-            pass
-
     try:
-        await bot.send_message(duel["challenger_id"], result_text, parse_mode="HTML")
+        await bot.send_message(duel["target_id"], result_text, parse_mode="HTML")
     except Exception:
         pass
+
+    # Вызывающему: ЛС только если итог не был опубликован в его группе
+    challenger_id = duel["challenger_id"]
+    group_chat_id = duel.get("chat_id")
+    need_pm = True
+    if group_chat_id:
+        try:
+            await bot.get_chat_member(group_chat_id, challenger_id)
+            need_pm = False  # состоит в группе — уже увидел итог там
+        except Exception:
+            need_pm = True
+    if need_pm:
+        try:
+            await bot.send_message(challenger_id, result_text, parse_mode="HTML")
+        except Exception:
+            pass
 
     if ch_up:
         await notify_level_up(duel["challenger_id"], ch_new_level)
