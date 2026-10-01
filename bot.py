@@ -2846,28 +2846,19 @@ async def command_me(message: Message, state: FSMContext):
     xp_earned = xp_in_current_level(total_xp, level)
     percent = min(100, int((xp_earned / xp_needed) * 100)) if xp_needed > 0 else 100
 
-    bar_len = 15
-    filled = percent * bar_len // 100
-    bar = "█" * filled + "░" * (bar_len - filled)
-    
     profile_text = (
-        f"👤 <b>профиль игрока {html.escape(name)}</b>\n\n"
-        f"💰 баланс: <b>{balance:,} ₽</b>\n"
-        f"💎 токены: <b>{tokens} ТК</b>\n"
-        f"📈 уровень: <b>{level}</b>\n"
+        f"👤 <b>Профиль игрока {html.escape(name)}</b>\n\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"💰 Баланс: <b>{balance:,} ₽</b>\n"
+        f"💎 Токены: <b>{tokens} ТК</b>\n"
+        f"📈 Уровень: <b>{level}</b>\n"
         f"⚡ XP: <b>{xp_earned:,} / {xp_needed:,}</b>\n"
-        f"📊 [{bar}] {percent}%"
+        f"📊 Прогресс: <b>{percent}%</b>"
     )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Перевести деньги", callback_data="transfer_start")],
-        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
-    ])
 
     await message.answer(
         profile_text,
-        parse_mode="HTML",
-        reply_markup=kb
+        parse_mode="HTML"
     )
 
 
@@ -2895,7 +2886,7 @@ async def show_profile(message: Message, state: FSMContext):
     bar = "█" * filled + "░" * (bar_len - filled)
 
     profile_text = (
-        f"📋 <b>твой профиль</b>\n\n"
+        f"📋 <b>Профиль игрока {html.escape(await get_user_name(user_id))}</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
