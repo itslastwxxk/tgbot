@@ -400,7 +400,7 @@ MATH_UNLOCK_LEVEL = 3
 DUEL_UNLOCK_LEVEL = 6
 CASE_UNLOCK_LEVEL = 5
 TRADING_UNLOCK_LEVEL = 8
-BUSINESS_UNLOCK_LEVEL = 15
+BUSINESS_UNLOCK_LEVEL = 7
 CASINO_UNLOCK_LEVEL = 10
 
 # ============================================================
@@ -410,65 +410,79 @@ BUSINESS_LIST = [
     {
         "name": "Ларёк «Всё по 67»",
         "price": 100_000,
-        "income_per_min": 700,
-        "raw_consumption_per_min": 280,
-        "raw_capacity": 268_800,
+        "income_per_min": 167,
+        "raw_consumption_per_min": 67,
+        "raw_capacity": 60_000,
     },
     {
         "name": "Шаурмечка",
         "price": 450_000,
-        "income_per_min": 2_500,
-        "raw_consumption_per_min": 1_000,
-        "raw_capacity": 960_000,
+        "income_per_min": 750,
+        "raw_consumption_per_min": 300,
+        "raw_capacity": 270_000,
     },
     {
         "name": "Магазин «Недорого, но сердито»",
         "price": 2_000_000,
-        "income_per_min": 10_000,
-        "raw_consumption_per_min": 4_000,
-        "raw_capacity": 3_840_000,
+        "income_per_min": 3_333,
+        "raw_consumption_per_min": 1_333,
+        "raw_capacity": 1_200_000,
     },
     {
         "name": "Ферма",
         "price": 6_000_000,
-        "income_per_min": 28_000,
-        "raw_consumption_per_min": 11_200,
-        "raw_capacity": 10_752_000,
+        "income_per_min": 10_000,
+        "raw_consumption_per_min": 4_000,
+        "raw_capacity": 3_600_000,
     },
     {
         "name": "Букмекерская контора",
         "price": 7_000_000,
-        "income_per_min": 30_000,
-        "raw_consumption_per_min": 12_000,
-        "raw_capacity": 11_520_000,
+        "income_per_min": 11_667,
+        "raw_consumption_per_min": 4_667,
+        "raw_capacity": 4_200_000,
     },
     {
         "name": "Заправка",
         "price": 15_000_000,
-        "income_per_min": 60_000,
-        "raw_consumption_per_min": 24_000,
-        "raw_capacity": 23_040_000,
+        "income_per_min": 25_000,
+        "raw_consumption_per_min": 10_000,
+        "raw_capacity": 9_000_000,
     },
     {
         "name": "Гипермаркет",
         "price": 30_000_000,
-        "income_per_min": 104_000,
-        "raw_consumption_per_min": 41_600,
-        "raw_capacity": 39_936_000,
+        "income_per_min": 50_000,
+        "raw_consumption_per_min": 20_000,
+        "raw_capacity": 18_000_000,
     },
     {
         "name": "Криптобиржа",
         "price": 50_000_000,
-        "income_per_min": 154_000,
-        "raw_consumption_per_min": 61_600,
-        "raw_capacity": 59_136_000,
+        "income_per_min": 83_333,
+        "raw_consumption_per_min": 33_333,
+        "raw_capacity": 30_000_000,
+    },
+    {
+        "name": "Дворец",
+        "price": 150_000_000,
+        "income_per_min": 250_000,
+        "raw_consumption_per_min": 100_000,
+        "raw_capacity": 90_000_000,
     },
     {
         "name": "Аэропорт",
         "price": 500_000_000,
-        "income_per_min": 1_390_000,
-        "raw_consumption_per_min": 556_000,
-        "raw_capacity": 533_760_000,
+        "income_per_min": 833_333,
+        "raw_consumption_per_min": 333_333,
+        "raw_capacity": 300_000_000,
+    },
+    {
+        "name": "Казино",
+        "price": 1_000_000_000,
+        "income_per_min": 1_666_667,
+        "raw_consumption_per_min": 666_667,
+        "raw_capacity": 600_000_000,
     },
 ]
 
