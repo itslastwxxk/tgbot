@@ -1287,49 +1287,10 @@ async def get_duel(duel_id: str) -> dict | None:
         "amount": int(data["amount"]),
         "chat_id": int(data["chat_id"]) if data.get("chat_id") else None,
         "status": data.get("status", "pending"),
-        "group_msg_id": int(data["group_msg_id"]) if data.get("group_msg_id") else None,
-        "dm_msg_id": int(data["dm_msg_id"]) if data.get("dm_msg_id") else None,
     }
 
 async def update_duel_status(duel_id: str, status: str):
     await redis_client.hset(f"duel:{duel_id}", "status", status)
-
-async def send_duel_dm(duel_id: str, target_id: int, text: str, kb) -> bool:
-    """Дублирует вызов на дуэль, брошенный в группе, в личку цели (с теми же кнопками)."""
-    try:
-        m = await bot.send_message(target_id, text, parse_mode="HTML", reply_markup=kb)
-        await redis_client.hset(f"duel:{duel_id}", "dm_msg_id", str(m.message_id))
-        return True
-    except Exception:
-        # игрок не запускал бота / закрыл лс — вызов остаётся только в группе
-        return False
-
-async def sync_duel_copies(duel: dict, clicked_message, text: str):
-    """Обновляет вторую копию вызова (лс <-> группа), чтобы там не висели кнопки."""
-    copies = []
-    if duel.get("dm_msg_id"):
-        copies.append((duel["target_id"], duel["dm_msg_id"]))
-    if duel.get("chat_id") and duel.get("group_msg_id"):
-        copies.append((duel["chat_id"], duel["group_msg_id"]))
-    for cid, mid in copies:
-        if cid == clicked_message.chat.id and mid == clicked_message.message_id:
-            continue
-        try:
-            await bot.edit_message_text(text, chat_id=cid, message_id=mid, parse_mode="HTML")
-        except Exception:
-            pass
-
-async def send_duel_result_to_group(duel: dict, clicked_message, text: str):
-    """Если дуэль приняли в лс, а вызов был в группе — результат тоже уходит в группу."""
-    chat_id = duel.get("chat_id")
-    if not chat_id or not duel.get("group_msg_id"):
-        return
-    if clicked_message.chat.id == chat_id:
-        return
-    try:
-        await bot.send_message(chat_id, text, parse_mode="HTML")
-    except Exception:
-        pass
 
 # --- Фарм ---
 async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple[bool, int]:
@@ -6229,19 +6190,11 @@ async def command_duel(message: Message, state: FSMContext):
 
     if message.chat.type in ("group", "supergroup"):
         # Успешную команду НЕ удаляем — она остаётся в группе.
-        sent = await message.answer(
+        await message.answer(
             f"🥊 <b>{challenger_name}</b> вызывает <b>{target_name}</b> на дуэль!\n"
             f"💰 Ставка: <b>{amount:,} ₽</b>",
             parse_mode="HTML",
             reply_markup=kb,
-        )
-        await redis_client.hset(f"duel:{duel_id}", "group_msg_id", str(sent.message_id))
-        # Дубль вызова в лс цели
-        await send_duel_dm(
-            duel_id, target_id,
-            f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль на <b>{amount:,} ₽</b>.\n"
-            f"принять?",
-            kb,
         )
     else:
         await message.answer(
@@ -6461,19 +6414,11 @@ async def process_duel_challenge(message: Message, state: FSMContext):
 
     try:
         if message.chat.type in ("group", "supergroup"):
-            sent = await message.answer(
+            await message.answer(
                 f"🥊 <b>{challenger_name}</b> вызывает <b>{target_name}</b> на дуэль на <b>{amount:,} ₽</b>.\n"
                 f"{target_name}, принять?",
                 parse_mode="HTML",
                 reply_markup=kb,
-            )
-            await redis_client.hset(f"duel:{duel_id}", "group_msg_id", str(sent.message_id))
-            # Дубль вызова в лс цели
-            await send_duel_dm(
-                duel_id, target_id,
-                f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль на <b>{amount:,} ₽</b>.\n"
-                f"принять?",
-                kb,
             )
         else:
             await bot.send_message(
@@ -6520,7 +6465,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     if ch_balance < duel["amount"]:
         await callback.message.edit_text("❌ у вызывающего недостаточно денег. дуэль отменена.")
-        await sync_duel_copies(duel, callback.message, "❌ у вызывающего недостаточно денег. дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         try:
             await bot.send_message(duel["challenger_id"], "❌ у тебя недостаточно денег на дуэль. вызов отменён.")
@@ -6530,7 +6474,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     if tg_balance < duel["amount"]:
         await callback.message.edit_text("❌ у тебя недостаточно денег. Дуэль отменена.")
-        await sync_duel_copies(duel, callback.message, "❌ у тебя недостаточно денег. Дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         return
 
@@ -6544,7 +6487,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         if ok_tg:
             await add_to_balance(duel["target_id"], duel["amount"])
         await callback.message.edit_text("❌ у вызывающего недостаточно денег. Дуэль отменена.")
-        await sync_duel_copies(duel, callback.message, "❌ у вызывающего недостаточно денег. Дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         try:
             await bot.send_message(duel["challenger_id"], "❌ у тебя недостаточно денег на дуэль. Вызов отменён.")
@@ -6556,7 +6498,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         # Первому уже списали — возвращаем
         await add_to_balance(duel["challenger_id"], duel["amount"])
         await callback.message.edit_text("❌ у тебя недостаточно денег. Дуэль отменена.")
-        await sync_duel_copies(duel, callback.message, "❌ у тебя недостаточно денег. Дуэль отменена.")
         await update_duel_status(duel_id, "cancelled")
         return
 
@@ -6573,7 +6514,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(start_text, parse_mode="HTML")
     except TelegramBadRequest:
         await callback.message.answer(start_text, parse_mode="HTML")
-    await sync_duel_copies(duel, callback.message, start_text)
 
     try:
         await bot.send_message(duel["challenger_id"], start_text, parse_mode="HTML")
@@ -6663,7 +6603,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(result_text, parse_mode="HTML")
     except TelegramBadRequest:
         pass
-    await send_duel_result_to_group(duel, callback.message, result_text)
 
     try:
         await bot.send_message(duel["challenger_id"], result_text, parse_mode="HTML")
@@ -6699,12 +6638,10 @@ async def duel_decline(callback: CallbackQuery, state: FSMContext):
     ch_name = await get_user_name(duel["challenger_id"]) or "Игрок"
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
-    decline_text = f"❌ <b>{tg_name}</b> отклонил дуэль от <b>{ch_name}</b>."
     try:
-        await callback.message.edit_text(decline_text, parse_mode="HTML")
+        await callback.message.edit_text(f"❌ <b>{tg_name}</b> отклонил дуэль от <b>{ch_name}</b>.", parse_mode="HTML")
     except TelegramBadRequest:
-        await callback.message.answer(decline_text, parse_mode="HTML")
-    await sync_duel_copies(duel, callback.message, decline_text)
+        await callback.message.answer(f"❌ <b>{tg_name}</b> отклонил дуэль от <b>{ch_name}</b>.", parse_mode="HTML")
 
     try:
         await bot.send_message(duel["challenger_id"], f"❌ <b>{tg_name}</b> отклонил твою дуэль.", parse_mode="HTML")
