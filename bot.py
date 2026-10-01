@@ -399,8 +399,9 @@ BONUS_UNLOCK_LEVEL = 2
 MATH_UNLOCK_LEVEL = 3
 DUEL_UNLOCK_LEVEL = 6
 CASE_UNLOCK_LEVEL = 5
-TRADING_UNLOCK_LEVEL = 8
-BUSINESS_UNLOCK_LEVEL = 7
+SHOP_UNLOCK_LEVEL = 7
+TRADING_UNLOCK_LEVEL = 9
+BUSINESS_UNLOCK_LEVEL = 6
 CASINO_UNLOCK_LEVEL = 10
 
 # ============================================================
@@ -2396,7 +2397,9 @@ async def admin_ref_top(callback: CallbackQuery, state: FSMContext):
 # --- Клавиатуры ---
 async def get_main_keyboard(user_id: int):
     level = (await get_user_stats(user_id))["level"]
-    keyboard = [[KeyboardButton(text="💼 Работа"), KeyboardButton(text="🛒 Магаз")]]
+    keyboard = [[KeyboardButton(text="💼 Работа")]]
+    if level >= SHOP_UNLOCK_LEVEL:
+        keyboard[0].append(KeyboardButton(text="🛒 Магаз"))
 
     row = []
     if level >= CASINO_UNLOCK_LEVEL:
@@ -3681,6 +3684,10 @@ async def daily_task_claim(callback: CallbackQuery):
 
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message, state: FSMContext):
+    level = (await get_user_stats(message.from_user.id))["level"]
+    if level < SHOP_UNLOCK_LEVEL:
+        await message.answer(f"🔒 Магазин откроется с 7 уровня.\nТвой уровень: {level}")
+        return
     await state.clear()
     await message.answer(
         "🛒 <b>Магазин</b>\n\nВыбери, какой магазин открыть:",
@@ -3691,6 +3698,10 @@ async def show_shop_menu(message: Message, state: FSMContext):
 
 @router.message(F.text == "🛒 Магазин")
 async def show_regular_shop(message: Message):
+    level = (await get_user_stats(message.from_user.id))["level"]
+    if level < SHOP_UNLOCK_LEVEL:
+        await message.answer(f"🔒 Магазин откроется с 7 уровня.\nТвой уровень: {level}")
+        return
     await message.answer(
         "🛒 <b>Обычный магазин</b>\n\nРаздел пока в разработке.",
         parse_mode="HTML",
