@@ -6529,12 +6529,15 @@ async def process_duel_challenge(message: Message, state: FSMContext):
 @router.message(Command("принять"))
 async def command_duel_accept(message: Message, state: FSMContext):
     """Принять последний ожидающий вызов."""
-    if message.chat.type in ("group", "supergroup"):
-        return
 
     found = await get_latest_pending_duel_for_target(message.from_user.id)
+    if message.chat.type in ("group", "supergroup") and found:
+        duel_id, duel = found
+        if duel.get("chat_id") != message.chat.id:
+            found = None
+
     if not found:
-        await message.answer("❌ У тебя нет ожидающих вызовов на дуэль.")
+        await message.answer("❌ В этой группе нет ожидающего вызова на дуэль.")
         return
 
     duel_id, duel = found
@@ -6546,12 +6549,15 @@ async def command_duel_accept(message: Message, state: FSMContext):
 @router.message(Command("отклонить"))
 async def command_duel_decline(message: Message, state: FSMContext):
     """Отклонить последний ожидающий вызов."""
-    if message.chat.type in ("group", "supergroup"):
-        return
 
     found = await get_latest_pending_duel_for_target(message.from_user.id)
+    if message.chat.type in ("group", "supergroup") and found:
+        duel_id, duel = found
+        if duel.get("chat_id") != message.chat.id:
+            found = None
+
     if not found:
-        await message.answer("❌ У тебя нет ожидающих вызовов на дуэль.")
+        await message.answer("❌ В этой группе нет ожидающего вызова на дуэль.")
         return
 
     duel_id, duel = found
