@@ -1292,95 +1292,6 @@ async def get_duel(duel_id: str) -> dict | None:
 async def update_duel_status(duel_id: str, status: str):
     await redis_client.hset(f"duel:{duel_id}", "status", status)
 
-async def send_duel_group_result(duel: dict, result_text: str):
-    """Публикует итог дуэли в группу, если вызов был создан в группе."""
-    chat_id = duel.get("chat_id")
-    if not chat_id:
-        return
-    try:
-        await bot.send_message(chat_id, result_text, parse_mode="HTML")
-    except Exception:
-        pass
-
-
-
-async def get_latest_pending_duel_for_target(target_id: int) -> tuple[str, dict] | None:
-    """Возвращает самый свежий ожидающий вызов для игрока."""
-    latest = None
-    latest_created = -1.0
-
-    async for key in redis_client.scan_iter(match="duel:*", count=100):
-        if isinstance(key, bytes):
-            key = key.decode()
-        duel_id = key.split(":", 1)[1]
-        duel = await get_duel(duel_id)
-        if not duel or duel["status"] != "pending":
-            continue
-        if duel["target_id"] != target_id:
-            continue
-
-        raw = await redis_client.hget(f"duel:{duel_id}", "created_at")
-        try:
-            created_at = float(raw or 0)
-        except (TypeError, ValueError):
-            created_at = 0.0
-
-        if created_at > latest_created:
-            latest_created = created_at
-            latest = (duel_id, duel)
-
-    return latest
-
-
-class _DuelCommandMessageProxy:
-    """Прокси сообщения для переиспользования callback-логики из команд.
-
-    Дублирует интерфейс Message настолько, насколько его использует
-    duel_accept: chat, message_id, edit_text, edit_reply_markup, answer.
-    """
-    def __init__(self, processing_message: Message, duel: dict):
-        self.processing_message = processing_message
-        self.duel = duel
-        # Интерфейс Message, который ожидает duel_accept
-        self.chat = processing_message.chat
-        self.message_id = processing_message.message_id
-
-    async def edit_text(self, text, **kwargs):
-        return await self.processing_message.edit_text(text, **kwargs)
-
-    async def edit_reply_markup(self, reply_markup=None, **kwargs):
-        try:
-            return await self.processing_message.edit_reply_markup(
-                reply_markup=reply_markup, **kwargs
-            )
-        except TelegramBadRequest:
-            return None
-
-    async def answer(self, text, **kwargs):
-        # Ответ в ЛС игроку.
-        await self.processing_message.answer(text, **kwargs)
-
-        # Если вызов был из группы — результат также публикуется там.
-        chat_id = self.duel.get("chat_id")
-        if chat_id and chat_id != self.processing_message.chat.id:
-            try:
-                await bot.send_message(chat_id, text, **kwargs)
-            except Exception:
-                pass
-
-
-class _DuelCommandCallbackAdapter:
-    """Минимальный интерфейс CallbackQuery для /принять и /отклонить."""
-    def __init__(self, user, processing_message: Message, duel_id: str, duel: dict):
-        self.from_user = user
-        self.data = duel_id
-        self.message = _DuelCommandMessageProxy(processing_message, duel)
-
-    async def answer(self, text=None, **kwargs):
-        if text:
-            await self.message.processing_message.answer(text)
-
-
 # --- Фарм ---
 async def can_farm(user_id: int, cooldown_seconds: int = MINE_COOLDOWN) -> tuple[bool, int]:
     now = time.time()
@@ -6509,23 +6420,6 @@ async def process_duel_challenge(message: Message, state: FSMContext):
                 parse_mode="HTML",
                 reply_markup=kb,
             )
-
-            # Дополнительно отправляем тот же вызов в ЛС игроку.
-            # В ЛС можно ответить командами /принять или /отклонить.
-            try:
-                await bot.send_message(
-                    target_id,
-                    f"🥊 <b>{challenger_name}</b> вызывает тебя на дуэль!\n"
-                    f"💰 Ставка: <b>{amount:,} ₽</b>\n\n"
-                    f"✅ Принять: <code>/принять</code>\n"
-                    f"❌ Отклонить: <code>/отклонить</code>",
-                    parse_mode="HTML",
-                    reply_markup=kb,
-                )
-            except Exception:
-                # Если пользователь запретил боту писать в ЛС,
-                # вызов в группе всё равно остаётся рабочим.
-                pass
         else:
             await bot.send_message(
                 target_id,
@@ -6539,56 +6433,6 @@ async def process_duel_challenge(message: Message, state: FSMContext):
         await redis_client.delete(f"duel:{duel_id}")
 
     await state.clear()
-
-
-@router.message(Command("принять"))
-async def command_duel_accept(message: Message, state: FSMContext):
-    """Принять последний ожидающий вызов дуэли.
-
-    Полностью повторяет сценарий нажатия кнопки «✅ Принять»:
-    кубики, списание ставок, кулдауны и доставка итога —
-    вся логика живёт в duel_accept.
-    """
-    found = await get_latest_pending_duel_for_target(message.from_user.id)
-
-    if message.chat.type in ("group", "supergroup") and found:
-        duel_id, duel = found
-        if duel.get("chat_id") != message.chat.id:
-            found = None
-
-    if not found:
-        await message.answer("❌ нет ожидающего вызова на дуэль для тебя.")
-        return
-
-    duel_id, duel = found
-
-    # Проверяем актуальность вызова.
-    if duel["status"] != "pending":
-        await message.answer("❌ этот вызов уже обработан.")
-        return
-
-    processing = await message.answer("⏳ принимаю дуэль...")
-    adapter = _DuelCommandCallbackAdapter(message.from_user, processing, duel_id, duel)
-    await duel_accept(adapter, state)
-
-@router.message(Command("отклонить"))
-async def command_duel_decline(message: Message, state: FSMContext):
-    """Отклонить последний ожидающий вызов."""
-
-    found = await get_latest_pending_duel_for_target(message.from_user.id)
-    if message.chat.type in ("group", "supergroup") and found:
-        duel_id, duel = found
-        if duel.get("chat_id") != message.chat.id:
-            found = None
-
-    if not found:
-        await message.answer("❌ В этой группе нет ожидающего вызова на дуэль.")
-        return
-
-    duel_id, duel = found
-    processing = await message.answer("⏳ Отклоняю вызов на дуэль...")
-    adapter = _DuelCommandCallbackAdapter(message.from_user, processing, duel_id, duel)
-    await duel_decline(adapter, state)
 
 
 @router.callback_query(F.data.startswith("duel_accept:"))
@@ -6661,43 +6505,22 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
     start_text = (
-        f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
+        f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
         f"💰 ставка: <b>{duel['amount']:,} ₽</b>\n\n"
         f"🎲 бросаем кости..."
     )
 
-    # В группе не показываем бросок кубиков.
-    # Убираем только кнопки с исходного сообщения, а сам итог позже
-    # будет отправлен отдельным сообщением в нужном формате.
-    if callback.message.chat.type in ("group", "supergroup"):
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
-    # В ЛС дублируем сообщение о дуэли обоим участникам.
-    # Если принятие произошло кнопкой в ЛС соперника, его сообщение
-    # уже существует — просто редактируем его вместо создания дубля.
-    if callback.message.chat.id == duel["target_id"]:
-        try:
-            await callback.message.edit_text(start_text, parse_mode="HTML")
-        except Exception:
-            try:
-                await bot.send_message(duel["target_id"], start_text, parse_mode="HTML")
-            except Exception:
-                pass
-    else:
-        try:
-            await bot.send_message(duel["target_id"], start_text, parse_mode="HTML")
-        except Exception:
-            pass
+    try:
+        await callback.message.edit_text(start_text, parse_mode="HTML")
+    except TelegramBadRequest:
+        await callback.message.answer(start_text, parse_mode="HTML")
 
     try:
         await bot.send_message(duel["challenger_id"], start_text, parse_mode="HTML")
     except Exception:
         pass
 
-    # Кубики бросаются только в ЛС участников.
+    # Отправляем кубик обоим игрокам
     ch_msg = None
     tg_msg = None
 
@@ -6711,50 +6534,46 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
-    # Ждём завершение анимации кубика (~4 сек).
+    # Ждём завершение анимации кубика (~4 сек)
     await asyncio.sleep(4)
 
     ch_value = ch_msg.dice.value if ch_msg and ch_msg.dice else 0
     tg_value = tg_msg.dice.value if tg_msg and tg_msg.dice else 0
 
-    # Если кубик не отправился — используем фолбэк-рандом.
+    # Если кому-то кубик не отправился — бросаем фолбэк-рандом
     if ch_value == 0:
         ch_value = random.randint(1, 6)
     if tg_value == 0:
         tg_value = random.randint(1, 6)
 
-    winner_id = None
-
     if ch_value > tg_value:
-        winner_id = duel["challenger_id"]
-        await add_to_balance(winner_id, duel["amount"] * 2)
+        await add_to_balance(duel["challenger_id"], duel["amount"] * 2)
         result_text = (
-            f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
-            f"💰 <b>ставка: {duel['amount']:,} ₽</b>\n\n"
-            f"🎲 {html.escape(ch_name)}: {ch_value}\n"
-            f"🎲 {html.escape(tg_name)}: {tg_value}\n\n"
-            f"🎉 <b>победил {html.escape(ch_name)}!</b>\n"
-            f"💰 <b>выигрыш: +{duel['amount']:,} ₽</b>"
+            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
+            f"💰 ставка: {duel['amount']:,} ₽\n\n"
+            f"🎲 {ch_name}: {ch_value}\n"
+            f"🎲 {tg_name}: {tg_value}\n\n"
+            f"🎉 <b>победил {ch_name}!</b>\n"
+            f"💰 выигрыш: +<b>{duel['amount']:,} ₽</b>"
         )
     elif tg_value > ch_value:
-        winner_id = duel["target_id"]
-        await add_to_balance(winner_id, duel["amount"] * 2)
+        await add_to_balance(duel["target_id"], duel["amount"] * 2)
         result_text = (
-            f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
-            f"💰 <b>ставка: {duel['amount']:,} ₽</b>\n\n"
-            f"🎲 {html.escape(ch_name)}: {ch_value}\n"
-            f"🎲 {html.escape(tg_name)}: {tg_value}\n\n"
-            f"🎉 <b>победил {html.escape(tg_name)}!</b>\n"
-            f"💰 <b>выигрыш: +{duel['amount']:,} ₽</b>"
+            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
+            f"💰 ставка: {duel['amount']:,} ₽\n\n"
+            f"🎲 {ch_name}: {ch_value}\n"
+            f"🎲 {tg_name}: {tg_value}\n\n"
+            f"🎉 <b>победил {tg_name}!</b>\n"
+            f"💰 выигрыш: +<b>{duel['amount']:,} ₽</b>"
         )
     else:
         await add_to_balance(duel["challenger_id"], duel["amount"])
         await add_to_balance(duel["target_id"], duel["amount"])
         result_text = (
-            f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
-            f"💰 <b>ставка: {duel['amount']:,} ₽</b>\n\n"
-            f"🎲 {html.escape(ch_name)}: {ch_value}\n"
-            f"🎲 {html.escape(tg_name)}: {tg_value}\n\n"
+            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
+            f"💰 ставка: {duel['amount']:,} ₽\n\n"
+            f"🎲 {ch_name}: {ch_value}\n"
+            f"🎲 {tg_name}: {tg_value}\n\n"
             f"🤝 <b>ничья!</b> деньги возвращены."
         )
 
@@ -6769,10 +6588,6 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     await update_duel_status(duel_id, "finished")
 
-    # В группу отправляем именно итог с результатами двух кубиков,
-    # как в примере пользователя. Броски кубиков в группу не отправляются.
-    await send_duel_group_result(duel, result_text)
-
     # Прогресс заданий «сыграй дуэли» — засчитывается обоим участникам
     await bump_task_progress(duel["challenger_id"], "duel")
     await bump_task_progress(duel["target_id"], "duel")
@@ -6782,41 +6597,17 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     elif tg_value > ch_value:
         await bump_task_progress(duel["target_id"], "duel_win")
 
-    # --- Доставка итога ---
-    # 1) В группу (если вызов был создан там) итог публикуется один раз.
-    # 2) Принявшему итог приходит ВСЕГДА новым сообщением в ЛС.
-    #    Если принимал кнопкой в группе — только убираем кнопки у вызова.
-    # 3) Вызывающему итог дублируем в ЛС, ТОЛЬКО если он не увидит его
-    #    в группе (не состоит в ней или бот не может проверить).
-    await send_duel_group_result(duel, result_text)
+    # ... отправка result_text обоим игрокам ...
 
-    # Принявшему: новое сообщение, никаких правок старого
-    if callback.message.chat.id != duel["target_id"]:
-        # принимал кнопкой в группе — чистим кнопки у сообщения-вызова
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:
-            pass
     try:
-        await bot.send_message(duel["target_id"], result_text, parse_mode="HTML")
-    except Exception:
+        await callback.message.answer(result_text, parse_mode="HTML")
+    except TelegramBadRequest:
         pass
 
-    # Вызывающему: ЛС только если итог не был опубликован в его группе
-    challenger_id = duel["challenger_id"]
-    group_chat_id = duel.get("chat_id")
-    need_pm = True
-    if group_chat_id:
-        try:
-            await bot.get_chat_member(group_chat_id, challenger_id)
-            need_pm = False  # состоит в группе — уже увидел итог там
-        except Exception:
-            need_pm = True
-    if need_pm:
-        try:
-            await bot.send_message(challenger_id, result_text, parse_mode="HTML")
-        except Exception:
-            pass
+    try:
+        await bot.send_message(duel["challenger_id"], result_text, parse_mode="HTML")
+    except Exception:
+        pass
 
     if ch_up:
         await notify_level_up(duel["challenger_id"], ch_new_level)
