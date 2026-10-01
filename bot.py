@@ -6528,9 +6528,9 @@ async def process_duel_challenge(message: Message, state: FSMContext):
 
 @router.message(Command("принять"))
 async def command_duel_accept(message: Message, state: FSMContext):
-    """Принять последний ожидающий вызов."""
-
+    """Принять последний ожидающий вызов дуэли."""
     found = await get_latest_pending_duel_for_target(message.from_user.id)
+
     if message.chat.type in ("group", "supergroup") and found:
         duel_id, duel = found
         if duel.get("chat_id") != message.chat.id:
@@ -6541,10 +6541,73 @@ async def command_duel_accept(message: Message, state: FSMContext):
         return
 
     duel_id, duel = found
-    processing = await message.answer("⏳ Принимаю вызов на дуэль...")
-    adapter = _DuelCommandCallbackAdapter(message.from_user, processing, duel_id, duel)
-    await duel_accept(adapter, state)
 
+    # Проверяем актуальность вызова.
+    if duel["status"] != "pending":
+        await message.answer("❌ Этот вызов уже обработан.")
+        return
+
+    challenger_id = duel["challenger_id"]
+    target_id = duel["target_id"]
+    amount = duel["amount"]
+
+    # Проверяем баланс обоих игроков.
+    challenger_balance = await get_balance(challenger_id)
+    target_balance = await get_balance(target_id)
+
+    if challenger_balance < amount:
+        await update_duel_status(duel_id, "cancelled")
+        await message.answer("❌ У вызывающего игрока уже недостаточно денег для дуэли.")
+        return
+
+    if target_balance < amount:
+        await update_duel_status(duel_id, "cancelled")
+        await message.answer("❌ У тебя недостаточно денег для принятия дуэли.")
+        return
+
+    # Резервируем/списываем ставки.
+    await deduct_balance(challenger_id, amount)
+    await deduct_balance(target_id, amount)
+
+    # Определяем победителя.
+    winner_id = random.choice([challenger_id, target_id])
+    loser_id = target_id if winner_id == challenger_id else challenger_id
+
+    prize = amount * 2
+    await add_to_balance(winner_id, prize)
+    await update_duel_status(duel_id, "finished")
+
+    winner_name = await get_user_name(winner_id) or "Игрок"
+    loser_name = await get_user_name(loser_id) or "Игрок"
+
+    result_text = (
+        f"🥊 <b>Дуэль завершена!</b>\n\n"
+        f"🏆 Победитель: <b>{html.escape(winner_name)}</b>\n"
+        f"💀 Проигравший: <b>{html.escape(loser_name)}</b>\n"
+        f"💰 Ставка: <b>{amount:,} ₽</b>\n"
+        f"🎁 Победитель получает: <b>{prize:,} ₽</b>"
+    )
+
+    # В группе результат публикуется прямо туда. В ЛС — игроку.
+    await message.answer(result_text, parse_mode="HTML")
+
+    chat_id = duel.get("chat_id")
+    if chat_id and chat_id != message.chat.id:
+        try:
+            await bot.send_message(chat_id, result_text, parse_mode="HTML")
+        except Exception:
+            pass
+
+    # Отдельно уведомляем вызывающего игрока в ЛС, если команда была в группе.
+    if message.chat.type in ("group", "supergroup"):
+        try:
+            await bot.send_message(
+                challenger_id,
+                result_text,
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
 @router.message(Command("отклонить"))
 async def command_duel_decline(message: Message, state: FSMContext):
