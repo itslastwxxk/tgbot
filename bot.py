@@ -2940,8 +2940,17 @@ async def show_profile(message: Message, state: FSMContext):
     filled = percent * bar_len // 100
     bar = "█" * filled + "░" * (bar_len - filled)
 
+    vip_until_raw = await redis_client.hget(f"user:{user_id}", "vip_until")
+    try:
+        vip_until = int(float(vip_until_raw or 0))
+    except (TypeError, ValueError):
+        vip_until = 0
+    vip_line = (f"👑 VIP до: <b>{datetime.fromtimestamp(vip_until).strftime('%d.%m.%Y')}</b>\n"
+                if vip_until > int(time.time()) else "")
+
     profile_text = (
         f"📋 <b>твой профиль</b>\n\n"
+        f"{vip_line}"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
@@ -3697,48 +3706,32 @@ async def shop_back_to_menu(message: Message, state: FSMContext):
 # --- Магазин за Токены (ТК) ---
 DONATE_SHOP_ITEMS = [
     {
-        "id": "cash_300000",
-        "emoji": "💵",
-        "name": "300 000 ₽ на баланс",
-        "price": 10,
-        "desc": "\n начисляет 300 000 ₽ на твой основной баланс",
+        "id": "token_business_bookmaker",
+        "emoji": "🎯",
+        "name": "Букмекерская контора",
+        "price": 50,
+        "desc": "\n выдаёт бизнес «Букмекерская контора»",
     },
     {
-        "id": "platinum_case_token",
-        "emoji": "💠",
-        "name": "Платиновый кейс",
-        "price": 35,
-        "desc": "\n выдаёт 1 платиновый кейс. Открой его в разделе «Кейсы» без оплаты ₽",
+        "id": "token_business_crypto",
+        "emoji": "₿",
+        "name": "Криптобиржа",
+        "price": 100,
+        "desc": "\n выдаёт бизнес «Криптобиржа»",
     },
     {
-        "id": "elite_case_token",
-        "emoji": "⚜️",
-        "name": "Элитный кейс",
-        "price": 60,
-        "desc": "\n выдаёт 1 элитный кейс. Открой его в разделе «Кейсы» без оплаты ₽",
-    },
-    {
-        "id": "pickaxe_upgrade",
-        "emoji": "⛏️",
-        "name": "Повышение уровня кирки",
-        "price": 30,
-        "desc": "\n поднимает уровень твоей кирки на 1",
-        "image": "images/pickaxe.png",
+        "id": "token_vip_palace",
+        "emoji": "👑",
+        "name": "VIP + Дворец",
+        "price": 150,
+        "desc": "\n выдаёт VIP на 1 месяц и бизнес «Дворец»",
     },
     {
         "id": "change_name",
         "emoji": "✏️",
         "name": "Смена ника",
         "price": 40,
-        "desc": "\n позволяет бесплатно выбрать новый игровой ник",
-    },
-    {
-        "id": "stamina_refill",
-        "emoji": "🔋",
-        "name": "Восстановление выносливости",
-        "price": 5,
-        "desc": "\n восстанавливает выносливость в шахте до максимума",
-        "image": "images/battery.png",
+        "desc": "\n",
     },
 ]
 
@@ -3882,12 +3875,8 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
     item = DONATE_SHOP_ITEMS[idx]
     user_id = callback.from_user.id
 
-    if item["id"] == "pickaxe_upgrade":
-        pickaxe_lvl = await get_pickaxe_level(user_id)
-        if pickaxe_lvl >= len(PICKAXE_LEVELS) - 1:
-            await callback.answer("у тебя уже максимальная кирка!", show_alert=True)
-            return
-
+    # Смена ника — отдельный сценарий: ТК списываются только после
+    # успешной проверки нового ника.
     if item["id"] == "change_name":
         tokens = await get_tokens(user_id)
         if tokens < item["price"]:
@@ -3903,35 +3892,85 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
         )
         return
 
+    # Все новые товары с бизнесом требуют свободного слота бизнеса.
+    if item["id"] in {"token_business_bookmaker", "token_business_crypto", "token_vip_palace"}:
+        existing = await get_biz(user_id)
+        if existing:
+            await callback.answer(
+                "У тебя уже есть бизнес. Сначала продай его, чтобы получить новый.",
+                show_alert=True,
+            )
+            return
+
     ok = await deduct_tokens(user_id, item["price"])
     if not ok:
         await callback.answer("Не хватает ТК!", show_alert=True)
         return
 
-    if item["id"] == "pickaxe_upgrade":
-        pickaxe_lvl = await get_pickaxe_level(user_id)
-        new_lvl = pickaxe_lvl + 1
-        await set_pickaxe_level(user_id, new_lvl)
-        await callback.answer(
-            f"🎉 кирка улучшена до «{PICKAXE_LEVELS[new_lvl]['name']}»!", show_alert=True
-        )
-    elif item["id"] == "stamina_refill":
-        await redis_client.hset(f"user:{user_id}", mapping={
-            "mine_stamina": str(MINE_STAMINA_MAX),
-            "mine_stamina_empty_at": "",
-        })
-        await callback.answer("🔋 выносливость восстановлена до максимума!", show_alert=True)
-    elif item["id"] == "cash_300000":
-        new_balance = await add_to_balance(user_id, 300_000)
-        await callback.answer(f"💵 Начислено 300 000 ₽! Баланс: {new_balance:,} ₽", show_alert=True)
-    elif item["id"] == "platinum_case_token":
-        await redis_client.hincrby(f"user:{user_id}", "case_inventory:6", 1)
-        await callback.answer("💠 Платиновый кейс добавлен в инвентарь! Открой его в разделе «Кейсы».", show_alert=True)
-    elif item["id"] == "elite_case_token":
-        await redis_client.hincrby(f"user:{user_id}", "case_inventory:7", 1)
-        await callback.answer("⚜️ Элитный кейс добавлен в инвентарь! Открой его в разделе «Кейсы».", show_alert=True)
+    if item["id"] == "token_business_bookmaker":
+        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Букмекерская контора")
+        new_biz = {
+            "name": biz_def["name"],
+            "price": biz_def["price"],
+            "income_per_min": biz_def["income_per_min"],
+            "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
+            "raw_capacity": biz_def["raw_capacity"],
+            "level": 1,
+            "raw_stock": 0,
+            "balance": 0,
+            "broken": False,
+            "last_break_check": time.time(),
+            "last_collected": time.time(),
+        }
+        await save_biz(user_id, new_biz)
+        await callback.answer("🎯 Букмекерская контора получена за 50 ТК!", show_alert=True)
 
-    # Обновляем карточку товара в том же сообщении
+    elif item["id"] == "token_business_crypto":
+        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Криптобиржа")
+        new_biz = {
+            "name": biz_def["name"],
+            "price": biz_def["price"],
+            "income_per_min": biz_def["income_per_min"],
+            "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
+            "raw_capacity": biz_def["raw_capacity"],
+            "level": 1,
+            "raw_stock": 0,
+            "balance": 0,
+            "broken": False,
+            "last_break_check": time.time(),
+            "last_collected": time.time(),
+        }
+        await save_biz(user_id, new_biz)
+        await callback.answer("₿ Криптобиржа получена за 100 ТК!", show_alert=True)
+
+    elif item["id"] == "token_vip_palace":
+        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Дворец")
+        new_biz = {
+            "name": biz_def["name"],
+            "price": biz_def["price"],
+            "income_per_min": biz_def["income_per_min"],
+            "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
+            "raw_capacity": biz_def["raw_capacity"],
+            "level": 1,
+            "raw_stock": 0,
+            "balance": 0,
+            "broken": False,
+            "last_break_check": time.time(),
+            "last_collected": time.time(),
+        }
+        await save_biz(user_id, new_biz)
+
+        now = int(time.time())
+        current_vip = await redis_client.hget(f"user:{user_id}", "vip_until")
+        try:
+            current_vip_until = int(float(current_vip)) if current_vip else 0
+        except (TypeError, ValueError):
+            current_vip_until = 0
+        vip_until = max(now, current_vip_until) + 30 * 24 * 60 * 60
+        await redis_client.hset(f"user:{user_id}", "vip_until", str(vip_until))
+        await callback.answer("👑 VIP на 1 месяц и бизнес «Дворец» получены за 150 ТК!", show_alert=True)
+
+    # Обновляем карточку товара в том же сообщении.
     data = await state.get_data()
     old_msg_id = data.get("donate_msg_id", callback.message.message_id)
     new_msg_id = await _send_donate_carousel(
