@@ -1673,6 +1673,34 @@ async def check_level_access(message: Message, user_id: int, required_level: int
         return False
     return True
 
+# ============================================================
+# В группах запрещаем reply-кнопки и служебные команды.
+# Обычные сообщения при этом не блокируются — группа остаётся обычным чатом.
+# ============================================================
+GROUP_REPLY_BUTTON_TEXTS = {
+    "💼 Работа", "📋 Профиль", "📋 Задания", "🛒 Магаз", "🛒 Магазин",
+    "🔙 Назад", "💎 Магазин за токены", "📦 Кейсы", "🏆 Топ", "🎁 Бонус",
+    "🔙 В главное меню", "🔙 В меню", "⛏ Шахта", "⛏ Фармить",
+    "🔧 Прокачать кирку", "🔗 Реф", "📈 Трейдинг", "🧮 Математика",
+    "🏪 Бизнесы", "🎰 Казино", "🎡 Рулетка", "💣 Мины", "🥊 Дуэли",
+}
+
+@router.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    F.text.in_(GROUP_REPLY_BUTTON_TEXTS)
+)
+async def block_group_reply_buttons(message: Message):
+    # Ничего не отвечаем и не передаём сообщение обработчикам кнопок.
+    return
+
+@router.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    Command("start", "menu", "help")
+)
+async def block_group_service_commands(message: Message):
+    # /start, /menu и /help в группах не работают и не показывают клавиатуру.
+    return
+
 # --- Главное меню ---
 async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     # --- Логика получения данных (без изменений) ---
