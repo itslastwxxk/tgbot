@@ -1701,6 +1701,16 @@ async def block_group_service_commands(message: Message):
     # /start, /menu и /help в группах не работают и не показывают клавиатуру.
     return
 
+# В группе разрешены только игровые команды. Любой обычный текст,
+# включая тексты reply-кнопок, не передаётся обработчикам меню.
+@router.message(
+    F.chat.type.in_({"group", "supergroup"}),
+    ~F.text.startswith("/")
+)
+async def ignore_group_non_commands(message: Message):
+    # В группе обычные сообщения и тексты reply-кнопок не запускают меню.
+    return
+
 # --- Главное меню ---
 async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     # --- Логика получения данных (без изменений) ---
