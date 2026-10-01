@@ -6699,22 +6699,43 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     tg_name = await get_user_name(duel["target_id"]) or "Игрок"
 
     start_text = (
-        f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
+        f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
         f"💰 ставка: <b>{duel['amount']:,} ₽</b>\n\n"
         f"🎲 бросаем кости..."
     )
 
-    try:
-        await callback.message.edit_text(start_text, parse_mode="HTML")
-    except TelegramBadRequest:
-        await callback.message.answer(start_text, parse_mode="HTML")
+    # В группе не показываем бросок кубиков.
+    # Убираем только кнопки с исходного сообщения, а сам итог позже
+    # будет отправлен отдельным сообщением в нужном формате.
+    if callback.message.chat.type in ("group", "supergroup"):
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+    # В ЛС дублируем сообщение о дуэли обоим участникам.
+    # Если принятие произошло кнопкой в ЛС соперника, его сообщение
+    # уже существует — просто редактируем его вместо создания дубля.
+    if callback.message.chat.id == duel["target_id"]:
+        try:
+            await callback.message.edit_text(start_text, parse_mode="HTML")
+        except Exception:
+            try:
+                await bot.send_message(duel["target_id"], start_text, parse_mode="HTML")
+            except Exception:
+                pass
+    else:
+        try:
+            await bot.send_message(duel["target_id"], start_text, parse_mode="HTML")
+        except Exception:
+            pass
 
     try:
         await bot.send_message(duel["challenger_id"], start_text, parse_mode="HTML")
     except Exception:
         pass
 
-    # Отправляем кубик обоим игрокам
+    # Кубики бросаются только в ЛС участников.
     ch_msg = None
     tg_msg = None
 
@@ -6728,46 +6749,50 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
-    # Ждём завершение анимации кубика (~4 сек)
+    # Ждём завершение анимации кубика (~4 сек).
     await asyncio.sleep(4)
 
     ch_value = ch_msg.dice.value if ch_msg and ch_msg.dice else 0
     tg_value = tg_msg.dice.value if tg_msg and tg_msg.dice else 0
 
-    # Если кому-то кубик не отправился — бросаем фолбэк-рандом
+    # Если кубик не отправился — используем фолбэк-рандом.
     if ch_value == 0:
         ch_value = random.randint(1, 6)
     if tg_value == 0:
         tg_value = random.randint(1, 6)
 
+    winner_id = None
+
     if ch_value > tg_value:
-        await add_to_balance(duel["challenger_id"], duel["amount"] * 2)
+        winner_id = duel["challenger_id"]
+        await add_to_balance(winner_id, duel["amount"] * 2)
         result_text = (
-            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
-            f"💰 ставка: {duel['amount']:,} ₽\n\n"
-            f"🎲 {ch_name}: {ch_value}\n"
-            f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🎉 <b>победил {ch_name}!</b>\n"
-            f"💰 выигрыш: +<b>{duel['amount']:,} ₽</b>"
+            f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
+            f"💰 <b>ставка: {duel['amount']:,} ₽</b>\n\n"
+            f"🎲 {html.escape(ch_name)}: {ch_value}\n"
+            f"🎲 {html.escape(tg_name)}: {tg_value}\n\n"
+            f"🎉 <b>победил {html.escape(ch_name)}!</b>\n"
+            f"💰 <b>выигрыш: +{duel['amount']:,} ₽</b>"
         )
     elif tg_value > ch_value:
-        await add_to_balance(duel["target_id"], duel["amount"] * 2)
+        winner_id = duel["target_id"]
+        await add_to_balance(winner_id, duel["amount"] * 2)
         result_text = (
-            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
-            f"💰 ставка: {duel['amount']:,} ₽\n\n"
-            f"🎲 {ch_name}: {ch_value}\n"
-            f"🎲 {tg_name}: {tg_value}\n\n"
-            f"🎉 <b>победил {tg_name}!</b>\n"
-            f"💰 выигрыш: +<b>{duel['amount']:,} ₽</b>"
+            f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
+            f"💰 <b>ставка: {duel['amount']:,} ₽</b>\n\n"
+            f"🎲 {html.escape(ch_name)}: {ch_value}\n"
+            f"🎲 {html.escape(tg_name)}: {tg_value}\n\n"
+            f"🎉 <b>победил {html.escape(tg_name)}!</b>\n"
+            f"💰 <b>выигрыш: +{duel['amount']:,} ₽</b>"
         )
     else:
         await add_to_balance(duel["challenger_id"], duel["amount"])
         await add_to_balance(duel["target_id"], duel["amount"])
         result_text = (
-            f"🥊 дуэль: <b>{ch_name}</b> vs <b>{tg_name}</b>\n"
-            f"💰 ставка: {duel['amount']:,} ₽\n\n"
-            f"🎲 {ch_name}: {ch_value}\n"
-            f"🎲 {tg_name}: {tg_value}\n\n"
+            f"🥊 <b>дуэль: {html.escape(ch_name)} vs {html.escape(tg_name)}</b>\n"
+            f"💰 <b>ставка: {duel['amount']:,} ₽</b>\n\n"
+            f"🎲 {html.escape(ch_name)}: {ch_value}\n"
+            f"🎲 {html.escape(tg_name)}: {tg_value}\n\n"
             f"🤝 <b>ничья!</b> деньги возвращены."
         )
 
@@ -6781,34 +6806,10 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
     await set_duel_cooldown(duel["target_id"])
 
     await update_duel_status(duel_id, "finished")
-    # Сразу публикуем итог в исходной группе.
-    challenger_name = await get_user_name(duel["challenger_id"]) or "Игрок"
-    target_name = await get_user_name(duel["target_id"]) or "Игрок"
-    winner_id = winner_id if "winner_id" in locals() else None
-    if winner_id == duel["challenger_id"]:
-        winner_name = challenger_name
-        loser_name = target_name
-    elif winner_id == duel["target_id"]:
-        winner_name = target_name
-        loser_name = challenger_name
-    else:
-        winner_name = None
-        loser_name = None
 
-    if winner_name:
-        group_result = (
-            f"🥊 <b>Итог дуэли!</b>\n\n"
-            f"🏆 Победитель: <b>{winner_name}</b>\n"
-            f"💀 Проигравший: <b>{loser_name}</b>\n"
-            f"💰 Ставка: <b>{duel['amount']:,} ₽</b>"
-        )
-    else:
-        group_result = (
-            f"🥊 <b>Итог дуэли!</b>\n"
-            f"Ставка: <b>{duel['amount']:,} ₽</b>"
-        )
-
-    await send_duel_group_result(duel, group_result)
+    # В группу отправляем именно итог с результатами двух кубиков,
+    # как в примере пользователя. Броски кубиков в группу не отправляются.
+    await send_duel_group_result(duel, result_text)
 
     # Прогресс заданий «сыграй дуэли» — засчитывается обоим участникам
     await bump_task_progress(duel["challenger_id"], "duel")
@@ -6821,10 +6822,16 @@ async def duel_accept(callback: CallbackQuery, state: FSMContext):
 
     # ... отправка result_text обоим игрокам ...
 
-    try:
-        await callback.message.answer(result_text, parse_mode="HTML")
-    except TelegramBadRequest:
-        pass
+    # Итог также дублируем обоим участникам в ЛС.
+    # Если callback пришёл из ЛС соперника, не создаём ему лишнее
+    # третье сообщение — его текущий экран уже находится в этом чате.
+    sent_to_target_via_callback = callback.message.chat.id == duel["target_id"]
+
+    if not sent_to_target_via_callback:
+        try:
+            await bot.send_message(duel["target_id"], result_text, parse_mode="HTML")
+        except Exception:
+            pass
 
     try:
         await bot.send_message(duel["challenger_id"], result_text, parse_mode="HTML")
