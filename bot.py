@@ -3431,7 +3431,53 @@ async def send_clothing_preview(bot_obj, chat_id: int, user_id: int, item_id: st
     return sent.message_id
 
 
-WARDROBE_PAGE_SIZE = 6
+WARDROBE_PAGE_SIZE = 1
+
+
+async def sell_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
+    """Продаёт купленную одежду за 60% от её исходной цены."""
+    item = clothing_item(item_id)
+    if not item:
+        return False, "Вещь не найдена."
+
+    sell_price = int(item["price"] * 0.60)
+    user_key = f"user:{user_id}"
+    inventory_key = f"user:{user_id}:clothes"
+
+    # Продажа и удаление из инвентаря выполняются атомарно.
+    script = """
+    if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 0 then
+        return 0
+    end
+
+    redis.call('SREM', KEYS[2], ARGV[1])
+    redis.call('HINCRBY', KEYS[1], 'balance', ARGV[2])
+
+    if redis.call('HGET', KEYS[1], 'equipped_top') == ARGV[1] then
+        redis.call('HDEL', KEYS[1], 'equipped_top')
+    end
+
+    return 1
+    """
+
+    result = int(await redis_client.eval(
+        script,
+        2,
+        user_key,
+        inventory_key,
+        item_id,
+        str(sell_price),
+    ))
+
+    if result != 1:
+        return False, "Этой вещи уже нет в гардеробе."
+
+    raw = await redis_client.hget(user_key, "balance")
+    new_balance = int(float(raw or 0))
+    _balance_cache[user_id] = new_balance
+    await redis_client.zadd("leaderboard:balance", {str(user_id): new_balance})
+
+    return True, f"💰 {item['name']} продана за {sell_price:,} ₽."
 
 
 async def send_wardrobe(
@@ -3440,6 +3486,7 @@ async def send_wardrobe(
     message_id: int | None = None,
     page: int = 0,
 ):
+    """Показывает гардероб как магазин: одна вещь = одна карточка с картинкой."""
     owned = await get_owned_clothes(user_id)
     equipped = await get_equipped_top(user_id)
 
@@ -3449,59 +3496,92 @@ async def send_wardrobe(
         if item:
             items.append(item)
 
+    # Надетая вещь первой, остальные — по названию.
     items.sort(key=lambda item: (item["id"] != equipped, item["name"].lower()))
 
-    total_pages = max(1, (len(items) + WARDROBE_PAGE_SIZE - 1) // WARDROBE_PAGE_SIZE)
+    total_pages = max(1, len(items))
     page = max(0, min(page, total_pages - 1))
-    page_items = items[
-        page * WARDROBE_PAGE_SIZE:(page + 1) * WARDROBE_PAGE_SIZE
-    ]
-
-    rows = []
-
-    if equipped:
-        equipped_item = clothing_item(equipped)
-        if equipped_item:
-            rows.append([
-                InlineKeyboardButton(
-                    text=f"❌ Снять «{equipped_item['name']}»",
-                    callback_data="clothing_unequip",
-                )
-            ])
 
     if not items:
         text = (
             "👕 <b>Гардероб</b>\n\n"
             "У тебя пока нет купленной одежды."
         )
-    else:
-        lines = ["👕 <b>Гардероб</b>", ""]
-        lines.append(f"Страница <b>{page + 1}/{total_pages}</b> • вещей: <b>{len(items)}</b>")
-        lines.append("")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")]
+        ])
 
-        for item in page_items:
-            is_equipped = item["id"] == equipped
-            mark = " ✅ НАДЕТО" if is_equipped else ""
-            lines.append(f"{item['emoji']} <b>{html.escape(item['name'])}</b>{mark}")
-
-            rows.append([
-                InlineKeyboardButton(
-                    text=(
-                        f"❌ Снять · {item['name']}"
-                        if is_equipped
-                        else f"👕 Надеть · {item['name']}"
-                    ),
-                    callback_data=(
-                        "clothing_unequip"
-                        if is_equipped
-                        else f"clothing_equip:{item['id']}"
-                    ),
+        if message_id:
+            try:
+                await callback_or_message.bot.edit_message_caption(
+                    chat_id=callback_or_message.message.chat.id,
+                    message_id=message_id,
+                    caption=text,
+                    parse_mode="HTML",
+                    reply_markup=kb,
                 )
-            ])
+                return
+            except TelegramBadRequest:
+                try:
+                    await callback_or_message.bot.edit_message_text(
+                        chat_id=callback_or_message.message.chat.id,
+                        message_id=message_id,
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
+                    return
+                except TelegramBadRequest:
+                    pass
 
-        text = "\n".join(lines)
+        if isinstance(callback_or_message, Message):
+            await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await callback_or_message.message.answer(
+                text, parse_mode="HTML", reply_markup=kb
+            )
+        return
 
-    # Пагинация — важна, когда одежды станет много.
+    item = items[page]
+    is_equipped = item["id"] == equipped
+    sell_price = int(item["price"] * 0.60)
+
+    status = "✅ <b>НАДЕТО</b>" if is_equipped else "📦 <b>В ГАРДЕРОБЕ</b>"
+
+    text = (
+        f"👕 <b>Гардероб</b>\n\n"
+        f"{item['emoji']} <b>{html.escape(item['name'])}</b>\n"
+        f"{html.escape(item['desc'])}\n\n"
+        f"{status}\n"
+        f"💵 Цена покупки: <b>{item['price']:,} ₽</b>\n"
+        f"💰 Продажа: <b>{sell_price:,} ₽</b> (60%)\n\n"
+        f"👕 Вещь <b>{page + 1}/{len(items)}</b>"
+    )
+
+    rows = []
+
+    if is_equipped:
+        rows.append([
+            InlineKeyboardButton(
+                text="❌ Снять",
+                callback_data="clothing_unequip",
+            )
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                text="👕 Одеть",
+                callback_data=f"clothing_equip:{item['id']}",
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text=f"💰 Продать за {sell_price:,} ₽",
+            callback_data=f"clothing_sell:{item['id']}",
+        )
+    ])
+
     nav = []
     if page > 0:
         nav.append(
@@ -3512,11 +3592,11 @@ async def send_wardrobe(
         )
     nav.append(
         InlineKeyboardButton(
-            text=f"{page + 1}/{total_pages}",
+            text=f"{page + 1}/{len(items)}",
             callback_data="clothing_noop",
         )
     )
-    if page < total_pages - 1:
+    if page < len(items) - 1:
         nav.append(
             InlineKeyboardButton(
                 text="➡️",
@@ -3529,141 +3609,174 @@ async def send_wardrobe(
     rows.append([
         InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")
     ])
+
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    image_path = item.get("image")
 
     if message_id:
         try:
-            await callback_or_message.bot.edit_message_caption(
-                chat_id=callback_or_message.message.chat.id,
-                message_id=message_id,
-                caption=text,
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
-            return
-        except TelegramBadRequest:
-            try:
-                await callback_or_message.bot.edit_message_text(
+            if image_path and os.path.exists(image_path):
+                await callback_or_message.bot.edit_message_media(
                     chat_id=callback_or_message.message.chat.id,
                     message_id=message_id,
-                    text=text,
+                    media=InputMediaPhoto(
+                        media=FSInputFile(image_path),
+                        caption=text,
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=kb,
+                )
+            else:
+                await callback_or_message.bot.edit_message_caption(
+                    chat_id=callback_or_message.message.chat.id,
+                    message_id=message_id,
+                    caption=text,
                     parse_mode="HTML",
                     reply_markup=kb,
                 )
-                return
-            except TelegramBadRequest:
-                pass
+            return
+        except TelegramBadRequest:
+            pass
 
-    if isinstance(callback_or_message, Message):
-        await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
-    else:
-        await callback_or_message.message.answer(
-            text,
+    if image_path and os.path.exists(image_path):
+        sent = await callback_or_message.bot.send_photo(
+            chat_id=callback_or_message.message.chat.id
+            if not isinstance(callback_or_message, Message)
+            else callback_or_message.chat.id,
+            photo=FSInputFile(image_path),
+            caption=text,
             parse_mode="HTML",
             reply_markup=kb,
         )
+        return sent.message_id
+
+    if isinstance(callback_or_message, Message):
+        sent = await callback_or_message.answer(
+            text, parse_mode="HTML", reply_markup=kb
+        )
+    else:
+        sent = await callback_or_message.message.answer(
+            text, parse_mode="HTML", reply_markup=kb
+        )
+    return sent.message_id
 
 
-@router.message(F.text == "🛒 Магазин")
-async def show_regular_shop(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    if not await check_level_access(message, user_id, SHOP_UNLOCK_LEVEL):
+@router.callback_query(F.data.startswith("clothing_sell:"))
+async def clothing_sell_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    item = clothing_item(item_id)
+
+    if not item:
+        await callback.answer("Вещь не найдена.", show_alert=True)
         return
-    await state.clear()
-    msg_id = await send_clothing_shop(message.bot, message.chat.id, user_id, 0)
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=0)
 
+    owned = await get_owned_clothes(callback.from_user.id)
+    if item_id not in owned:
+        await callback.answer("Этой вещи уже нет в гардеробе.", show_alert=True)
+        return
 
-@router.callback_query(F.data.startswith("clothing_car:"))
-async def clothing_car(callback: CallbackQuery, state: FSMContext):
-    idx = int(callback.data.split(":", 1)[1])
-    data = await state.get_data()
-    old_id = data.get("clothing_msg_id", callback.message.message_id)
-    msg_id = await send_clothing_shop(
-        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    sell_price = int(item["price"] * 0.60)
+
+    # Сохраняем выбранную вещь и просим подтверждение.
+    await state.update_data(
+        wardrobe_sell_item=item_id,
+        wardrobe_sell_page=int((await state.get_data()).get("wardrobe_page", 0)),
     )
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=f"✅ Да, продать за {sell_price:,} ₽",
+                callback_data=f"clothing_sell_confirm:{item_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data="clothing_sell_cancel",
+            )
+        ],
+    ])
+
+    confirm_text = (
+        f"💰 <b>Продажа одежды</b>\n\n"
+        f"{item['emoji']} <b>{html.escape(item['name'])}</b>\n\n"
+        f"Ты получишь: <b>{sell_price:,} ₽</b>\n"
+        f"Это 60% от цены покупки.\n\n"
+        f"<b>Продать эту вещь?</b>"
+    )
+
+    try:
+        await callback.message.edit_caption(
+            caption=confirm_text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except TelegramBadRequest:
+        try:
+            await callback.message.edit_text(
+                text=confirm_text,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except TelegramBadRequest:
+            pass
+
     await callback.answer()
 
 
-@router.callback_query(F.data == "clothing_shop")
-async def clothing_shop_callback(callback: CallbackQuery, state: FSMContext):
-    msg_id = await send_clothing_shop(
-        callback.bot, callback.message.chat.id, callback.from_user.id, 0,
+@router.callback_query(F.data.startswith("clothing_sell_confirm:"))
+async def clothing_sell_confirm_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    page = int(data.get("wardrobe_sell_page", 0))
+
+    ok, msg = await sell_clothing_item(callback.from_user.id, item_id)
+
+    if not ok:
+        await callback.answer(msg, show_alert=True)
+        return
+
+    owned_after = await get_owned_clothes(callback.from_user.id)
+    max_page = max(0, len(owned_after) - 1)
+    page = min(page, max_page)
+
+    await state.update_data(wardrobe_page=page)
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
         callback.message.message_id,
+        page=page,
     )
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=0)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("clothing_try:"))
-async def clothing_try_callback(callback: CallbackQuery, state: FSMContext):
-    item_id = callback.data.split(":", 1)[1]
-    data = await state.get_data()
-    old_id = data.get("clothing_msg_id", callback.message.message_id)
-    msg_id = await send_clothing_preview(
-        callback.bot, callback.message.chat.id, callback.from_user.id, item_id, old_id
-    )
-    await state.update_data(clothing_msg_id=msg_id, clothing_preview_item=item_id)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "clothing_preview_back")
-async def clothing_preview_back_callback(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    idx = int(data.get("clothing_idx", 0))
-    old_id = data.get("clothing_msg_id", callback.message.message_id)
-    msg_id = await send_clothing_shop(
-        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
-    )
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("clothing_preview_buy:"))
-async def clothing_preview_buy_callback(callback: CallbackQuery, state: FSMContext):
-    item_id = callback.data.split(":", 1)[1]
-    item = clothing_item(item_id)
-    if not item:
-        await callback.answer("Товар не найден.", show_alert=True)
-        return
-
-    ok, msg = await buy_clothing_item(callback.from_user.id, item_id)
-    if not ok:
-        await callback.answer(msg, show_alert=True)
-        return
-
     await callback.answer(msg, show_alert=True)
-    idx = next((i for i, x in enumerate(CLOTHING_SHOP_ITEMS) if x["id"] == item_id), 0)
+
+
+@router.callback_query(F.data == "clothing_sell_cancel")
+async def clothing_sell_cancel_callback(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    old_id = data.get("clothing_msg_id", callback.message.message_id)
-    msg_id = await send_clothing_shop(
-        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    page = int(data.get("wardrobe_sell_page", data.get("wardrobe_page", 0)))
+
+    await state.update_data(wardrobe_page=page)
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
+        callback.message.message_id,
+        page=page,
     )
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+    await callback.answer("Продажа отменена.")
 
 
-@router.callback_query(F.data.startswith("clothing_buy:"))
-async def clothing_buy_callback(callback: CallbackQuery, state: FSMContext):
-    item_id = callback.data.split(":", 1)[1]
-    item = clothing_item(item_id)
-    if not item:
-        await callback.answer("Товар не найден.", show_alert=True)
-        return
-
-    ok, msg = await buy_clothing_item(callback.from_user.id, item_id)
-    if not ok:
-        await callback.answer(msg, show_alert=True)
-        return
-
-    await callback.answer(msg, show_alert=True)
-    data = await state.get_data()
-    old_id = data.get("clothing_msg_id", callback.message.message_id)
-    idx = next((i for i, x in enumerate(CLOTHING_SHOP_ITEMS) if x["id"] == item_id), 0)
-    msg_id = await send_clothing_shop(
-        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+@router.callback_query(F.data.startswith("clothing_wardrobe_page:"))
+async def clothing_wardrobe_page_callback(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":", 1)[1])
+    await state.update_data(wardrobe_page=page)
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
+        callback.message.message_id,
+        page=page,
     )
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("clothing_equip:"))
@@ -3671,15 +3784,15 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
     item_id = callback.data.split(":", 1)[1]
     item = clothing_item(item_id)
     owned = await get_owned_clothes(callback.from_user.id)
+
     if not item or item_id not in owned:
         await callback.answer("Сначала купи эту вещь.", show_alert=True)
         return
 
     await set_equipped_top(callback.from_user.id, item_id)
-
-    # Сразу обновляем карточку гардероба в том же сообщении.
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
+
     await send_wardrobe(
         callback,
         callback.from_user.id,
@@ -3692,10 +3805,9 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "clothing_unequip")
 async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
     await set_equipped_top(callback.from_user.id, None)
-
-    # Сразу обновляем карточку гардероба в том же сообщении.
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
+
     await send_wardrobe(
         callback,
         callback.from_user.id,
@@ -3703,16 +3815,6 @@ async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
         page=page,
     )
     await callback.answer("Одежда снята!")
-
-
-async def clothing_refresh_message(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    idx = int(data.get("clothing_idx", 0))
-    old_id = data.get("clothing_msg_id", callback.message.message_id)
-    msg_id = await send_clothing_shop(
-        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
-    )
-    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
 
 
 @router.callback_query(F.data == "clothing_wardrobe")
@@ -3723,19 +3825,6 @@ async def clothing_wardrobe_callback(callback: CallbackQuery, state: FSMContext)
         callback.from_user.id,
         callback.message.message_id,
         page=0,
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("clothing_wardrobe_page:"))
-async def clothing_wardrobe_page_callback(callback: CallbackQuery, state: FSMContext):
-    page = int(callback.data.split(":", 1)[1])
-    await state.update_data(wardrobe_page=page)
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=page,
     )
     await callback.answer()
 
