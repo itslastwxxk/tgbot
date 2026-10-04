@@ -2926,83 +2926,8 @@ async def show_profile(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if not await check_level_access(message, user_id, PROFILE_UNLOCK_LEVEL):
         return
+    await render_profile_message(message, user_id)
 
-    # --- БЛОК РАСЧЕТА ДАННЫХ (оставь свой код) ---
-    balance = await get_balance(user_id)
-    tokens = await get_tokens(user_id)
-    stats = await get_user_stats(user_id)
-    name = await get_user_name(user_id) or "Игрок"
-
-    level = stats["level"]
-    total_xp = stats["xp"]
-    xp_needed = xp_for_next_level(level)
-    xp_earned = xp_in_current_level(total_xp, level)
-    percent = min(100, int((xp_earned / xp_needed) * 100)) if xp_needed > 0 else 100
-
-    bar_len = 15
-    filled = percent * bar_len // 100
-    bar = "█" * filled + "░" * (bar_len - filled)
-
-    vip_until_raw = await redis_client.hget(f"user:{user_id}", "vip_until")
-    try:
-        vip_until = int(float(vip_until_raw or 0))
-    except (TypeError, ValueError):
-        vip_until = 0
-    vip_line = (f"👑 VIP до: <b>{datetime.fromtimestamp(vip_until).strftime('%d.%m.%Y')}</b>\n"
-                if vip_until > int(time.time()) else "")
-
-    profile_text = (
-        f"📋 <b>твой профиль</b>\n\n"
-        f"{vip_line}"
-        f"💰 баланс: <b>{balance:,} ₽</b>\n"
-        f"💎 токены: <b>{tokens} ТК</b>\n"
-        f"📈 уровень: <b>{level}</b>\n"
-        f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
-        f"📊 [{bar}] {percent}%"
-    )
-    # -------------------------------------------
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Перевести деньги", callback_data="transfer_start")],
-        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
-    ])
-
-    # Проверяем наличие картинки
-    photo_path = "images/profile.png"
-    has_photo = False
-    
-    try:
-        photo = FSInputFile(photo_path)
-        has_photo = True
-    except FileNotFoundError:
-        has_photo = False
-
-    # ==========================================
-    # ШАГ 1: ОТПРАВКА ФОТО И УДАЛЕНИЕ КЛАВИАТУРЫ
-    # ==========================================
-    if has_photo:
-        # Отправляем фото. ReplyKeyboardRemove() здесь критически важен!
-        # Он убирает reply-клавиатуру в момент отправки этого сообщения.
-        await message.answer_photo(
-            photo=photo,
-            reply_markup=ReplyKeyboardRemove()
-        )
-    else:
-        # Если фото нет, все равно нужно убрать клавиатуру перед текстом.
-        # Отправляем невидимое сообщение (с эмодзи) только для сброса кнопок.
-        # Это единственный способ сбросить клавиатуру, если нет фото.
-        await message.answer(".", reply_markup=ReplyKeyboardRemove())
-
-    # ==========================================
-    # ШАГ 2: ОТПРАВКА ПРОФИЛЯ (ТЕКСТ + КНОПКИ)
-    # ==========================================
-    # Отправляем текст профиля с inline-кнопками.
-    # К этому моменту reply-клавиатура уже должна быть убрана.
-    await message.answer(
-        text=profile_text,
-        parse_mode="HTML",
-        reply_markup=kb
-    )
 
 @router.callback_query(F.data == "transfer_start")
 async def transfer_start(callback: CallbackQuery, state: FSMContext):
@@ -3183,6 +3108,518 @@ async def show_work_menu(message: Message, state: FSMContext):
     except FileNotFoundError:
         logger.warning("Файл images/work.png не найден.")
         await message.answer(text, reply_markup=await get_work_keyboard(message.from_user.id))
+
+
+# ============================================================
+# МАГАЗИН ОДЕЖДЫ / СКИН
+# ============================================================
+# Предметы хранятся в Redis Set user:{id}:clothes, а надетая
+# одежда — в поле equipped_top. Покупка сразу надевает вещь.
+CLOTHING_SHOP_ITEMS = [
+    {
+        "id": "pizdec_hoodie",
+        "name": "Pizdec Hoodie",
+        "price": 1_000_000_000,
+        "emoji": "🧥",
+        "desc": "чёрная худи с надписью «ПИЗДЕЦ»",
+        "image": "images/shop/pizdec_hoodie.png",
+        "slot": "top",
+        "scale": 120,
+        "x": 20,
+        "y": 58,
+    },
+]
+
+CLOTHING_ITEMS_BY_ID = {item["id"]: item for item in CLOTHING_SHOP_ITEMS}
+
+
+def clothing_item(item_id: str):
+    return CLOTHING_ITEMS_BY_ID.get(item_id)
+
+
+async def get_owned_clothes(user_id: int) -> set[str]:
+    values = await redis_client.smembers(f"user:{user_id}:clothes")
+    return set(values or [])
+
+
+async def get_equipped_top(user_id: int) -> str | None:
+    value = await redis_client.hget(f"user:{user_id}", "equipped_top")
+    return value or None
+
+
+async def set_equipped_top(user_id: int, item_id: str | None):
+    if item_id:
+        await redis_client.hset(f"user:{user_id}", "equipped_top", item_id)
+    else:
+        await redis_client.hdel(f"user:{user_id}", "equipped_top")
+
+
+async def buy_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
+    """Атомарно покупает вещь, чтобы двойной клик не списал деньги дважды."""
+    item = clothing_item(item_id)
+    if not item:
+        return False, "Товар не найден."
+
+    user_key = f"user:{user_id}"
+    inventory_key = f"user:{user_id}:clothes"
+
+    script = """
+    local balance = tonumber(redis.call('HGET', KEYS[1], 'balance') or '0')
+    local price = tonumber(ARGV[1])
+    if redis.call('SISMEMBER', KEYS[2], ARGV[2]) == 1 then
+        return -1
+    end
+    if balance < price then
+        return 0
+    end
+    redis.call('HINCRBY', KEYS[1], 'balance', -price)
+    redis.call('SADD', KEYS[2], ARGV[2])
+    redis.call('HSET', KEYS[1], 'equipped_top', ARGV[2])
+    return 1
+    """
+
+    result = int(await redis_client.eval(
+        script,
+        2,
+        user_key,
+        inventory_key,
+        str(item["price"]),
+        item_id,
+    ))
+
+    if result == 1:
+        # Синхронизируем кэш после списания внутри Lua.
+        raw = await redis_client.hget(user_key, "balance")
+        new_balance = int(float(raw or 0))
+        _balance_cache[user_id] = new_balance
+        await redis_client.zadd("leaderboard:balance", {str(user_id): new_balance})
+        return True, f"{item['emoji']} {item['name']} куплена и надета!"
+    if result == -1:
+        return False, "Эта вещь уже есть у тебя."
+    return False, f"Не хватает {item['price']:,} ₽."
+
+
+def _load_rgba(path: str):
+    return Image.open(path).convert("RGBA")
+
+
+def _remove_white_background(img: Image.Image) -> Image.Image:
+    """Удаляет белый фон у предмета, сохраняя белые элементы внутри одежды."""
+    img = img.convert("RGBA")
+    px = img.load()
+    w, h = img.size
+
+    def is_bg(x, y):
+        r, g, b, _ = px[x, y]
+        return (r + g + b) / 3 > 235 and min(r, g, b) > 225
+
+    # Flood-fill только от краёв: белая надпись внутри чёрной худи не исчезнет.
+    from collections import deque
+    q = deque()
+    seen = set()
+
+    for x in range(w):
+        if is_bg(x, 0):
+            seen.add((x, 0))
+            q.append((x, 0))
+        if is_bg(x, h - 1) and (x, h - 1) not in seen:
+            seen.add((x, h - 1))
+            q.append((x, h - 1))
+    for y in range(h):
+        if is_bg(0, y) and (0, y) not in seen:
+            seen.add((0, y))
+            q.append((0, y))
+        if is_bg(w - 1, y) and (w - 1, y) not in seen:
+            seen.add((w - 1, y))
+            q.append((w - 1, y))
+
+    while q:
+        x, y = q.popleft()
+        px[x, y] = (px[x, y][0], px[x, y][1], px[x, y][2], 0)
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in seen and is_bg(nx, ny):
+                seen.add((nx, ny))
+                q.append((nx, ny))
+
+    bbox = img.getbbox()
+    return img.crop(bbox) if bbox else img
+
+
+_skin_cache = None
+_clothing_image_cache = {}
+
+
+def _get_skin_base() -> Image.Image:
+    global _skin_cache
+    if _skin_cache is None:
+        path = "images/skin_base.png"
+        if os.path.exists(path):
+            _skin_cache = _load_rgba(path)
+        else:
+            # Резервный простой скин, чтобы профиль не падал до установки ассетов.
+            _skin_cache = Image.new("RGBA", (160, 190), (255, 255, 255, 0))
+            draw = ImageDraw.Draw(_skin_cache)
+            draw.ellipse((48, 10, 112, 74), fill="white", outline="black", width=4)
+            draw.arc((62, 28, 98, 58), 0, 180, fill="black", width=3)
+            draw.line((80, 74, 80, 150), fill="black", width=4)
+            draw.line((80, 95, 45, 125), fill="black", width=4)
+            draw.line((80, 95, 115, 125), fill="black", width=4)
+            draw.line((80, 150, 55, 185), fill="black", width=4)
+            draw.line((80, 150, 105, 185), fill="black", width=4)
+    return _skin_cache.copy()
+
+
+def _get_clothing_image(item: dict) -> Image.Image | None:
+    item_id = item["id"]
+    if item_id in _clothing_image_cache:
+        return _clothing_image_cache[item_id].copy()
+
+    path = item.get("image")
+    if not path or not os.path.exists(path):
+        return None
+
+    try:
+        img = _load_rgba(path)
+        img = _remove_white_background(img)
+        _clothing_image_cache[item_id] = img
+        return img.copy()
+    except Exception:
+        logger.exception("Не удалось загрузить изображение одежды: %s", path)
+        return None
+
+
+async def render_skin_image(user_id: int) -> bytes:
+    """Рисует базовый скин и поверх него надетую одежду."""
+    canvas = _get_skin_base()
+    equipped = await get_equipped_top(user_id)
+
+    if equipped:
+        item = clothing_item(equipped)
+        if item:
+            clothing = _get_clothing_image(item)
+            if clothing:
+                target_h = int(item.get("scale", 120))
+                ratio = target_h / max(1, clothing.height)
+                target_w = max(1, int(clothing.width * ratio))
+                clothing = clothing.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                x = int(item.get("x", (canvas.width - target_w) // 2))
+                y = int(item.get("y", 55))
+                canvas.alpha_composite(clothing, (x, y))
+
+    buf = BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def clothing_shop_view(idx: int, user_id: int):
+    idx = max(0, min(idx, len(CLOTHING_SHOP_ITEMS) - 1))
+    item = CLOTHING_SHOP_ITEMS[idx]
+    owned = await get_owned_clothes(user_id)
+    equipped = await get_equipped_top(user_id)
+    balance = await get_balance(user_id)
+
+    if item["id"] in owned:
+        if equipped == item["id"]:
+            action = "👕 Снять"
+            callback = "clothing_unequip"
+        else:
+            action = "👕 Надеть"
+            callback = f"clothing_equip:{item['id']}"
+    elif balance >= item["price"]:
+        action = f"🛒 Купить за {item['price']:,} ₽"
+        callback = f"clothing_buy:{item['id']}"
+    else:
+        action = f"❌ Не хватает {item['price'] - balance:,} ₽"
+        callback = "clothing_noop"
+
+    text = (
+        f"🛒 <b>Магазин одежды</b>\n\n"
+        f"{item['emoji']} <b>{html.escape(item['name'])}</b>\n"
+        f"{html.escape(item['desc'])}\n\n"
+        f"💰 Цена: <b>{item['price']:,} ₽</b>\n"
+        f"💳 Баланс: <b>{balance:,} ₽</b>\n"
+        f"👕 В гардеробе: {'да' if item['id'] in owned else 'нет'}"
+    )
+
+    nav = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"clothing_car:{idx-1}"))
+    nav.append(InlineKeyboardButton(text=f"{idx+1}/{len(CLOTHING_SHOP_ITEMS)}", callback_data="clothing_noop"))
+    if idx < len(CLOTHING_SHOP_ITEMS) - 1:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"clothing_car:{idx+1}"))
+
+    rows = [nav, [InlineKeyboardButton(text=action, callback_data=callback)]]
+    rows.append([
+        InlineKeyboardButton(text="👕 Гардероб", callback_data="clothing_wardrobe"),
+        InlineKeyboardButton(text="🔙 Закрыть", callback_data="clothing_close"),
+    ])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows), item
+
+
+async def send_clothing_shop(bot_obj, chat_id: int, user_id: int, idx: int = 0, message_id: int | None = None):
+    text, kb, item = await clothing_shop_view(idx, user_id)
+    image_path = item.get("image")
+
+    if message_id:
+        try:
+            # Нельзя редактировать media через edit_text, если там уже фото.
+            # Проще удалить карточку и отправить новую.
+            await bot_obj.delete_message(chat_id, message_id)
+        except TelegramBadRequest:
+            pass
+
+    if image_path and os.path.exists(image_path):
+        sent = await bot_obj.send_photo(
+            chat_id=chat_id,
+            photo=FSInputFile(image_path),
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    else:
+        sent = await bot_obj.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    return sent.message_id
+
+
+async def send_wardrobe(callback_or_message, user_id: int, message_id: int | None = None):
+    owned = await get_owned_clothes(user_id)
+    equipped = await get_equipped_top(user_id)
+
+    rows = []
+    if not owned:
+        text = "👕 <b>Гардероб</b>\n\nУ тебя пока нет вещей."
+    else:
+        names = []
+        for item_id in owned:
+            item = clothing_item(item_id)
+            if not item:
+                continue
+            mark = " ✅ надето" if item_id == equipped else ""
+            names.append(f"{item['emoji']} {html.escape(item['name'])}{mark}")
+            if item_id == equipped:
+                rows.append([InlineKeyboardButton(
+                    text=f"❌ Снять {item['name']}",
+                    callback_data="clothing_unequip",
+                )])
+            else:
+                rows.append([InlineKeyboardButton(
+                    text=f"👕 Надеть {item['name']}",
+                    callback_data=f"clothing_equip:{item_id}",
+                )])
+        text = "👕 <b>Гардероб</b>\n\n" + "\n".join(names)
+
+    rows.append([InlineKeyboardButton(text="🛒 В магазин", callback_data="clothing_shop")])
+    rows.append([InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    if message_id:
+        try:
+            await callback_or_message.bot.edit_message_caption(
+                chat_id=callback_or_message.message.chat.id,
+                message_id=message_id,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            try:
+                await callback_or_message.bot.edit_message_text(
+                    chat_id=callback_or_message.message.chat.id,
+                    message_id=message_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+                return
+            except TelegramBadRequest:
+                pass
+
+    if isinstance(callback_or_message, Message):
+        await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await callback_or_message.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.message(F.text == "🛒 Магазин")
+async def show_regular_shop(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    if not await check_level_access(message, user_id, SHOP_UNLOCK_LEVEL):
+        return
+    await state.clear()
+    msg_id = await send_clothing_shop(message.bot, message.chat.id, user_id, 0)
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=0)
+
+
+@router.callback_query(F.data.startswith("clothing_car:"))
+async def clothing_car(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+    msg_id = await send_clothing_shop(
+        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "clothing_shop")
+async def clothing_shop_callback(callback: CallbackQuery, state: FSMContext):
+    msg_id = await send_clothing_shop(
+        callback.bot, callback.message.chat.id, callback.from_user.id, 0,
+        callback.message.message_id,
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=0)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clothing_buy:"))
+async def clothing_buy_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    item = clothing_item(item_id)
+    if not item:
+        await callback.answer("Товар не найден.", show_alert=True)
+        return
+
+    ok, msg = await buy_clothing_item(callback.from_user.id, item_id)
+    if not ok:
+        await callback.answer(msg, show_alert=True)
+        return
+
+    await callback.answer(msg, show_alert=True)
+    data = await state.get_data()
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+    idx = next((i for i, x in enumerate(CLOTHING_SHOP_ITEMS) if x["id"] == item_id), 0)
+    msg_id = await send_clothing_shop(
+        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+
+
+@router.callback_query(F.data.startswith("clothing_equip:"))
+async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    item = clothing_item(item_id)
+    owned = await get_owned_clothes(callback.from_user.id)
+    if not item or item_id not in owned:
+        await callback.answer("Сначала купи эту вещь.", show_alert=True)
+        return
+
+    await set_equipped_top(callback.from_user.id, item_id)
+    await callback.answer(f"👕 {item['name']} надета!")
+    await clothing_refresh_message(callback, state)
+
+
+@router.callback_query(F.data == "clothing_unequip")
+async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
+    await set_equipped_top(callback.from_user.id, None)
+    await callback.answer("Одежда снята.")
+    await clothing_refresh_message(callback, state)
+
+
+async def clothing_refresh_message(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    idx = int(data.get("clothing_idx", 0))
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+    msg_id = await send_clothing_shop(
+        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+
+
+@router.callback_query(F.data == "clothing_wardrobe")
+async def clothing_wardrobe_callback(callback: CallbackQuery, state: FSMContext):
+    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "clothing_noop")
+async def clothing_noop(callback: CallbackQuery):
+    await callback.answer("Выбери действие ниже.")
+
+
+@router.callback_query(F.data == "clothing_close")
+async def clothing_close(callback: CallbackQuery, state: FSMContext):
+    try:
+        await callback.bot.delete_message(callback.message.chat.id, callback.message.message_id)
+    except TelegramBadRequest:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+    await state.clear()
+    await callback.answer()
+
+
+@router.callback_query(F.data == "profile_refresh")
+async def profile_refresh_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    # Повторно показываем профиль через уже существующий обработчик.
+    await render_profile_message(callback.message, callback.from_user.id, edit=False)
+
+
+async def render_profile_message(message: Message, user_id: int, edit: bool = False):
+    balance = await get_balance(user_id)
+    tokens = await get_tokens(user_id)
+    stats = await get_user_stats(user_id)
+    name = await get_user_name(user_id) or "Игрок"
+    level = stats["level"]
+    total_xp = stats["xp"]
+    xp_needed = xp_for_next_level(level)
+    xp_earned = xp_in_current_level(total_xp, level)
+    percent = min(100, int((xp_earned / xp_needed) * 100)) if xp_needed > 0 else 100
+    bar_len = 15
+    filled = percent * bar_len // 100
+    bar = "█" * filled + "░" * (bar_len - filled)
+
+    vip_until_raw = await redis_client.hget(f"user:{user_id}", "vip_until")
+    try:
+        vip_until = int(float(vip_until_raw or 0))
+    except (TypeError, ValueError):
+        vip_until = 0
+    vip_line = (
+        f"👑 VIP до: <b>{datetime.fromtimestamp(vip_until).strftime('%d.%m.%Y')}</b>\n"
+        if vip_until > int(time.time()) else ""
+    )
+
+    equipped = await get_equipped_top(user_id)
+    equipped_item = clothing_item(equipped) if equipped else None
+    outfit_line = (
+        f"👕 одежда: <b>{html.escape(equipped_item['name'])}</b>\n"
+        if equipped_item else "👕 одежда: <b>по умолчанию</b>\n"
+    )
+
+    profile_text = (
+        f"📋 <b>твой профиль</b>\n\n"
+        f"{vip_line}"
+        f"{outfit_line}"
+        f"💰 баланс: <b>{balance:,} ₽</b>\n"
+        f"💎 токены: <b>{tokens} ТК</b>\n"
+        f"📈 уровень: <b>{level}</b>\n"
+        f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
+        f"📊 [{bar}] {percent}%"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👕 Гардероб", callback_data="clothing_wardrobe")],
+        [InlineKeyboardButton(text="💸 Перевести деньги", callback_data="transfer_start")],
+        [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")],
+    ])
+
+    photo_bytes = await render_skin_image(user_id)
+    await message.answer_photo(
+        photo=BufferedInputFile(photo_bytes, filename="profile_skin.png"),
+        caption=profile_text,
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
 
 def get_shop_keyboard():
     return ReplyKeyboardMarkup(
@@ -3695,18 +4132,6 @@ async def show_shop_menu(message: Message, state: FSMContext):
         reply_markup=get_shop_keyboard(),
     )
 
-
-@router.message(F.text == "🛒 Магазин")
-async def show_regular_shop(message: Message):
-    level = (await get_user_stats(message.from_user.id))["level"]
-    if level < SHOP_UNLOCK_LEVEL:
-        await message.answer(f"🔒 Магазин откроется с 7 уровня.\nТвой уровень: {level}")
-        return
-    await message.answer(
-        "🛒 <b>Обычный магазин</b>\n\nРаздел пока в разработке.",
-        parse_mode="HTML",
-        reply_markup=get_shop_keyboard(),
-    )
 
 
 @router.message(F.text == "🔙 Назад")
