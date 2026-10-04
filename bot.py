@@ -3117,16 +3117,16 @@ async def show_work_menu(message: Message, state: FSMContext):
 # одежда — в поле equipped_top. Покупка сразу надевает вещь.
 CLOTHING_SHOP_ITEMS = [
     {
-        "id": "pizdec_hoodie",
-        "name": "Pizdec Hoodie",
+        "id": "foot",
+        "name": "foot",
         "price": 1_000_000_000,
         "emoji": "🧥",
         "desc": "чёрная худи с надписью «ПИЗДЕЦ»",
-        "image": "images/shop/pizdec_hoodie.png",
+        "image": "images/shop/foot.png",
         "slot": "top",
         "scale": 120,
-        "x": 20,
-        "y": 58,
+        "x": 550,
+        "y": 300,
     },
 ]
 
