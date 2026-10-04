@@ -3677,14 +3677,32 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
 
     await set_equipped_top(callback.from_user.id, item_id)
     await callback.answer(f"👕 {item['name']} надета!")
-    await clothing_refresh_message(callback, state)
+
+    # После действия остаёмся в гардеробе на той же странице.
+    data = await state.get_data()
+    page = int(data.get("wardrobe_page", 0))
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
+        callback.message.message_id,
+        page=page,
+    )
 
 
 @router.callback_query(F.data == "clothing_unequip")
 async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
     await set_equipped_top(callback.from_user.id, None)
     await callback.answer("Одежда снята.")
-    await clothing_refresh_message(callback, state)
+
+    # После снятия остаёмся в гардеробе на той же странице.
+    data = await state.get_data()
+    page = int(data.get("wardrobe_page", 0))
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
+        callback.message.message_id,
+        page=page,
+    )
 
 
 async def clothing_refresh_message(callback: CallbackQuery, state: FSMContext):
