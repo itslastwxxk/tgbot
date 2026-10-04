@@ -3124,8 +3124,8 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "чёрная худи с надписью «ПИЗДЕЦ»",
         "image": "images/shop/foot.png",
         "slot": "top",
-        "scale": 200,
-        "x": 350,
+        "scale": 180,
+        "x": 370,
         "y": 130,
     },
 ]
