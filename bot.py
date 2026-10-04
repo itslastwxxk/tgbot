@@ -3319,12 +3319,10 @@ async def clothing_shop_view(idx: int, user_id: int):
     balance = await get_balance(user_id)
 
     if item["id"] in owned:
-        if equipped == item["id"]:
-            action = "👕 Снять"
-            callback = "clothing_unequip"
-        else:
-            action = "👕 Надеть"
-            callback = f"clothing_equip:{item['id']}"
+        # В магазине уже купленная вещь больше не продаётся и не надевается.
+        # Надевание/снятие выполняется только через гардероб.
+        action = "✅ Уже куплено"
+        callback = "clothing_noop"
     elif balance >= item["price"]:
         action = f"🛒 Купить за {item['price']:,} ₽"
         callback = f"clothing_buy:{item['id']}"
@@ -3348,11 +3346,9 @@ async def clothing_shop_view(idx: int, user_id: int):
     if idx < len(CLOTHING_SHOP_ITEMS) - 1:
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"clothing_car:{idx+1}"))
 
+    # В магазине оставляем только навигацию и действие с товаром.
+    # Гардероб открывается из профиля и не показывается внутри магазина.
     rows = [nav, [InlineKeyboardButton(text=action, callback_data=callback)]]
-    rows.append([
-        InlineKeyboardButton(text="👕 Гардероб", callback_data="clothing_wardrobe"),
-        InlineKeyboardButton(text="🔙 Закрыть", callback_data="clothing_close"),
-    ])
     return text, InlineKeyboardMarkup(inline_keyboard=rows), item
 
 
