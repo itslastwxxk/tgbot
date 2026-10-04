@@ -3614,7 +3614,7 @@ async def render_profile_message(message: Message, user_id: int, edit: bool = Fa
 
     photo_bytes = await render_skin_image(user_id)
     await message.answer_photo(
-        photo=BufferedInputFile(photo_bytes, filename="pizdec_hoodie.png"),
+        photo=BufferedInputFile(photo_bytes, filename="shop/pizdec_hoodie.png"),
         caption=profile_text,
         parse_mode="HTML",
         reply_markup=kb,
