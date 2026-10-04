@@ -3289,12 +3289,17 @@ def _get_clothing_image(item: dict) -> Image.Image | None:
 
 
 async def render_skin_image(user_id: int) -> bytes:
-    """Рисует базовый скин и поверх него надетую одежду."""
-    canvas = _get_skin_base()
+    """Рисует скин пользователя с реально надетой одеждой."""
     equipped = await get_equipped_top(user_id)
+    return await render_skin_with_clothing(equipped)
 
-    if equipped:
-        item = clothing_item(equipped)
+
+async def render_skin_with_clothing(item_id: str | None) -> bytes:
+    """Рисует базовый скин и временно накладывает указанную одежду."""
+    canvas = _get_skin_base()
+
+    if item_id:
+        item = clothing_item(item_id)
         if item:
             clothing = _get_clothing_image(item)
             if clothing:
@@ -3319,16 +3324,11 @@ async def clothing_shop_view(idx: int, user_id: int):
     balance = await get_balance(user_id)
 
     if item["id"] in owned:
-        # В магазине уже купленная вещь больше не продаётся и не надевается.
-        # Надевание/снятие выполняется только через гардероб.
         action = "✅ Уже куплено"
         callback = "clothing_noop"
-    elif balance >= item["price"]:
-        action = f"🛒 Купить за {item['price']:,} ₽"
-        callback = f"clothing_buy:{item['id']}"
     else:
-        action = f"❌ Не хватает {item['price'] - balance:,} ₽"
-        callback = "clothing_noop"
+        action = "👕 Примерить"
+        callback = f"clothing_try:{item['id']}"
 
     text = (
         f"🛒 <b>Магазин одежды</b>\n\n"
@@ -3349,6 +3349,8 @@ async def clothing_shop_view(idx: int, user_id: int):
     # В магазине оставляем только навигацию и действие с товаром.
     # Гардероб открывается из профиля и не показывается внутри магазина.
     rows = [nav, [InlineKeyboardButton(text=action, callback_data=callback)]]
+    # Покупка доступна только после примерки, чтобы пользователь сначала
+    # увидел, как вещь будет выглядеть на его персонаже.
     return text, InlineKeyboardMarkup(inline_keyboard=rows), item
 
 
@@ -3379,6 +3381,53 @@ async def send_clothing_shop(bot_obj, chat_id: int, user_id: int, idx: int = 0, 
             parse_mode="HTML",
             reply_markup=kb,
         )
+    return sent.message_id
+
+
+async def send_clothing_preview(bot_obj, chat_id: int, user_id: int, item_id: str, message_id: int | None = None):
+    item = clothing_item(item_id)
+    if not item:
+        return None
+
+    balance = await get_balance(user_id)
+    owned = await get_owned_clothes(user_id)
+    preview_bytes = await render_skin_with_clothing(item_id)
+
+    if item_id in owned:
+        action_text = "✅ Уже куплено"
+        action_cb = "clothing_noop"
+    elif balance >= item["price"]:
+        action_text = f"🛒 Купить за {item['price']:,} ₽"
+        action_cb = f"clothing_preview_buy:{item_id}"
+    else:
+        action_text = f"❌ Не хватает {item['price'] - balance:,} ₽"
+        action_cb = "clothing_noop"
+
+    text = (
+        f"👕 <b>Примерка</b>\n\n"
+        f"{item['emoji']} <b>{html.escape(item['name'])}</b>\n"
+        f"{html.escape(item['desc'])}\n\n"
+        f"💰 Цена: <b>{item['price']:,} ₽</b>\n"
+        f"💳 Баланс: <b>{balance:,} ₽</b>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=action_text, callback_data=action_cb)],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="clothing_preview_back")],
+    ])
+
+    if message_id:
+        try:
+            await bot_obj.delete_message(chat_id, message_id)
+        except TelegramBadRequest:
+            pass
+
+    sent = await bot_obj.send_photo(
+        chat_id=chat_id,
+        photo=BufferedInputFile(preview_bytes, filename="clothing_preview.png"),
+        caption=text,
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
     return sent.message_id
 
 
@@ -3472,6 +3521,53 @@ async def clothing_shop_callback(callback: CallbackQuery, state: FSMContext):
     )
     await state.update_data(clothing_msg_id=msg_id, clothing_idx=0)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clothing_try:"))
+async def clothing_try_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+    msg_id = await send_clothing_preview(
+        callback.bot, callback.message.chat.id, callback.from_user.id, item_id, old_id
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_preview_item=item_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "clothing_preview_back")
+async def clothing_preview_back_callback(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    idx = int(data.get("clothing_idx", 0))
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+    msg_id = await send_clothing_shop(
+        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clothing_preview_buy:"))
+async def clothing_preview_buy_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    item = clothing_item(item_id)
+    if not item:
+        await callback.answer("Товар не найден.", show_alert=True)
+        return
+
+    ok, msg = await buy_clothing_item(callback.from_user.id, item_id)
+    if not ok:
+        await callback.answer(msg, show_alert=True)
+        return
+
+    await callback.answer(msg, show_alert=True)
+    idx = next((i for i, x in enumerate(CLOTHING_SHOP_ITEMS) if x["id"] == item_id), 0)
+    data = await state.get_data()
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+    msg_id = await send_clothing_shop(
+        callback.bot, callback.message.chat.id, callback.from_user.id, idx, old_id
+    )
+    await state.update_data(clothing_msg_id=msg_id, clothing_idx=idx)
 
 
 @router.callback_query(F.data.startswith("clothing_buy:"))
