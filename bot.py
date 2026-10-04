@@ -3676,9 +3676,8 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
         return
 
     await set_equipped_top(callback.from_user.id, item_id)
-    await callback.answer(f"👕 {item['name']} надета!")
 
-    # После действия остаёмся в гардеробе на той же странице.
+    # Сразу обновляем карточку гардероба в том же сообщении.
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
     await send_wardrobe(
@@ -3687,14 +3686,14 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
         callback.message.message_id,
         page=page,
     )
+    await callback.answer(f"👕 {item['name']} надета!")
 
 
 @router.callback_query(F.data == "clothing_unequip")
 async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
     await set_equipped_top(callback.from_user.id, None)
-    await callback.answer("Одежда снята.")
 
-    # После снятия остаёмся в гардеробе на той же странице.
+    # Сразу обновляем карточку гардероба в том же сообщении.
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
     await send_wardrobe(
@@ -3703,6 +3702,7 @@ async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
         callback.message.message_id,
         page=page,
     )
+    await callback.answer("Одежда снята!")
 
 
 async def clothing_refresh_message(callback: CallbackQuery, state: FSMContext):
@@ -3761,9 +3761,10 @@ async def clothing_close(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "profile_refresh")
 async def profile_refresh_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
+
+    # Редактируем текущее сообщение вместо отправки нового профиля.
+    await render_profile_message(callback.message, callback.from_user.id, edit=True)
     await callback.answer()
-    # Повторно показываем профиль через уже существующий обработчик.
-    await render_profile_message(callback.message, callback.from_user.id, edit=False)
 
 
 async def render_profile_message(message: Message, user_id: int, edit: bool = False):
@@ -3815,8 +3816,26 @@ async def render_profile_message(message: Message, user_id: int, edit: bool = Fa
     ])
 
     photo_bytes = await render_skin_image(user_id)
+    photo = BufferedInputFile(photo_bytes, filename="profile_skin.png")
+
+    if edit:
+        try:
+            await message.edit_media(
+                media=InputMediaPhoto(
+                    media=photo,
+                    caption=profile_text,
+                    parse_mode="HTML",
+                ),
+                reply_markup=kb,
+            )
+            return
+        except TelegramBadRequest:
+            # Если Telegram не может отредактировать media,
+            # оставляем запасной вариант — отправляем профиль заново.
+            pass
+
     await message.answer_photo(
-        photo=BufferedInputFile(photo_bytes, filename="profile_skin.png"),
+        photo=photo,
         caption=profile_text,
         parse_mode="HTML",
         reply_markup=kb,
