@@ -3125,8 +3125,8 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/foot.png",
         "slot": "top",
         "scale": 260,
-        "x": 450,
-        "y": 200,
+        "x": 400,
+        "y": 150,
     },
 ]
 
