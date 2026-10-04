@@ -3431,35 +3431,104 @@ async def send_clothing_preview(bot_obj, chat_id: int, user_id: int, item_id: st
     return sent.message_id
 
 
-async def send_wardrobe(callback_or_message, user_id: int, message_id: int | None = None):
+WARDROBE_PAGE_SIZE = 6
+
+
+async def send_wardrobe(
+    callback_or_message,
+    user_id: int,
+    message_id: int | None = None,
+    page: int = 0,
+):
     owned = await get_owned_clothes(user_id)
     equipped = await get_equipped_top(user_id)
 
-    rows = []
-    if not owned:
-        text = "👕 <b>Гардероб</b>\n\nУ тебя пока нет вещей."
-    else:
-        names = []
-        for item_id in owned:
-            item = clothing_item(item_id)
-            if not item:
-                continue
-            mark = " ✅ надето" if item_id == equipped else ""
-            names.append(f"{item['emoji']} {html.escape(item['name'])}{mark}")
-            if item_id == equipped:
-                rows.append([InlineKeyboardButton(
-                    text=f"❌ Снять {item['name']}",
-                    callback_data="clothing_unequip",
-                )])
-            else:
-                rows.append([InlineKeyboardButton(
-                    text=f"👕 Надеть {item['name']}",
-                    callback_data=f"clothing_equip:{item_id}",
-                )])
-        text = "👕 <b>Гардероб</b>\n\n" + "\n".join(names)
+    items = []
+    for item_id in owned:
+        item = clothing_item(item_id)
+        if item:
+            items.append(item)
 
-    rows.append([InlineKeyboardButton(text="🛒 В магазин", callback_data="clothing_shop")])
-    rows.append([InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")])
+    items.sort(key=lambda item: (item["id"] != equipped, item["name"].lower()))
+
+    total_pages = max(1, (len(items) + WARDROBE_PAGE_SIZE - 1) // WARDROBE_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    page_items = items[
+        page * WARDROBE_PAGE_SIZE:(page + 1) * WARDROBE_PAGE_SIZE
+    ]
+
+    rows = []
+
+    if equipped:
+        equipped_item = clothing_item(equipped)
+        if equipped_item:
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"❌ Снять «{equipped_item['name']}»",
+                    callback_data="clothing_unequip",
+                )
+            ])
+
+    if not items:
+        text = (
+            "👕 <b>Гардероб</b>\n\n"
+            "У тебя пока нет купленной одежды."
+        )
+    else:
+        lines = ["👕 <b>Гардероб</b>", ""]
+        lines.append(f"Страница <b>{page + 1}/{total_pages}</b> • вещей: <b>{len(items)}</b>")
+        lines.append("")
+
+        for item in page_items:
+            is_equipped = item["id"] == equipped
+            mark = " ✅ НАДЕТО" if is_equipped else ""
+            lines.append(f"{item['emoji']} <b>{html.escape(item['name'])}</b>{mark}")
+
+            rows.append([
+                InlineKeyboardButton(
+                    text=(
+                        f"❌ Снять · {item['name']}"
+                        if is_equipped
+                        else f"👕 Надеть · {item['name']}"
+                    ),
+                    callback_data=(
+                        "clothing_unequip"
+                        if is_equipped
+                        else f"clothing_equip:{item['id']}"
+                    ),
+                )
+            ])
+
+        text = "\n".join(lines)
+
+    # Пагинация — важна, когда одежды станет много.
+    nav = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text="⬅️",
+                callback_data=f"clothing_wardrobe_page:{page - 1}",
+            )
+        )
+    nav.append(
+        InlineKeyboardButton(
+            text=f"{page + 1}/{total_pages}",
+            callback_data="clothing_noop",
+        )
+    )
+    if page < total_pages - 1:
+        nav.append(
+            InlineKeyboardButton(
+                text="➡️",
+                callback_data=f"clothing_wardrobe_page:{page + 1}",
+            )
+        )
+    if len(nav) > 1:
+        rows.append(nav)
+
+    rows.append([
+        InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")
+    ])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
     if message_id:
@@ -3488,7 +3557,11 @@ async def send_wardrobe(callback_or_message, user_id: int, message_id: int | Non
     if isinstance(callback_or_message, Message):
         await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
     else:
-        await callback_or_message.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await callback_or_message.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
 
 
 @router.message(F.text == "🛒 Магазин")
@@ -3626,7 +3699,26 @@ async def clothing_refresh_message(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "clothing_wardrobe")
 async def clothing_wardrobe_callback(callback: CallbackQuery, state: FSMContext):
-    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id)
+    await state.update_data(wardrobe_page=0)
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
+        callback.message.message_id,
+        page=0,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clothing_wardrobe_page:"))
+async def clothing_wardrobe_page_callback(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":", 1)[1])
+    await state.update_data(wardrobe_page=page)
+    await send_wardrobe(
+        callback,
+        callback.from_user.id,
+        callback.message.message_id,
+        page=page,
+    )
     await callback.answer()
 
 
