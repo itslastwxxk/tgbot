@@ -3159,6 +3159,18 @@ CLOTHING_SHOP_ITEMS = [
         "x": 364,
         "y": 153,
     },
+    {
+        "id": "jins",
+        "name": "Джинсы",
+        "price": 50_000_000,
+        "emoji": "🧥",
+        "desc": "Широкие джинсы",
+        "image": "images/shop/jins.png",
+        "slot": "bottom",
+        "scale": 180,
+        "x": 385,
+        "y": 180,
+    },
 ]
 
 CLOTHING_ITEMS_BY_ID = {item["id"]: item for item in CLOTHING_SHOP_ITEMS}
