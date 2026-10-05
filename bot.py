@@ -2913,24 +2913,16 @@ async def command_me(message: Message, state: FSMContext):
 
     if vip_until > int(time.time()):
         vip_line = (
-            f"👑 <b>VIP</b> до "
-            f"<b>{datetime.fromtimestamp(vip_until).strftime('%d.%m.%Y')}</b>\n"
+            f"👑 <b>VIP</b>"
         )
     else:
-        vip_line = "👤 <b>Обычный статус</b>\n"
+        vip_line = "👤 <b>без VIP</b>\n"
 
     equipped = await get_equipped_top(user_id)
     equipped_item = clothing_item(equipped) if equipped else None
-    outfit_line = (
-        f"👕 одежда: <b>{html.escape(equipped_item['name'])}</b>\n"
-        if equipped_item else "👕 одежда: <b>по умолчанию</b>\n"
-    )
 
     profile_text = (
-        f"📋 <b>твой профиль</b>\n\n"
-        f"👤 <b>{html.escape(name)}</b>\n"
-        f"{vip_line}"
-        f"{outfit_line}"
+        f"📋 <b>профиль игрока {html.escape(name)} ({vip_line})</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
@@ -3921,19 +3913,13 @@ async def render_profile_message(message: Message, user_id: int, edit: bool = Fa
 
     equipped = await get_equipped_top(user_id)
     equipped_item = clothing_item(equipped) if equipped else None
-    outfit_line = (
-        f"👕 одежда: <b>{html.escape(equipped_item['name'])}</b>\n"
-        if equipped_item else "👕 одежда: <b>по умолчанию</b>\n"
-    )
 
     profile_text = (
-        f"📋 <b>твой профиль</b>\n\n"
-        f"{vip_line}"
-        f"{outfit_line}"
+        f"📋 <b>твой профиль, {html.escape(name)} ({vip_line})</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
-        f"⚡ XP: {xp_earned:,} / {xp_needed:,}\n"
+        f"⚡ XP: <b>{xp_earned:,} / {xp_needed:,}</b>\n"
         f"📊 [{bar}] {percent}%"
     )
 
