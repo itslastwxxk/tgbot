@@ -3915,7 +3915,7 @@ async def render_profile_message(message: Message, user_id: int, edit: bool = Fa
     equipped_item = clothing_item(equipped) if equipped else None
 
     profile_text = (
-        f"📋 <b>твой профиль, {html.escape(name)} ({vip_line})</b>\n\n"
+        f"📋 <b>твой профиль, {html.escape(name)}\n({vip_line})</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
