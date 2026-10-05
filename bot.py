@@ -3347,9 +3347,22 @@ async def render_skin_with_clothing(item_id: str | None) -> bytes:
     return buf.getvalue()
 
 
-async def clothing_shop_view(idx: int, user_id: int):
-    idx = max(0, min(idx, len(CLOTHING_SHOP_ITEMS) - 1))
-    item = CLOTHING_SHOP_ITEMS[idx]
+async def clothing_shop_view(idx: int, user_id: int, category: str | None = None):
+    if category:
+        category_items = clothing_items_for_category(category)
+        if not category_items:
+            return (
+                "🛒 <b>Магазин одежды</b>\n\nВ этом разделе пока нет товаров.",
+                InlineKeyboardMarkup(inline_keyboard=[]),
+                {"id": "", "name": "", "image": None},
+            )
+        idx = max(0, min(idx, len(category_items) - 1))
+        item = category_items[idx]
+        nav_items = category_items
+    else:
+        idx = max(0, min(idx, len(CLOTHING_SHOP_ITEMS) - 1))
+        item = CLOTHING_SHOP_ITEMS[idx]
+        nav_items = CLOTHING_SHOP_ITEMS
     owned = await get_owned_clothes(user_id)
     equipped = await get_equipped_top(user_id)
     balance = await get_balance(user_id)
@@ -3373,8 +3386,8 @@ async def clothing_shop_view(idx: int, user_id: int):
     nav = []
     if idx > 0:
         nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"clothing_car:{idx-1}"))
-    nav.append(InlineKeyboardButton(text=f"{idx+1}/{len(CLOTHING_SHOP_ITEMS)}", callback_data="clothing_noop"))
-    if idx < len(CLOTHING_SHOP_ITEMS) - 1:
+    nav.append(InlineKeyboardButton(text=f"{idx+1}/{len(nav_items)}", callback_data="clothing_noop"))
+    if idx < len(nav_items) - 1:
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"clothing_car:{idx+1}"))
 
     # В магазине оставляем только навигацию и действие с товаром.
@@ -3385,8 +3398,8 @@ async def clothing_shop_view(idx: int, user_id: int):
     return text, InlineKeyboardMarkup(inline_keyboard=rows), item
 
 
-async def send_clothing_shop(bot_obj, chat_id: int, user_id: int, idx: int = 0, message_id: int | None = None):
-    text, kb, item = await clothing_shop_view(idx, user_id)
+async def send_clothing_shop(bot_obj, chat_id: int, user_id: int, idx: int = 0, message_id: int | None = None, category: str | None = None):
+    text, kb, item = await clothing_shop_view(idx, user_id, category=category)
     image_path = item.get("image")
 
     if message_id:
@@ -4454,23 +4467,94 @@ async def daily_task_claim(callback: CallbackQuery):
         pass
 
 
+SHOP_CLOTHING_CATEGORIES = {
+    "🧢 Головные уборы": "head",
+    "👕 Вверх": "top",
+    "👖 Низ": "bottom",
+    "👟 Обувь": "shoes",
+}
+
+
+def get_clothing_category_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🧢 Головные уборы"), KeyboardButton(text="👕 Вверх")],
+            [KeyboardButton(text="👖 Низ"), KeyboardButton(text="👟 Обувь")],
+            [KeyboardButton(text="🔙 В магазин")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def clothing_items_for_category(category: str):
+    return [
+        item for item in CLOTHING_SHOP_ITEMS
+        if item.get("slot", "top") == category
+    ]
+
+
+async def show_clothing_category(message: Message, state: FSMContext, category: str):
+    items = clothing_items_for_category(category)
+    await state.clear()
+    await state.update_data(clothing_category=category)
+
+    if not items:
+        await message.answer(
+            "🛒 <b>Магазин одежды</b>\n\n"
+            "В этом разделе пока нет товаров.",
+            parse_mode="HTML",
+            reply_markup=get_clothing_category_keyboard(),
+        )
+        return
+
+    # Для совместимости с существующей каруселью временно показываем
+    # товары выбранного раздела через отдельный список индексов.
+    first_item = items[0]
+    global_idx = CLOTHING_SHOP_ITEMS.index(first_item)
+    msg_id = await send_clothing_shop(
+        message.bot,
+        message.chat.id,
+        message.from_user.id,
+        idx=global_idx,
+    )
+    await state.update_data(
+        clothing_msg_id=msg_id,
+        clothing_idx=global_idx,
+        clothing_category=category,
+    )
+
+
+@router.message(F.text.in_(list(SHOP_CLOTHING_CATEGORIES.keys())))
+async def clothing_category_handler(message: Message, state: FSMContext):
+    await show_clothing_category(
+        message,
+        state,
+        SHOP_CLOTHING_CATEGORIES[message.text],
+    )
+
+
+@router.message(F.text == "🔙 В магазин")
+async def clothing_back_to_shop_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🛒 <b>Магазин</b>\n\nВыбери, какой магазин открыть:",
+        parse_mode="HTML",
+        reply_markup=get_shop_keyboard(),
+    )
+
+
 @router.message(F.text == "🛒 Магазин")
 async def show_clothing_shop(message: Message, state: FSMContext):
-    """Открывает именно магазин одежды."""
+    """Открывает магазин одежды с выбором раздела."""
     user_id = message.from_user.id
     if not await check_level_access(message, user_id, SHOP_UNLOCK_LEVEL):
         return
 
     await state.clear()
-    msg_id = await send_clothing_shop(
-        message.bot,
-        message.chat.id,
-        user_id,
-        idx=0,
-    )
-    await state.update_data(
-        clothing_msg_id=msg_id,
-        clothing_idx=0,
+    await message.answer(
+        "🛒 <b>Магазин одежды</b>\n\nВыбери раздел:",
+        parse_mode="HTML",
+        reply_markup=get_clothing_category_keyboard(),
     )
 
 
@@ -4478,14 +4562,30 @@ async def show_clothing_shop(message: Message, state: FSMContext):
 async def clothing_car(callback: CallbackQuery, state: FSMContext):
     idx = int(callback.data.split(":", 1)[1])
     data = await state.get_data()
+    category = data.get("clothing_category")
     old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    if category:
+        category_items = clothing_items_for_category(category)
+        if category_items:
+            category_ids = [item["id"] for item in category_items]
+            idx = max(0, min(idx, len(category_ids) - 1))
+            global_idx = CLOTHING_SHOP_ITEMS.index(
+                CLOTHING_ITEMS_BY_ID[category_ids[idx]]
+            )
+        else:
+            await callback.answer("В этом разделе пока нет товаров.", show_alert=True)
+            return
+    else:
+        global_idx = idx
 
     msg_id = await send_clothing_shop(
         callback.bot,
         callback.message.chat.id,
         callback.from_user.id,
-        idx=idx,
+        idx=idx if category else global_idx,
         message_id=old_id,
+        category=category,
     )
     await state.update_data(
         clothing_msg_id=msg_id,
@@ -4518,7 +4618,18 @@ async def clothing_try(callback: CallbackQuery, state: FSMContext):
 async def clothing_preview_back(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     idx = int(data.get("clothing_idx", 0))
+    category = data.get("clothing_category")
     old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    if category:
+        category_items = clothing_items_for_category(category)
+        if category_items:
+            current_item_id = data.get("clothing_preview_item")
+            ids = [item["id"] for item in category_items]
+            if current_item_id in ids:
+                idx = ids.index(current_item_id)
+            else:
+                idx = 0
 
     msg_id = await send_clothing_shop(
         callback.bot,
@@ -4526,6 +4637,7 @@ async def clothing_preview_back(callback: CallbackQuery, state: FSMContext):
         callback.from_user.id,
         idx=idx,
         message_id=old_id,
+        category=category,
     )
     await state.update_data(clothing_msg_id=msg_id)
     await callback.answer()
@@ -4543,7 +4655,15 @@ async def clothing_preview_buy(callback: CallbackQuery, state: FSMContext):
     # После покупки возвращаемся к карточке магазина.
     data = await state.get_data()
     idx = int(data.get("clothing_idx", 0))
+    category = data.get("clothing_category")
     old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    if category:
+        category_items = clothing_items_for_category(category)
+        if category_items:
+            ids = [item["id"] for item in category_items]
+            if item_id in ids:
+                idx = ids.index(item_id)
 
     msg_id = await send_clothing_shop(
         callback.bot,
@@ -4551,6 +4671,7 @@ async def clothing_preview_buy(callback: CallbackQuery, state: FSMContext):
         callback.from_user.id,
         idx=idx,
         message_id=old_id,
+        category=category,
     )
     await state.update_data(clothing_msg_id=msg_id)
     await callback.answer(msg, show_alert=True)
