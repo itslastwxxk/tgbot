@@ -4124,10 +4124,10 @@ except Exception:
     TASK_TZ = timezone(timedelta(hours=3))
 
 # Платное обновление задания игроком
-TASK_REROLL_COST = 75_000                 # цена обновления, ₽
-TASK_ROTATION_SECONDS = 8 * 60 * 60       # активное задание меняется раз в 8 часов
 TASK_REROLL_COST = 75_000                 # цена ручного обновления, ₽
+TASK_ROTATION_SECONDS = 8 * 60 * 60       # активное задание меняется раз в 8 часов
 TASK_REROLL_COOLDOWN = 8 * 60 * 60        # ручное обновление — раз в 8 часов
+TASK_REROLL_HOURS = TASK_REROLL_COOLDOWN // 3600  # для текстов, чтобы не расходились с константой
 TASK_TTL_SECONDS = 3 * 24 * 60 * 60       # сколько хранить задание в Redis
 
 
@@ -4228,9 +4228,9 @@ async def gen_casino_task(user_id: int) -> dict:
         {"kind": "zero", "target": 1, "reward": 250_000, "xp": 250,
          "description": "выиграй в рулетке, поставив на зеро (🟢 0)."},
         {"kind": "color", "target": 5, "reward": 150_000, "xp": 150,
-         "description": "выиграй в рулетке 3 раза, поставив на красное или чёрное."},
+         "description": "выиграй в рулетке 5 раз, поставив на красное или чёрное."},
         {"kind": "play", "target": 10, "reward": 150_000, "xp": 150,
-         "description": "сыграй 5 раз в рулетке (любые ставки)."},
+         "description": "сыграй 10 раз в рулетке (любые ставки)."},
     ]
     v = random.choice(variants)
     return {
@@ -4425,7 +4425,7 @@ async def _render_task_view(uid: int):
             rh, rr = divmod(cd_left, 3600)
             text += f"\n\n🔁 обновить задание за деньги можно через: <b>{rh:02d}:{rr // 60:02d}</b>"
         else:
-            text += f"\n\n🔁 можно обновить задание за <b>{TASK_REROLL_COST:,} ₽</b> (раз в 8 часов)"
+            text += f"\n\n🔁 можно обновить задание за <b>{TASK_REROLL_COST:,} ₽</b> (раз в {TASK_REROLL_HOURS} ч)"
             rows.append([InlineKeyboardButton(
                 text=f"🔄 Обновить задание · {TASK_REROLL_COST:,} ₽",
                 callback_data="task_reroll:ask",
@@ -4458,7 +4458,7 @@ async def task_reroll_ask(callback: CallbackQuery):
     cd_left = await redis_client.ttl(task_reroll_key(uid))
     if cd_left and cd_left > 0:
         rh, rr = divmod(cd_left, 3600)
-        await callback.answer(f"Обновлять можно раз в 8 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
+        await callback.answer(f"Обновлять можно раз в {TASK_REROLL_HOURS} ч. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
         return
     markup = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"✅ Да, за {TASK_REROLL_COST:,} ₽", callback_data="task_reroll:yes"),
@@ -4468,7 +4468,7 @@ async def task_reroll_ask(callback: CallbackQuery):
         await callback.message.edit_text(
             f"🔄 <b>Обновить задание?</b>\n\n"
             f"Текущее задание и его прогресс сгорят, выдадим новое.\n"
-            f"Цена: <b>{TASK_REROLL_COST:,} ₽</b>. Следующее обновление — через 8 часов.",
+            f"Цена: <b>{TASK_REROLL_COST:,} ₽</b>. Следующее обновление — через {TASK_REROLL_HOURS} ч.",
             parse_mode="HTML",
             reply_markup=markup,
         )
@@ -4492,12 +4492,12 @@ async def task_reroll_confirm(callback: CallbackQuery):
         await _edit_task_view(callback)
         return
 
-    # Ставим блокировку на 12 часов атомарно (защита от двойного нажатия)
+    # Ставим блокировку на время кулдауна атомарно (защита от двойного нажатия)
     locked = await redis_client.set(task_reroll_key(uid), str(int(time.time())), nx=True, ex=TASK_REROLL_COOLDOWN)
     if not locked:
         cd_left = await redis_client.ttl(task_reroll_key(uid))
         rh, rr = divmod(max(cd_left, 0), 3600)
-        await callback.answer(f"Обновлять можно раз в 8 часов. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
+        await callback.answer(f"Обновлять можно раз в {TASK_REROLL_HOURS} ч. Осталось: {rh:02d}:{rr // 60:02d}", show_alert=True)
         await _edit_task_view(callback)
         return
 
@@ -4525,6 +4525,11 @@ async def daily_task_claim(callback: CallbackQuery):
     reward = int(d.get("reward", 0))
     xp = int(d.get("xp", 0))
     key = daily_task_key(uid)
+    # атомарная защита от двойного нажатия: награду выдаём только тому, кто первым взял замок
+    claim_lock = f"task_claim_lock:{uid}:{d.get('created_at', '0')}"
+    if not await redis_client.set(claim_lock, "1", nx=True, ex=TASK_TTL_SECONDS):
+        await callback.answer("Награда уже получена", show_alert=True)
+        return
     await redis_client.hset(key, "claimed", "1")
     await add_to_balance(uid, reward)
     await add_xp(uid, xp)
