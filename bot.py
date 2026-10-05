@@ -98,14 +98,14 @@ def is_admin(user_id: int) -> bool:
 
 
 def parse_amount(value: str) -> int:
-    """Принимает 1000000, 1 000 000, 100к, 1кк; также 1.5к/1,5к."""
+    """Принимает 1000000, 1 000 000, 100к, 1кк, 1ккк и выше; также 1.5к/1,5к."""
     raw = value.strip().lower().replace("\u00a0", "").replace(" ", "").replace("_", "")
     raw = raw.replace(",", ".")
-    multiplier = 1
-    if raw.endswith("кк"):
-        multiplier, raw = 1_000_000, raw[:-2]
-    elif raw.endswith("к"):
-        multiplier, raw = 1_000, raw[:-1]
+    # Поддерживаем сокращения: 1к = 1 000, 1кк = 1 000 000, 1ккк = 1 000 000 000 и т.д.
+    k_count = len(raw) - len(raw.rstrip("к"))
+    multiplier = 1_000 ** k_count if k_count else 1
+    if k_count:
+        raw = raw[:-k_count]
     if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
         raise ValueError("invalid amount")
     result = float(raw) * multiplier
@@ -3003,7 +3003,7 @@ async def transfer_note_received(message: Message, state: FSMContext):
         return
     await state.update_data(transfer_note=note)
     await state.set_state(TransferForm.waiting_for_amount)
-    await message.answer("💰 теперь напиши сумму перевода.\n например: 1000, 100к или 1кк. для отмены введи /cancel.")
+    await message.answer("💰 теперь напиши сумму перевода.\n например: 1000, 100к, 1кк или 1ккк. для отмены введи /cancel.")
 
 @router.message(Command("cancel"), TransferForm.waiting_for_target)
 @router.message(Command("cancel"), TransferForm.waiting_for_note)
@@ -3017,7 +3017,7 @@ async def transfer_process(message: Message, state: FSMContext):
     try:
         amount = parse_amount((message.text or "").strip())
     except ValueError:
-        await message.answer("❌ не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк")
+        await message.answer("❌ не удалось распознать сумму. Примеры: 1000000, 1 000 000, 100к, 1кк, 1ккк")
         return
 
     sender_id = message.from_user.id
