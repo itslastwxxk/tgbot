@@ -3136,9 +3136,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Напоминает о хорошем",
         "image": "images/shop/beer.png",
         "slot": "top",
-        "scale": 180,
-        "x": 385,
-        "y": 137,
+        "scale": 175,
+        "x": 375,
+        "y": 140,
     },
 ]
 
