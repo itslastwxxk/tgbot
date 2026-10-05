@@ -3132,8 +3132,9 @@ async def show_work_menu(message: Message, state: FSMContext):
 # ============================================================
 # МАГАЗИН ОДЕЖДЫ / СКИН
 # ============================================================
-# Предметы хранятся в Redis Set user:{id}:clothes, а надетая
-# одежда — в поле equipped_top. Покупка сразу надевает вещь.
+# Предметы хранятся в Redis Set user:{id}:clothes.
+# Надетая одежда хранится отдельно по слотам: head/top/bottom/shoes.
+# Одновременно можно носить по одной вещи каждого типа.
 CLOTHING_SHOP_ITEMS = [
     {
         "id": "pizdec",
@@ -3185,16 +3186,30 @@ async def get_owned_clothes(user_id: int) -> set[str]:
     return set(values or [])
 
 
-async def get_equipped_top(user_id: int) -> str | None:
-    value = await redis_client.hget(f"user:{user_id}", "equipped_top")
+async def get_equipped(user_id: int, slot: str) -> str | None:
+    value = await redis_client.hget(f"user:{user_id}", f"equipped_{slot}")
+    # Совместимость со старой схемой, где верх хранился в equipped_top.
+    if not value and slot == "top":
+        value = await redis_client.hget(f"user:{user_id}", "equipped_top")
     return value or None
 
 
-async def set_equipped_top(user_id: int, item_id: str | None):
+async def set_equipped(user_id: int, slot: str, item_id: str | None):
+    key = f"equipped_{slot}"
     if item_id:
-        await redis_client.hset(f"user:{user_id}", "equipped_top", item_id)
+        await redis_client.hset(f"user:{user_id}", key, item_id)
     else:
-        await redis_client.hdel(f"user:{user_id}", "equipped_top")
+        await redis_client.hdel(f"user:{user_id}", key)
+        if slot == "top":
+            await redis_client.hdel(f"user:{user_id}", "equipped_top")
+
+
+async def get_equipped_top(user_id: int) -> str | None:
+    return await get_equipped(user_id, "top")
+
+
+async def set_equipped_top(user_id: int, item_id: str | None):
+    await set_equipped(user_id, "top", item_id)
 
 
 async def buy_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
@@ -3217,7 +3232,7 @@ async def buy_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
     end
     redis.call('HINCRBY', KEYS[1], 'balance', -price)
     redis.call('SADD', KEYS[2], ARGV[2])
-    redis.call('HSET', KEYS[1], 'equipped_top', ARGV[2])
+    redis.call('HSET', KEYS[1], 'equipped_' .. ARGV[3], ARGV[2])
     return 1
     """
 
@@ -3228,6 +3243,7 @@ async def buy_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
         inventory_key,
         str(item["price"]),
         item_id,
+        item.get("slot", "top"),
     ))
 
     if result == 1:
@@ -3332,27 +3348,45 @@ def _get_clothing_image(item: dict) -> Image.Image | None:
 
 
 async def render_skin_image(user_id: int) -> bytes:
-    """Рисует скин пользователя с реально надетой одеждой."""
-    equipped = await get_equipped_top(user_id)
-    return await render_skin_with_clothing(equipped)
+    """Рисует скин со всеми надетыми слотами: head/top/bottom/shoes."""
+    equipped_ids = [await get_equipped(user_id, slot) for slot in ("head", "top", "bottom", "shoes")]
+    return await render_skin_with_clothing(equipped_ids)
 
 
-async def render_skin_with_clothing(item_id: str | None) -> bytes:
-    """Рисует базовый скин и временно накладывает указанную одежду."""
+async def render_skin_with_clothing(item_id_or_ids, user_id: int | None = None) -> bytes:
+    """Рисует базовый скин со всеми надетыми вещами.
+    Если передан один item_id, он временно заменяет вещь в своём слоте.
+    """
     canvas = _get_skin_base()
 
-    if item_id:
+    if isinstance(item_id_or_ids, str) or item_id_or_ids is None:
+        equipped_ids = []
+        for slot in ("head", "top", "bottom", "shoes"):
+            equipped_ids.append(await get_equipped(user_id, slot) if user_id else None)
+        if isinstance(item_id_or_ids, str):
+            preview_item = clothing_item(item_id_or_ids)
+            if preview_item:
+                slot = preview_item.get("slot", "top")
+                slots = ["head", "top", "bottom", "shoes"]
+                equipped_ids[slots.index(slot)] = item_id_or_ids
+    else:
+        equipped_ids = list(item_id_or_ids or [])
+
+    for item_id in equipped_ids:
+        if not item_id:
+            continue
         item = clothing_item(item_id)
-        if item:
-            clothing = _get_clothing_image(item)
-            if clothing:
-                target_h = int(item.get("scale", 120))
-                ratio = target_h / max(1, clothing.height)
-                target_w = max(1, int(clothing.width * ratio))
-                clothing = clothing.resize((target_w, target_h), Image.Resampling.LANCZOS)
-                x = int(item.get("x", (canvas.width - target_w) // 2))
-                y = int(item.get("y", 55))
-                canvas.alpha_composite(clothing, (x, y))
+        if not item:
+            continue
+        clothing = _get_clothing_image(item)
+        if clothing:
+            target_h = int(item.get("scale", 120))
+            ratio = target_h / max(1, clothing.height)
+            target_w = max(1, int(clothing.width * ratio))
+            clothing = clothing.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            x = int(item.get("x", (canvas.width - target_w) // 2))
+            y = int(item.get("y", 55))
+            canvas.alpha_composite(clothing, (x, y))
 
     buf = BytesIO()
     canvas.save(buf, format="PNG")
@@ -3447,7 +3481,7 @@ async def send_clothing_preview(bot_obj, chat_id: int, user_id: int, item_id: st
 
     balance = await get_balance(user_id)
     owned = await get_owned_clothes(user_id)
-    preview_bytes = await render_skin_with_clothing(item_id)
+    preview_bytes = await render_skin_with_clothing(item_id, user_id)
 
     if item_id in owned:
         action_text = "✅ Уже куплено"
@@ -3509,7 +3543,11 @@ async def sell_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
     redis.call('SREM', KEYS[2], ARGV[1])
     redis.call('HINCRBY', KEYS[1], 'balance', ARGV[2])
 
-    if redis.call('HGET', KEYS[1], 'equipped_top') == ARGV[1] then
+    local slot = ARGV[3]
+    if redis.call('HGET', KEYS[1], 'equipped_' .. slot) == ARGV[1] then
+        redis.call('HDEL', KEYS[1], 'equipped_' .. slot)
+    end
+    if slot == 'top' and redis.call('HGET', KEYS[1], 'equipped_top') == ARGV[1] then
         redis.call('HDEL', KEYS[1], 'equipped_top')
     end
 
@@ -3523,6 +3561,7 @@ async def sell_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
         inventory_key,
         item_id,
         str(sell_price),
+        item.get("slot", "top"),
     ))
 
     if result != 1:
@@ -3544,7 +3583,11 @@ async def send_wardrobe(
 ):
     """Показывает гардероб как магазин: одна вещь = одна карточка с картинкой."""
     owned = await get_owned_clothes(user_id)
-    equipped = await get_equipped_top(user_id)
+    equipped_slots = {
+        slot: await get_equipped(user_id, slot)
+        for slot in ("head", "top", "bottom", "shoes")
+    }
+    equipped = set(equipped_slots.values())
 
     items = []
     for item_id in owned:
@@ -3552,8 +3595,8 @@ async def send_wardrobe(
         if item:
             items.append(item)
 
-    # Надетая вещь первой, остальные — по названию.
-    items.sort(key=lambda item: (item["id"] != equipped, item["name"].lower()))
+    # Надетые вещи первыми, остальные — по названию.
+    items.sort(key=lambda item: (item["id"] not in equipped, item["name"].lower()))
 
     total_pages = max(1, len(items))
     page = max(0, min(page, total_pages - 1))
@@ -3599,7 +3642,7 @@ async def send_wardrobe(
         return
 
     item = items[page]
-    is_equipped = item["id"] == equipped
+    is_equipped = item["id"] == equipped_slots.get(item.get("slot", "top"))
     sell_price = int(item["price"] * 0.60)
 
     status = "✅ <b>НАДЕТО</b>" if is_equipped else "📦 <b>В ГАРДЕРОБЕ</b>"
@@ -3845,7 +3888,7 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала купи эту вещь.", show_alert=True)
         return
 
-    await set_equipped_top(callback.from_user.id, item_id)
+    await set_equipped(callback.from_user.id, item["slot"], item_id)
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
 
@@ -3860,7 +3903,15 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "clothing_unequip")
 async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
-    await set_equipped_top(callback.from_user.id, None)
+    data = await state.get_data()
+    page = int(data.get("wardrobe_page", 0))
+    owned = await get_owned_clothes(callback.from_user.id)
+    owned_items = [clothing_item(x) for x in owned if clothing_item(x)]
+    if owned_items and page < len(owned_items):
+        current = owned_items[page]
+        await set_equipped(callback.from_user.id, current.get("slot", "top"), None)
+    else:
+        await set_equipped(callback.from_user.id, "top", None)
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
 
