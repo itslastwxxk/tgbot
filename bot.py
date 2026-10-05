@@ -3137,7 +3137,7 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/beer.png",
         "slot": "top",
         "scale": 165,
-        "x": 365,
+        "x": 364,
         "y": 153,
     },
 ]
