@@ -2886,7 +2886,7 @@ async def process_name(message: Message, state: FSMContext):
 
 @router.message(Command("я"))
 async def command_me(message: Message, state: FSMContext):
-    """Новый профиль игрока по команде /я."""
+    """Профиль по команде /я с картинкой персонажа и статусом VIP."""
     await state.clear()
     user_id = message.from_user.id
 
@@ -2904,9 +2904,33 @@ async def command_me(message: Message, state: FSMContext):
     bar_len = 15
     filled = percent * bar_len // 100
     bar = "█" * filled + "░" * (bar_len - filled)
-    
+
+    vip_until_raw = await redis_client.hget(f"user:{user_id}", "vip_until")
+    try:
+        vip_until = int(float(vip_until_raw or 0))
+    except (TypeError, ValueError):
+        vip_until = 0
+
+    if vip_until > int(time.time()):
+        vip_line = (
+            f"👑 <b>VIP</b> до "
+            f"<b>{datetime.fromtimestamp(vip_until).strftime('%d.%m.%Y')}</b>\n"
+        )
+    else:
+        vip_line = "👤 <b>Обычный статус</b>\n"
+
+    equipped = await get_equipped_top(user_id)
+    equipped_item = clothing_item(equipped) if equipped else None
+    outfit_line = (
+        f"👕 одежда: <b>{html.escape(equipped_item['name'])}</b>\n"
+        if equipped_item else "👕 одежда: <b>по умолчанию</b>\n"
+    )
+
     profile_text = (
-        f"👤 <b>профиль игрока {html.escape(name)}</b>\n\n"
+        f"📋 <b>твой профиль</b>\n\n"
+        f"👤 <b>{html.escape(name)}</b>\n"
+        f"{vip_line}"
+        f"{outfit_line}"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
@@ -2914,9 +2938,12 @@ async def command_me(message: Message, state: FSMContext):
         f"📊 [{bar}] {percent}%"
     )
 
-    await message.answer(
-        profile_text,
-        parse_mode="HTML"
+    photo_bytes = await render_skin_image(user_id)
+
+    await message.answer_photo(
+        photo=BufferedInputFile(photo_bytes, filename="profile_skin.png"),
+        caption=profile_text,
+        parse_mode="HTML",
     )
 
 
