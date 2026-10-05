@@ -3138,7 +3138,7 @@ CLOTHING_SHOP_ITEMS = [
         "slot": "top",
         "scale": 165,
         "x": 365,
-        "y": 145,
+        "y": 150,
     },
 ]
 
