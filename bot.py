@@ -3349,7 +3349,7 @@ def _get_clothing_image(item: dict) -> Image.Image | None:
 
 # Порядок слоёв одежды: от заднего к переднему.
 # Важно: не менять порядок — он определяет, какая вещь перекрывает другую.
-CLOTHING_LAYER_ORDER = ("shoes", "bottom", "top", "head")
+CLOTHING_LAYER_ORDER = ("head", "top", "bottom", "shoes")
 
 
 async def render_skin_image(user_id: int) -> bytes:
@@ -3600,8 +3600,15 @@ async def send_wardrobe(
         if item:
             items.append(item)
 
-    # Надетые вещи первыми, остальные — по названию.
-    items.sort(key=lambda item: (item["id"] not in equipped, item["name"].lower()))
+    # Всегда один и тот же порядок: сначала слой одежды, затем название.
+    # Это важно: Redis Set не гарантирует порядок, из-за чего гардероб
+    # мог показывать одну страницу, а кнопка «Снять» снимать другую вещь.
+    layer_order = {slot: i for i, slot in enumerate(CLOTHING_LAYER_ORDER)}
+    items.sort(key=lambda item: (
+        layer_order.get(item.get("slot", "top"), 99),
+        item["name"].lower(),
+        item["id"],
+    ))
 
     total_pages = max(1, len(items))
     page = max(0, min(page, total_pages - 1))
@@ -3668,7 +3675,8 @@ async def send_wardrobe(
         rows.append([
             InlineKeyboardButton(
                 text="❌ Снять",
-                callback_data="clothing_unequip",
+                # Передаём ID вещи, а не полагаемся на порядок Redis Set.
+                callback_data=f"clothing_unequip:{item['id']}",
             )
         ])
     else:
@@ -3906,17 +3914,23 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"👕 {item['name']} надета!")
 
 
-@router.callback_query(F.data == "clothing_unequip")
+@router.callback_query(F.data.startswith("clothing_unequip:"))
 async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    page = int(data.get("wardrobe_page", 0))
+    item_id = callback.data.split(":", 1)[1]
+    item = clothing_item(item_id)
     owned = await get_owned_clothes(callback.from_user.id)
-    owned_items = [clothing_item(x) for x in owned if clothing_item(x)]
-    if owned_items and page < len(owned_items):
-        current = owned_items[page]
-        await set_equipped(callback.from_user.id, current.get("slot", "top"), None)
-    else:
-        await set_equipped(callback.from_user.id, "top", None)
+
+    if not item or item_id not in owned:
+        await callback.answer("Этой вещи уже нет в гардеробе.", show_alert=True)
+        return
+
+    slot = item.get("slot", "top")
+    equipped = await get_equipped(callback.from_user.id, slot)
+    if equipped != item_id:
+        await callback.answer("Эта вещь сейчас не надета.", show_alert=True)
+        return
+
+    await set_equipped(callback.from_user.id, slot, None)
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
 
