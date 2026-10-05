@@ -4441,6 +4441,108 @@ async def daily_task_claim(callback: CallbackQuery):
         pass
 
 
+@router.message(F.text == "🛒 Магазин")
+async def show_clothing_shop(message: Message, state: FSMContext):
+    """Открывает именно магазин одежды."""
+    user_id = message.from_user.id
+    if not await check_level_access(message, user_id, SHOP_UNLOCK_LEVEL):
+        return
+
+    await state.clear()
+    msg_id = await send_clothing_shop(
+        message.bot,
+        message.chat.id,
+        user_id,
+        idx=0,
+    )
+    await state.update_data(
+        clothing_msg_id=msg_id,
+        clothing_idx=0,
+    )
+
+
+@router.callback_query(F.data.startswith("clothing_car:"))
+async def clothing_car(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    msg_id = await send_clothing_shop(
+        callback.bot,
+        callback.message.chat.id,
+        callback.from_user.id,
+        idx=idx,
+        message_id=old_id,
+    )
+    await state.update_data(
+        clothing_msg_id=msg_id,
+        clothing_idx=idx,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clothing_try:"))
+async def clothing_try(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    msg_id = await send_clothing_preview(
+        callback.bot,
+        callback.message.chat.id,
+        callback.from_user.id,
+        item_id,
+        message_id=old_id,
+    )
+    await state.update_data(
+        clothing_msg_id=msg_id,
+        clothing_preview_item=item_id,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "clothing_preview_back")
+async def clothing_preview_back(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    idx = int(data.get("clothing_idx", 0))
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    msg_id = await send_clothing_shop(
+        callback.bot,
+        callback.message.chat.id,
+        callback.from_user.id,
+        idx=idx,
+        message_id=old_id,
+    )
+    await state.update_data(clothing_msg_id=msg_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("clothing_preview_buy:"))
+async def clothing_preview_buy(callback: CallbackQuery, state: FSMContext):
+    item_id = callback.data.split(":", 1)[1]
+
+    ok, msg = await buy_clothing_item(callback.from_user.id, item_id)
+    if not ok:
+        await callback.answer(msg, show_alert=True)
+        return
+
+    # После покупки возвращаемся к карточке магазина.
+    data = await state.get_data()
+    idx = int(data.get("clothing_idx", 0))
+    old_id = data.get("clothing_msg_id", callback.message.message_id)
+
+    msg_id = await send_clothing_shop(
+        callback.bot,
+        callback.message.chat.id,
+        callback.from_user.id,
+        idx=idx,
+        message_id=old_id,
+    )
+    await state.update_data(clothing_msg_id=msg_id)
+    await callback.answer(msg, show_alert=True)
+
+
 @router.message(F.text == "🛒 Магаз")
 async def show_shop_menu(message: Message, state: FSMContext):
     level = (await get_user_stats(message.from_user.id))["level"]
