@@ -3349,7 +3349,7 @@ def _get_clothing_image(item: dict) -> Image.Image | None:
 
 # Порядок слоёв одежды: от заднего к переднему.
 # Важно: не менять порядок — он определяет, какая вещь перекрывает другую.
-CLOTHING_LAYER_ORDER = ("head", "top", "bottom", "shoes")
+CLOTHING_LAYER_ORDER = ("shoes", "bottom", "top", "head")
 
 
 async def render_skin_image(user_id: int) -> bytes:
