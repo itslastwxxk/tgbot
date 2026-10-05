@@ -3168,8 +3168,8 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/jins.png",
         "slot": "bottom",
         "scale": 175,
-        "x": 365,
-        "y": 235,
+        "x": 370,
+        "y": 240,
     },
 ]
 
