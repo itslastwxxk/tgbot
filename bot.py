@@ -3155,9 +3155,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Напоминает о хорошем",
         "image": "images/shop/beer.png",
         "slot": "top",
-        "scale": 165,
-        "x": 364,
-        "y": 153,
+        "scale": 160,
+        "x": 362,
+        "y": 152,
     },
     {
         "id": "jins",
