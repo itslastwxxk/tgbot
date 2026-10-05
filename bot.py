@@ -3167,8 +3167,8 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Широкие джинсы",
         "image": "images/shop/jins.png",
         "slot": "bottom",
-        "scale": 175,
-        "x": 370,
+        "scale": 169,
+        "x": 369,
         "y": 240,
     },
 ]
