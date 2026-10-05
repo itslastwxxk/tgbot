@@ -3156,9 +3156,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Напоминает о хорошем",
         "image": "images/shop/beer.png",
         "slot": "top",
-        "scale": 160,
-        "x": 362,
-        "y": 152,
+        "scale": 155,
+        "x": 361,
+        "y": 151,
     },
     {
         "id": "jins",
@@ -3168,8 +3168,8 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Широкие джинсы",
         "image": "images/shop/jins.png",
         "slot": "bottom",
-        "scale": 169,
-        "x": 369,
+        "scale": 165,
+        "x": 367,
         "y": 240,
     },
 ]
@@ -3347,9 +3347,14 @@ def _get_clothing_image(item: dict) -> Image.Image | None:
         return None
 
 
+# Порядок слоёв одежды: от заднего к переднему.
+# Важно: не менять порядок — он определяет, какая вещь перекрывает другую.
+CLOTHING_LAYER_ORDER = ("head", "top", "bottom", "shoes")
+
+
 async def render_skin_image(user_id: int) -> bytes:
-    """Рисует скин со всеми надетыми слотами: head/top/bottom/shoes."""
-    equipped_ids = [await get_equipped(user_id, slot) for slot in ("head", "top", "bottom", "shoes")]
+    """Рисует скин строго по слоям: головной убор -> верх -> низ -> обувь."""
+    equipped_ids = [await get_equipped(user_id, slot) for slot in CLOTHING_LAYER_ORDER]
     return await render_skin_with_clothing(equipped_ids)
 
 
@@ -3361,7 +3366,7 @@ async def render_skin_with_clothing(item_id_or_ids, user_id: int | None = None) 
 
     if isinstance(item_id_or_ids, str) or item_id_or_ids is None:
         equipped_ids = []
-        for slot in ("head", "top", "bottom", "shoes"):
+        for slot in CLOTHING_LAYER_ORDER:
             equipped_ids.append(await get_equipped(user_id, slot) if user_id else None)
         if isinstance(item_id_or_ids, str):
             preview_item = clothing_item(item_id_or_ids)
