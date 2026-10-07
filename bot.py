@@ -3233,7 +3233,7 @@ CLOTHING_SHOP_ITEMS = [
         "slot": "shoes",
         "scale": 100,
         "x": 313,
-        "y": 450,
+        "y": 360,
     },
 ]
 
