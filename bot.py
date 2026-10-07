@@ -3209,7 +3209,7 @@ CLOTHING_SHOP_ITEMS = [
         "slot": "accessories",
         "scale": 105,
         "x": 325,
-        "y": 43,
+        "y": 47,
     },
 ]
 
