@@ -4642,15 +4642,20 @@ async def show_clothing_category(message: Message, state: FSMContext, category: 
     # товары выбранного раздела через отдельный список индексов.
     first_item = items[0]
     global_idx = CLOTHING_SHOP_ITEMS.index(first_item)
+    # Внутри категории индекс всегда локальный: 0, 1, 2...
+    # Это нужно, чтобы счётчик карусели был вида 1/2, а не зависел
+    # от позиции товара в общем списке CLOTHING_SHOP_ITEMS.
+    category_idx = 0
     msg_id = await send_clothing_shop(
         message.bot,
         message.chat.id,
         message.from_user.id,
-        idx=global_idx,
+        idx=category_idx,
+        category=category,
     )
     await state.update_data(
         clothing_msg_id=msg_id,
-        clothing_idx=global_idx,
+        clothing_idx=category_idx,
         clothing_category=category,
     )
 
