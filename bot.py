@@ -3185,7 +3185,7 @@ CLOTHING_SHOP_ITEMS = [
         "slot": "bottom",
         "scale": 180,
         "x": 312,
-        "y": 252,
+        "y": 260,
     },
     {
         "id": "mask",
@@ -3195,9 +3195,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "ابن مصر",
         "image": "images/shop/mask.png",
         "slot": "head",
-        "scale": 220,
-        "x": 310,
-        "y": 30,
+        "scale": 215,
+        "x": 300,
+        "y": 25,
     },
 ]
 
