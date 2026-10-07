@@ -3315,8 +3315,11 @@ def _remove_white_background(img: Image.Image) -> Image.Image:
                 seen.add((nx, ny))
                 q.append((nx, ny))
 
-    bbox = img.getbbox()
-    return img.crop(bbox) if bbox else img
+    # Не обрезаем изображение по bbox.
+    # Это важно: прозрачные/удалённые участки одежды должны оставаться
+    # прозрачными, чтобы через них был виден skin_base. Кроме того,
+    # сохранение исходного размера не ломает координаты x/y предмета.
+    return img
 
 
 _skin_cache = None
