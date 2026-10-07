@@ -3196,8 +3196,8 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/mask.png",
         "slot": "head",
         "scale": 215,
-        "x": 300,
-        "y": 25,
+        "x": 290,
+        "y": 20,
     },
 ]
 
