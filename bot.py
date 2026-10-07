@@ -3187,6 +3187,18 @@ CLOTHING_SHOP_ITEMS = [
         "x": 367,
         "y": 240,
     },
+    {
+        "id": "mask",
+        "name": "Маска из египта",
+        "price": 10_000_000,
+        "emoji": "",
+        "desc": "ابن مصر",
+        "image": "images/shop/mask.png",
+        "slot": "head",
+        "scale": 155,
+        "x": 367,
+        "y": 50,
+    },
 ]
 
 CLOTHING_ITEMS_BY_ID = {item["id"]: item for item in CLOTHING_SHOP_ITEMS}
@@ -4609,6 +4621,9 @@ SHOP_CLOTHING_CATEGORIES = {
     "👕 Вверх": "top",
     "👖 Низ": "bottom",
     "👟 Обувь": "shoes",
+    "🕶 Аксессуары": "accessories",
+    "🧰 Предметы": "items",
+    "📦 Разное": "misc",
 }
 
 
@@ -4617,6 +4632,8 @@ def get_clothing_category_keyboard():
         keyboard=[
             [KeyboardButton(text="🧢 Головные уборы"), KeyboardButton(text="👕 Вверх")],
             [KeyboardButton(text="👖 Низ"), KeyboardButton(text="👟 Обувь")],
+            [KeyboardButton(text="🕶 Аксессуары"), KeyboardButton(text="🧰 Предметы")],
+            [KeyboardButton(text="📦 Разное")],
             [KeyboardButton(text="🔙 В магазин")],
         ],
         resize_keyboard=True,
