@@ -3183,9 +3183,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Широкие джинсы",
         "image": "images/shop/jins.png",
         "slot": "bottom",
-        "scale": 200,
-        "x": 320,
-        "y": 250,
+        "scale": 180,
+        "x": 312,
+        "y": 252,
     },
     {
         "id": "mask",
@@ -3195,9 +3195,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "ابن مصر",
         "image": "images/shop/mask.png",
         "slot": "head",
-        "scale": 210,
-        "x": 320,
-        "y": 40,
+        "scale": 220,
+        "x": 310,
+        "y": 30,
     },
 ]
 
