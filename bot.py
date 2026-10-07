@@ -3207,9 +3207,21 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "ابن مصر",
         "image": "images/shop/glasses_mine.png",
         "slot": "accessories",
-        "scale": 105,
+        "scale": 102,
         "x": 325,
         "y": 47,
+    },
+    {
+        "id": "spider_top.png",
+        "name": "Крутые очки",
+        "price": 10_000_000,
+        "emoji": "",
+        "desc": "ابن مصر",
+        "image": "images/shop/spider_top.png",
+        "slot": "top",
+        "scale": 180,
+        "x": 325,
+        "y": 150,
     },
 ]
 
