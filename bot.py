@@ -3410,6 +3410,9 @@ async def render_skin_with_clothing(item_id_or_ids, user_id: int | None = None) 
             ratio = target_h / max(1, clothing.height)
             target_w = max(1, int(clothing.width * ratio))
             clothing = clothing.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+            # Одежда — отдельный прозрачный слой поверх skin_base.png.
+            # В прозрачных/удалённых местах одежды нижний skin_base остаётся виден.
             x = int(item.get("x", (canvas.width - target_w) // 2))
             y = int(item.get("y", 55))
             canvas.alpha_composite(clothing, (x, y))
