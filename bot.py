@@ -908,10 +908,10 @@ async def add_tokens(user_id: int, amount: int) -> int:
     return new_tokens
 
 async def deduct_tokens(user_id: int, amount: int) -> bool:
-    global _token_deduct_sha
     """Атомарно списывает Токены через Lua-скрипт.
     Автоматически перезагружает скрипт, если Redis его потерял.
     True — успешно, False — не хватает Токенов."""
+    global _token_deduct_sha
     await _ensure_token_deduct_script()
     try:
         result = await redis_client.evalsha(_token_deduct_sha, 1, f"user:{user_id}", amount)
@@ -3380,6 +3380,7 @@ async def render_skin_with_clothing(item_id_or_ids, user_id: int | None = None) 
     canvas = _get_skin_base()
 
     if isinstance(item_id_or_ids, str) or item_id_or_ids is None:
+        # Храним список строго в том же порядке, в котором отрисовываем слои.
         equipped_ids = []
         for slot in CLOTHING_LAYER_ORDER:
             equipped_ids.append(await get_equipped(user_id, slot) if user_id else None)
@@ -3387,8 +3388,10 @@ async def render_skin_with_clothing(item_id_or_ids, user_id: int | None = None) 
             preview_item = clothing_item(item_id_or_ids)
             if preview_item:
                 slot = preview_item.get("slot", "top")
-                slots = ["head", "top", "bottom", "shoes"]
-                equipped_ids[slots.index(slot)] = item_id_or_ids
+                # Раньше здесь использовался другой порядок слотов, из-за чего
+                # примерка верхней/нижней одежды подменяла соседний слой.
+                if slot in CLOTHING_LAYER_ORDER:
+                    equipped_ids[CLOTHING_LAYER_ORDER.index(slot)] = item_id_or_ids
     else:
         equipped_ids = list(item_id_or_ids or [])
 
@@ -6253,46 +6256,85 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
 
     if data.startswith("biz_buy:"):
         idx = int(data.split(":")[1])
+        if idx < 0 or idx >= len(BUSINESS_LIST):
+            await callback.answer("товар не найден.", show_alert=True)
+            return
         biz_def = BUSINESS_LIST[idx]
-        existing = await get_biz(user_id)
-        if existing:
-            await callback.answer("у тебя уже есть бизнес! сначала продай его.", show_alert=True)
+
+        # Защита от двойного клика/параллельных callback: один пользователь
+        # не может одновременно купить два бизнеса в один свободный слот.
+        lock_key = f"biz_buy_lock:{user_id}"
+        lock_token = uuid.uuid4().hex
+        locked = await redis_client.set(lock_key, lock_token, nx=True, ex=15)
+        if not locked:
+            await callback.answer("покупка уже обрабатывается, подожди секунду.", show_alert=True)
             return
-        balance = await get_balance(user_id)
-        if balance < biz_def["price"]:
-            await callback.answer("не хватает денег!", show_alert=True)
-            return
-        await callback.answer()
-        ok = await deduct_balance(user_id, biz_def["price"])
-        if not ok:
-            await callback.answer("не хватает денег!", show_alert=True)
-            return
-        new_biz = {
-            "name": biz_def["name"],
-            "price": biz_def["price"],
-            "income_per_min": biz_def["income_per_min"],
-            "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
-            "raw_capacity": biz_def["raw_capacity"],
-            "level": 1,
-            "raw_stock": 0,
-            "balance": 0,
-            "broken": False,
-            "last_break_check": time.time(),
-            "last_collected": time.time(),
-        }
-        await save_biz(user_id, new_biz)
-        active_task = await ensure_player_task(user_id)
-        if (active_task.get("type") == "business"
-                and active_task.get("claimed", "0") != "1"
-                and biz_def["name"] == active_task.get("business_name")):
-            await bump_task_progress(user_id, "business",
-                                     amount=int(active_task.get("target", "1")))
-        text, kb = biz_manage_view(new_biz)
-        await callback.message.edit_text(
-            f"✅ взял «{biz_def['name']}» за <b>{biz_def['price']:,} ₽</b>!\n\n" + text,
-            parse_mode="HTML",
-            reply_markup=kb
-        )
+
+        try:
+            existing = await get_biz(user_id)
+            if existing:
+                await callback.answer("у тебя уже есть бизнес! сначала продай его.", show_alert=True)
+                return
+
+            # Финальная проверка выполняется непосредственно перед списанием.
+            ok = await deduct_balance(user_id, biz_def["price"])
+            if not ok:
+                await callback.answer("не хватает денег!", show_alert=True)
+                return
+
+            new_biz = {
+                "name": biz_def["name"],
+                "price": biz_def["price"],
+                "income_per_min": biz_def["income_per_min"],
+                "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
+                "raw_capacity": biz_def["raw_capacity"],
+                "level": 1,
+                "raw_stock": 0,
+                "balance": 0,
+                "broken": False,
+                "last_break_check": time.time(),
+                "last_collected": time.time(),
+            }
+            try:
+                await save_biz(user_id, new_biz)
+            except Exception:
+                # Если сохранение товара не удалось, не оставляем пользователя
+                # без денег. Это особенно важно после сбоев Redis.
+                await add_to_balance(user_id, biz_def["price"])
+                raise
+
+            active_task = await ensure_player_task(user_id)
+            if (active_task.get("type") == "business"
+                    and active_task.get("claimed", "0") != "1"
+                    and biz_def["name"] == active_task.get("business_name")):
+                await bump_task_progress(user_id, "business",
+                                         amount=int(active_task.get("target", "1")))
+
+            text, kb = biz_manage_view(new_biz)
+            await callback.answer("покупка выполнена!")
+            await callback.message.edit_text(
+                f"✅ взял «{biz_def['name']}» за <b>{biz_def['price']:,} ₽</b>!\n\n" + text,
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+        except Exception:
+            logger.exception("Ошибка покупки бизнеса user_id=%s item=%s", user_id, biz_def.get("name"))
+            try:
+                await callback.answer("не удалось завершить покупку. деньги не должны быть потеряны.", show_alert=True)
+            except Exception:
+                pass
+        finally:
+            # Удаляем lock только если он всё ещё наш.
+            release_script = """
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+            """
+            try:
+                await redis_client.eval(release_script, 1, lock_key, lock_token)
+            except Exception:
+                logger.exception("Не удалось снять lock покупки бизнеса user_id=%s", user_id)
         return
 
     biz = await get_biz(user_id)
