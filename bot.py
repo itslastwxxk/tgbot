@@ -3219,9 +3219,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "ابن مصر",
         "image": "images/shop/spider_top.png",
         "slot": "top",
-        "scale": 180,
-        "x": 325,
-        "y": 150,
+        "scale": 150,
+        "x": 305,
+        "y": 157,
     },
 ]
 
