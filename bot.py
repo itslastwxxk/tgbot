@@ -3220,8 +3220,8 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/spider_top.png",
         "slot": "top",
         "scale": 150,
-        "x": 305,
-        "y": 157,
+        "x": 313,
+        "y": 165,
     },
 ]
 
