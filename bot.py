@@ -3468,15 +3468,41 @@ async def clothing_shop_view(idx: int, user_id: int, category: str | None = None
 
 
 async def send_clothing_shop(bot_obj, chat_id: int, user_id: int, idx: int = 0, message_id: int | None = None, category: str | None = None):
+    """Показывает карточку магазина и редактирует её при перелистывании."""
     text, kb, item = await clothing_shop_view(idx, user_id, category=category)
     image_path = item.get("image")
 
     if message_id:
         try:
-            # Нельзя редактировать media через edit_text, если там уже фото.
-            # Проще удалить карточку и отправить новую.
-            await bot_obj.delete_message(chat_id, message_id)
+            if image_path and os.path.exists(image_path):
+                # Перелистывание: меняем фото, подпись и клавиатуру
+                # прямо в существующем сообщении.
+                media = InputMediaPhoto(
+                    media=FSInputFile(image_path),
+                    caption=text,
+                    parse_mode="HTML",
+                )
+                await bot_obj.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    media=media,
+                    reply_markup=kb,
+                )
+                return message_id
+
+            # Если карточка без изображения — редактируем текст.
+            await bot_obj.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            return message_id
+
         except TelegramBadRequest:
+            # Если Telegram не может изменить тип сообщения,
+            # создаём карточку заново как запасной вариант.
             pass
 
     if image_path and os.path.exists(image_path):
