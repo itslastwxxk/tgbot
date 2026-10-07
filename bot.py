@@ -10,6 +10,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import ErrorEvent
 from aiogram.types import BufferedInputFile
 from io import BytesIO
 from aiogram.types import ReplyKeyboardRemove, FSInputFile
@@ -24,6 +25,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import redis.asyncio as redis
+from redis.exceptions import NoScriptError
 import random
 import re
 from datetime import datetime, timedelta, timezone
@@ -848,10 +850,17 @@ async def add_to_balance(user_id: int, amount: int) -> int:
     return new_balance
 
 async def deduct_balance(user_id: int, amount: int) -> bool:
+    global _deduct_sha
     """Атомарно списывает деньги через Lua-скрипт.
+    Автоматически перезагружает скрипт, если Redis его потерял.
     True — успешно, False — не хватает баланса."""
     await _ensure_deduct_script()
-    result = await redis_client.evalsha(_deduct_sha, 1, f"user:{user_id}", amount)
+    try:
+        result = await redis_client.evalsha(_deduct_sha, 1, f"user:{user_id}", amount)
+    except NoScriptError:
+        # Redis SCRIPT-кэш может очищаться после restart/failover/flush.
+        _deduct_sha = await redis_client.script_load(DEDUCT_LUA)
+        result = await redis_client.evalsha(_deduct_sha, 1, f"user:{user_id}", amount)
     if int(result) == 1:
         # Читаем актуальное значение напрямую: get_balance() мог вернуть устаревший кэш.
         new_balance_raw = await redis_client.hget(f"user:{user_id}", "balance")
@@ -899,10 +908,16 @@ async def add_tokens(user_id: int, amount: int) -> int:
     return new_tokens
 
 async def deduct_tokens(user_id: int, amount: int) -> bool:
+    global _token_deduct_sha
     """Атомарно списывает Токены через Lua-скрипт.
+    Автоматически перезагружает скрипт, если Redis его потерял.
     True — успешно, False — не хватает Токенов."""
     await _ensure_token_deduct_script()
-    result = await redis_client.evalsha(_token_deduct_sha, 1, f"user:{user_id}", amount)
+    try:
+        result = await redis_client.evalsha(_token_deduct_sha, 1, f"user:{user_id}", amount)
+    except NoScriptError:
+        _token_deduct_sha = await redis_client.script_load(TOKEN_DEDUCT_LUA)
+        result = await redis_client.evalsha(_token_deduct_sha, 1, f"user:{user_id}", amount)
     if int(result) == 1:
         new_tokens_raw = await redis_client.hget(f"user:{user_id}", "tokens")
         new_tokens = int(float(new_tokens_raw or 0))
@@ -7944,7 +7959,8 @@ async def handle_unknown_text(message: Message, state: FSMContext):
         await message.answer("используй кнопки😡\nчтобы переместиться в главное меню используй команду /menu")
 
 @dp.errors()
-async def global_error_handler(event, exception):
+async def global_error_handler(event: ErrorEvent):
+    exception = event.exception
     logger.error("Необработанная ошибка: %s", exception, exc_info=(type(exception), exception, exception.__traceback__))
     update = event.update
     callback = update.callback_query
