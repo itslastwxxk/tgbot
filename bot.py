@@ -3232,7 +3232,7 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/shoes_nike.png",
         "slot": "shoes",
         "scale": 88,
-        "x": 317,
+        "x": 315,
         "y": 382,
     },
 ]
