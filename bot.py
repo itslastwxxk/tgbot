@@ -3231,9 +3231,9 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "Не стирана после человека паука",
         "image": "images/shop/shoes_nike.png",
         "slot": "shoes",
-        "scale": 95,
-        "x": 325,
-        "y": 390,
+        "scale": 90,
+        "x": 315,
+        "y": 385,
     },
 ]
 
