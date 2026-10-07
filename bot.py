@@ -3208,8 +3208,8 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/glasses_mine.png",
         "slot": "accessories",
         "scale": 105,
-        "x": 320,
-        "y": 30,
+        "x": 325,
+        "y": 40,
     },
 ]
 
