@@ -3230,7 +3230,7 @@ CLOTHING_SHOP_ITEMS = [
         "emoji": "",
         "desc": "Не стирана после человека паука",
         "image": "images/shop/shoes_nike2.png",
-        "slot": "top",
+        "slot": "shoes",
         "scale": 100,
         "x": 313,
         "y": 450,
