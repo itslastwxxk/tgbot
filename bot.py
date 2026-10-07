@@ -3224,18 +3224,6 @@ CLOTHING_SHOP_ITEMS = [
         "y": 180,
     },
     {
-        "id": "shoes_nike2",
-        "name": "Футболка Пидера Паркера",
-        "price": 10_000_000,
-        "emoji": "",
-        "desc": "Не стирана после человека паука",
-        "image": "images/shop/shoes_nike2.png",
-        "slot": "shoes",
-        "scale": 100,
-        "x": 325,
-        "y": 360,
-    },
-    {
         "id": "shoes_nike",
         "name": "Футболка Пидера Паркера",
         "price": 10_000_000,
