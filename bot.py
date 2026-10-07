@@ -3207,7 +3207,7 @@ CLOTHING_SHOP_ITEMS = [
         "desc": "ابن مصر",
         "image": "images/shop/glasses_mine.png",
         "slot": "accessories",
-        "scale": 215,
+        "scale": 150,
         "x": 290,
         "y": 12,
     },
