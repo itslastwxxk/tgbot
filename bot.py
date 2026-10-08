@@ -1307,9 +1307,19 @@ async def get_top_referrals(limit: int = 10) -> list[tuple[int, int]]:
             break
     return result
 
+async def is_vip_active(user_id: int) -> bool:
+    """True, если у игрока действующий VIP (vip_until ещё не истёк)."""
+    raw = await redis_client.hget(f"user:{user_id}", "vip_until")
+    try:
+        return int(float(raw or 0)) > int(time.time())
+    except (TypeError, ValueError):
+        return False
+
 async def get_top_display_name(user_id: int) -> str:
-    """Отображаемое имя игрока для топов: ник + @username (если он есть)."""
+    """Отображаемое имя игрока для топов: ник (+ 👑 для VIP) + @username (если он есть)."""
     name = await get_user_name(user_id) or "без ника"
+    if await is_vip_active(user_id):
+        name = f" 👑 {name}"
     username = await get_username(user_id)
     if username and username != "без_username":
         return f"{name} (@{username})"
@@ -4875,31 +4885,38 @@ async def shop_back_to_menu(message: Message, state: FSMContext):
 # --- Магазин за Токены (ТК) ---
 DONATE_SHOP_ITEMS = [
     {
-        "id": "token_business_bookmaker",
-        "emoji": "🎯",
-        "name": "Букмекерская контора",
+        "id": "token_business_hypermarket",
+        "emoji": "🏬",
+        "name": "Гипермаркет",
         "price": 50,
-        "desc": "\n Бизнес «Букмекерская контора»\nЧистый доход: 7,000 ₽",
+        "desc": "\n  Бизнес «Гипермаркет»\nЧистый доход: 90,000 ₽ в минуту",
     },
     {
-        "id": "token_business_crypto",
-        "emoji": "₿",
-        "name": "Криптобиржа",
+        "id": "token_business_palace",
+        "emoji": "🏰",
+        "name": "Дворец",
         "price": 100,
-        "desc": "\n Бизнес «Криптобиржа»\nЧистый доход: 50,000 ₽",
+        "desc": "\n  Бизнес «Дворец»\nЧистый доход: 400,000 ₽ в минуту",
     },
     {
-        "id": "token_vip_palace",
+        "id": "token_vip_casino",
         "emoji": "👑",
-        "name": "VIP + Дворец",
+        "name": "VIP на месяц + Казино",
         "price": 150,
-        "desc": "\n VIP на 1 месяц и бизнес «Дворец»\nVIP будет отображаться у тебя в профиле и его будут видеть все в топе.Также VIP дает доступ к чату с админами бота.\nБизнес «Дворец» приносит чистый доход: 150,000 ₽",
+        "desc": "\n VIP на 1 месяц и бизнес «Казино»\nVIP будет отображаться у тебя в профиле и его будут видеть все.Также VIP дает доступ к чату с админами бота.\nБизнес «Казино» приносит чистый доход: 2,000,000 ₽ в минуту",
+    },
+    {
+        "id": "token_vip_month",
+        "emoji": "👑",
+        "name": "VIP на месяц",
+        "price": 35,
+        "desc": "\n VIP на 1 месяц\nVIP будет отображаться у тебя в профиле и его будут видеть все в топе.Также VIP дает доступ к чату с админами бота.",
     },
     {
         "id": "change_name",
         "emoji": "✏️",
         "name": "Смена ника",
-        "price": 40,
+        "price": 30,
         "desc": "",
     },
 ]
@@ -5062,7 +5079,7 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
         return
 
     # Все новые товары с бизнесом требуют свободного слота бизнеса.
-    if item["id"] in {"token_business_bookmaker", "token_business_crypto", "token_vip_palace"}:
+    if item["id"] in {"token_business_hypermarket", "token_business_palace", "token_vip_casino"}:
         existing = await get_biz(user_id)
         if existing:
             await callback.answer(
@@ -5076,8 +5093,8 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Не хватает ТК!", show_alert=True)
         return
 
-    if item["id"] == "token_business_bookmaker":
-        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Букмекерская контора")
+    if item["id"] == "token_business_hypermarket":
+        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Гипермаркет")
         new_biz = {
             "name": biz_def["name"],
             "price": biz_def["price"],
@@ -5092,28 +5109,28 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
             "last_collected": time.time(),
         }
         await save_biz(user_id, new_biz)
-        await callback.answer("🎯 Букмекерская контора получена за 50 ТК!", show_alert=True)
+        await callback.answer("🏬 Гипермаркет получен за 50 ТК!", show_alert=True)
 
-    elif item["id"] == "token_business_crypto":
-        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Криптобиржа")
-        new_biz = {
-            "name": biz_def["name"],
-            "price": biz_def["price"],
-            "income_per_min": biz_def["income_per_min"],
-            "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
-            "raw_capacity": biz_def["raw_capacity"],
-            "level": 1,
-            "raw_stock": 0,
-            "balance": 0,
-            "broken": False,
-            "last_break_check": time.time(),
-            "last_collected": time.time(),
-        }
-        await save_biz(user_id, new_biz)
-        await callback.answer("₿ Криптобиржа получена за 100 ТК!", show_alert=True)
-
-    elif item["id"] == "token_vip_palace":
+    elif item["id"] == "token_business_palace":
         biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Дворец")
+        new_biz = {
+            "name": biz_def["name"],
+            "price": biz_def["price"],
+            "income_per_min": biz_def["income_per_min"],
+            "raw_consumption_per_min": biz_def["raw_consumption_per_min"],
+            "raw_capacity": biz_def["raw_capacity"],
+            "level": 1,
+            "raw_stock": 0,
+            "balance": 0,
+            "broken": False,
+            "last_break_check": time.time(),
+            "last_collected": time.time(),
+        }
+        await save_biz(user_id, new_biz)
+        await callback.answer("🏰 Дворец получен за 100 ТК!", show_alert=True)
+
+    elif item["id"] == "token_vip_casino":
+        biz_def = next(b for b in BUSINESS_LIST if b["name"] == "Казино")
         new_biz = {
             "name": biz_def["name"],
             "price": biz_def["price"],
@@ -5137,7 +5154,18 @@ async def donate_buy(callback: CallbackQuery, state: FSMContext):
             current_vip_until = 0
         vip_until = max(now, current_vip_until) + 30 * 24 * 60 * 60
         await redis_client.hset(f"user:{user_id}", "vip_until", str(vip_until))
-        await callback.answer("👑 VIP на 1 месяц и бизнес «Дворец» получены за 150 ТК!", show_alert=True)
+        await callback.answer("👑 VIP на 1 месяц и бизнес «Казино» получены за 150 ТК!", show_alert=True)
+
+    elif item["id"] == "token_vip_month":
+        now = int(time.time())
+        current_vip = await redis_client.hget(f"user:{user_id}", "vip_until")
+        try:
+            current_vip_until = int(float(current_vip)) if current_vip else 0
+        except (TypeError, ValueError):
+            current_vip_until = 0
+        vip_until = max(now, current_vip_until) + 30 * 24 * 60 * 60
+        await redis_client.hset(f"user:{user_id}", "vip_until", str(vip_until))
+        await callback.answer("👑 VIP на 1 месяц получен за 25 ТК!", show_alert=True)
 
     # Обновляем карточку товара в том же сообщении.
     data = await state.get_data()
@@ -5205,8 +5233,12 @@ CASES = {
             "outcomes": [(12, 0), (40, 500000), (38, 1500000), (10, 2000000)]},
     "7": {"emoji": "⚜️", "name": "элитный кейс", "cost": 2000000,
             "outcomes": [(12, 0), (40, 1000000), (38, 3000000), (10, 4000000)]},
+    "8": {"emoji": "🔮", "name": "изи кейс", "cost": 10000000,
+            "outcomes": [(12, 0), (40, 5000000), (38, 16000000), (10, 20000000)]},
+    "9": {"emoji": "👑", "name": "сикрет кейс", "cost": 100000000,
+            "outcomes": [(12, 0), (40, 50000000), (38, 160000000), (10, 200000000)]},
 }
-CASE_ORDER = ["1", "2", "3", "4", "5", "6", "7"]
+CASE_ORDER = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 CASE_OPEN_COOLDOWN = 3  # секунда между открытиями кейсов
 
 
