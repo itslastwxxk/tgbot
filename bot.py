@@ -702,7 +702,7 @@ def biz_no_biz_view():
     return text, kb
 
 
-def biz_carousel_view(idx, balance):
+def biz_carousel_view(idx, balance, view_only=False):
     biz = BUSINESS_LIST[idx]
     can_buy = balance >= biz["price"]
     consumption = biz["raw_consumption_per_min"]
@@ -721,16 +721,18 @@ def biz_carousel_view(idx, balance):
         f"Твой баланс: {balance:,} ₽"
     )
     nav = []
+    nav_prefix = "biz_viewcar" if view_only else "biz_car"
     if idx > 0:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"biz_car:{idx-1}"))
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"{nav_prefix}:{idx-1}"))
     nav.append(InlineKeyboardButton(text=f"{idx+1}/{len(BUSINESS_LIST)}", callback_data="biz_noop"))
     if idx < len(BUSINESS_LIST) - 1:
-        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"biz_car:{idx+1}"))
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"{nav_prefix}:{idx+1}"))
     rows = [nav]
-    if can_buy:
-        rows.append([InlineKeyboardButton(text=f"✅ Взять за {biz['price']:,} ₽", callback_data=f"biz_buy:{idx}")])
-    else:
-        rows.append([InlineKeyboardButton(text=f"❌ Не хватает {biz['price']:,} ₽", callback_data="biz_noop")])
+    if not view_only:
+        if can_buy:
+            rows.append([InlineKeyboardButton(text=f"✅ Взять за {biz['price']:,} ₽", callback_data=f"biz_buy:{idx}")])
+        else:
+            rows.append([InlineKeyboardButton(text=f"❌ Не хватает {biz['price']:,} ₽", callback_data="biz_noop")])
     rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -5841,7 +5843,7 @@ async def handle_ref(message: Message):
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 <b>Награды за рефералов:</b>\n"
         f"{get_referral_rewards_text()}\n"
-        f"  Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
+        f"    Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
         f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> за 3 уровень.\n"
         f"🔥 Если твой реферал достигнет 10 уровня тебе начисляется <b>та же сумма</b>, а рефералу — <b>{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>."
     )
@@ -5908,7 +5910,7 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 <b>Награды за рефералов:</b>\n"
         f"{get_referral_rewards_text()}\n"
-        f"  Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
+        f"    Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
         f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> за 3 уровень.\n"
         f"🔥 Если твой реферал достигнет 10 уровня тебе начисляется <b>та же сумма</b>, а рефералу — <b>{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>."
     )
@@ -6322,20 +6324,33 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
             await biz_edit(callback, text, kb)
             return
         balance = await get_balance(user_id)
-        text, kb = biz_carousel_view(0, balance)
+        text, kb = biz_carousel_view(0, balance, view_only=True)
         await biz_edit(callback, text, kb)
         return
 
     if data.startswith("biz_car:"):
         await callback.answer()
-        existing = await get_biz(user_id)
-        if existing:
-            text, kb = biz_manage_view(existing)
-            await biz_edit(callback, text, kb)
+        try:
+            idx = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
             return
-        idx = int(data.split(":")[1])
+        if idx < 0 or idx >= len(BUSINESS_LIST):
+            return
         balance = await get_balance(user_id)
         text, kb = biz_carousel_view(idx, balance)
+        await biz_edit(callback, text, kb)
+        return
+
+    if data.startswith("biz_viewcar:"):
+        await callback.answer()
+        try:
+            idx = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+        if idx < 0 or idx >= len(BUSINESS_LIST):
+            return
+        balance = await get_balance(user_id)
+        text, kb = biz_carousel_view(idx, balance, view_only=True)
         await biz_edit(callback, text, kb)
         return
 
