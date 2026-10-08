@@ -3215,7 +3215,7 @@ CLOTHING_SHOP_ITEMS = [
         "image": "images/shop/glasses_mine.png",
         "slot": "accessories",
         "scale": 100,
-        "x": 325,
+        "x": 328,
         "y": 49,
     },
     {
