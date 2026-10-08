@@ -5836,12 +5836,12 @@ async def handle_ref(message: Message):
 
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
-        f"Твоя ссылка:\n{ref_link}\n\n"
+        f"<b>Твоя ссылка:</b>\n{ref_link}\n\n"
         f"👥 Приглашено: {referral_count} чел.\n"
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 <b>Награды за рефералов:</b>\n"
         f"{get_referral_rewards_text()}\n"
-        f"Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
+        f"  Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
         f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> за 3 уровень.\n"
         f"🔥 Если твой реферал достигнет 10 уровня тебе начисляется <b>та же сумма</b>, а рефералу — <b>{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>."
     )
@@ -5903,12 +5903,12 @@ async def handle_ref_back_to_info(callback: CallbackQuery):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
     text = (
         f"🔗 <b>Реферальная система</b>\n\n"
-        f"Твоя ссылка:\n{ref_link}\n\n"
+        f"<b>Твоя ссылка:</b>\n{ref_link}\n\n"
         f"👥 Приглашено: {referral_count} чел.\n"
         f"💰 Заработано с рефералов: {referral_earnings:,} ₽\n\n"
         f"💸 <b>Награды за рефералов:</b>\n"
         f"{get_referral_rewards_text()}\n"
-        f"Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
+        f"  Награда за реферала начисляется, когда он достигнет 3 уровня.\n"
         f"🎁 Новичку — <b>{REFERRAL_NEWBIE_BONUS:,} ₽</b> за 3 уровень.\n"
         f"🔥 Если твой реферал достигнет 10 уровня тебе начисляется <b>та же сумма</b>, а рефералу — <b>{REFERRAL_LEVEL_10_NEW_USER_BONUS:,} ₽</b>."
     )
