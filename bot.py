@@ -3185,33 +3185,9 @@ async def show_work_menu(message: Message, state: FSMContext):
 # Одновременно можно носить по одной вещи каждого типа.
 CLOTHING_SHOP_ITEMS = [
     {
-        "id": "pizdec",
-        "name": "худи",
-        "price": 1_000_000_000,
-        "emoji": "🧥",
-        "desc": "чёрная худи с надписью «ПИЗДЕЦ»",
-        "image": "images/shop/pizdec_hoodie.png",
-        "slot": "top",
-        "scale": 180,
-        "x": 385,
-        "y": 135,
-    },
-    {
-        "id": "beer",
-        "name": "Пивная футболка",
-        "price": 100_000_000,
-        "emoji": "👕",
-        "desc": "Напоминает о хорошем",
-        "image": "images/shop/beer.png",
-        "slot": "top",
-        "scale": 147,
-        "x": 361,
-        "y": 151,
-    },
-    {
         "id": "jins",
         "name": "Широкие джинсы",
-        "price": 50_000_000,
+        "price": 100_000,
         "emoji": "👖",
         "desc": "Носил сам Ваня Дмитриенко",
         "image": "images/shop/jins.png",
@@ -3223,7 +3199,7 @@ CLOTHING_SHOP_ITEMS = [
     {
         "id": "mask",
         "name": "Маска из египта",
-        "price": 10_000_000,
+        "price": 25_000_000,
         "emoji": "",
         "desc": "ابن مصر",
         "image": "images/shop/mask.png",
@@ -3235,7 +3211,7 @@ CLOTHING_SHOP_ITEMS = [
     {
         "id": "glasses_mine",
         "name": "Крутые очки",
-        "price": 10_000_000,
+        "price": 1_000_000,
         "emoji": "",
         "desc": "Супер крутые очки",
         "image": "images/shop/glasses_mine.png",
@@ -3247,7 +3223,7 @@ CLOTHING_SHOP_ITEMS = [
     {
         "id": "spider_top",
         "name": "Футболка Пидера Паркера",
-        "price": 10_000_000,
+        "price": 100_000_000,
         "emoji": "",
         "desc": "Не стирана после человека паука",
         "image": "images/shop/spider_top.png",
@@ -3259,7 +3235,7 @@ CLOTHING_SHOP_ITEMS = [
     {
         "id": "shoes_nike",
         "name": "Кроссовки Nik",
-        "price": 10_000_000,
+        "price": 200_000_000,
         "emoji": "",
         "desc": "Кроссовки для уверенной ходьбы",
         "image": "images/shop/shoes_nike.png",
