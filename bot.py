@@ -2958,6 +2958,7 @@ async def command_me(message: Message, state: FSMContext):
         photo=BufferedInputFile(photo_bytes, filename="profile_skin.png"),
         caption=profile_text,
         parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -5515,10 +5516,17 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
 
     try:
         photo = FSInputFile("images/daily_bonus.png")
-        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=kb)
+        sent = await message.answer_photo(
+            photo=photo,
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await sent.edit_reply_markup(reply_markup=kb)
     except FileNotFoundError:
         logger.warning("Файл images/daily_bonus.png не найден.")
-        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        sent = await message.answer(text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+        await sent.edit_reply_markup(reply_markup=kb)
 
 @router.callback_query(F.data == "daily_claim")
 async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
@@ -5831,7 +5839,8 @@ async def handle_ref(message: Message):
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
     ])
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    sent = await message.answer(text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    await sent.edit_reply_markup(reply_markup=kb)
 
 
 @router.callback_query(F.data == "ref_top")
@@ -7571,7 +7580,6 @@ async def show_duel_menu(message: Message, state: FSMContext):
     if not await check_level_access(message, message.from_user.id, DUEL_UNLOCK_LEVEL):
         return
     await state.clear()
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
     ])
