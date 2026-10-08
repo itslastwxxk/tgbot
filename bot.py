@@ -711,7 +711,7 @@ def biz_carousel_view(idx, balance, view_only=False):
     run_time = biz["raw_capacity"] / consumption if consumption > 0 else 0
     payback_min = biz["price"] / net if net > 0 else 0
     text = (
-        f"🏗 {biz['name']}\n"
+        f"🏗 {biz['name']}\n\n"
         f"💸 Цена: {biz['price']:,} ₽\n"
         f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
         f"📦 Расход сырья: {consumption:,}/мин\n"
@@ -1730,8 +1730,8 @@ async def check_level_access(message: Message, user_id: int, required_level: int
 # Обычные сообщения при этом не блокируются — группа остаётся обычным чатом.
 # ============================================================
 GROUP_REPLY_BUTTON_TEXTS = {
-    "💼 Работа", "📋 Профиль", "📋 Задания", "🛒 Магаз", "🛒 Магазин",
-    "🔙 Назад", "💎 Магазин за токены", "📦 Кейсы", "🏆 Топ", "🎁 Бонус",
+    "💼 Работа", "📋 Профиль", "📋 Задания", "🛒 Магаз", "👕 Одежда",
+    "🔙 Назад", "💎 Токены", "📦 Кейсы", "🏆 Топ", "🎁 Бонус",
     "🔙 В главное меню", "🔙 В меню", "⛏ Шахта", "⛏ Фармить",
     "🔧 Прокачать кирку", "🔗 Реф", "📈 Трейдинг", "🧮 Математика",
     "🏪 Бизнесы", "🎰 Казино", "🎡 Рулетка", "💣 Мины", "🥊 Дуэли",
@@ -4126,7 +4126,7 @@ async def render_profile_message(message: Message, user_id: int, edit: bool = Fa
 def get_shop_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🛒 Магазин"), KeyboardButton(text="💎 Магазин за токены")],
+            [KeyboardButton(text="👕 Одежда"), KeyboardButton(text="💎 Токены")],
             [KeyboardButton(text="🔙 Назад")],
         ],
         resize_keyboard=True,
@@ -4718,7 +4718,7 @@ async def clothing_back_to_shop_menu(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.text == "🛒 Магазин")
+@router.message(F.text == "👕 Одежда")
 async def show_clothing_shop(message: Message, state: FSMContext):
     """Открывает магазин одежды с выбором раздела."""
     user_id = message.from_user.id
@@ -4995,7 +4995,7 @@ async def _send_donate_carousel(bot_obj, chat_id: int, idx: int, user_id: int,
     return sent.message_id
 
 
-@router.message(F.text == "💎 Магазин за токены")
+@router.message(F.text == "💎 Токены")
 async def donate_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
     msg_id = await _send_donate_carousel(message.bot, message.chat.id, 0, user_id)
