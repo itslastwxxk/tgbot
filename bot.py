@@ -711,7 +711,6 @@ def biz_carousel_view(idx, balance, view_only=False):
     run_time = biz["raw_capacity"] / consumption if consumption > 0 else 0
     payback_min = biz["price"] / net if net > 0 else 0
     text = (
-        f"🏪 Купить бизнес\n\n"
         f"🏗 {biz['name']}\n"
         f"💸 Цена: {biz['price']:,} ₽\n"
         f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
