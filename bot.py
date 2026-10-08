@@ -3737,9 +3737,7 @@ async def send_wardrobe(
         if category:
             title += f" — <b>{html.escape(next((name for name, value in SHOP_CLOTHING_CATEGORIES.items() if value == category), category))}</b>"
         text = f"{title}\n\nВ этом разделе пока нет купленной одежды."
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")]
-        ])
+        kb = InlineKeyboardMarkup(inline_keyboard=[])
 
         if message_id:
             try:
@@ -3806,7 +3804,6 @@ async def send_wardrobe(
     if len(nav) > 1:
         rows.append(nav)
 
-    rows.append([InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     image_path = item.get("image")
 
@@ -4000,18 +3997,11 @@ async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "clothing_wardrobe")
 async def clothing_wardrobe_callback(callback: CallbackQuery, state: FSMContext):
-    # Сначала показываем выбор раздела — так же, как в магазине.
+    # Открываем гардероб без дублирования текста выбора раздела.
     await state.update_data(wardrobe_page=0, wardrobe_category=None, wardrobe_mode="1")
-    try:
-        await callback.message.edit_caption(caption="👕 <b>Гардероб</b>\n\nВыбери раздел:", parse_mode="HTML", reply_markup=None)
-    except TelegramBadRequest:
-        try:
-            await callback.message.edit_text("👕 <b>Гардероб</b>\n\nВыбери раздел:", parse_mode="HTML", reply_markup=None)
-        except TelegramBadRequest:
-            pass
 
-    # Reply-клавиатура с теми же разделами, что и магазин.
-    await callback.message.answer("Выбери раздел гардероба:", reply_markup=get_wardrobe_category_keyboard())
+    # Показываем только одно сообщение с выбором раздела.
+    await callback.message.answer("👕 <b>Гардероб</b>\n\nВыбери раздел:", parse_mode="HTML", reply_markup=get_wardrobe_category_keyboard())
     await callback.answer()
 
 
