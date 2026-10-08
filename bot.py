@@ -3232,10 +3232,10 @@ CLOTHING_SHOP_ITEMS = [
     },
     {
         "id": "shoes_nike",
-        "name": "Футболка Пидера Паркера",
+        "name": "Кроссовки Nik",
         "price": 10_000_000,
         "emoji": "",
-        "desc": "Не стирана после человека паука",
+        "desc": "Кроссовки для уверенной ходьбы",
         "image": "images/shop/shoes_nike.png",
         "slot": "shoes",
         "scale": 88,
@@ -3633,6 +3633,20 @@ async def send_clothing_preview(bot_obj, chat_id: int, user_id: int, item_id: st
 WARDROBE_PAGE_SIZE = 1
 
 
+def get_wardrobe_category_keyboard():
+    """Разделы гардероба полностью совпадают с разделами магазина одежды."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🧢 Головные уборы"), KeyboardButton(text="👕 Вверх")],
+            [KeyboardButton(text="👖 Низ"), KeyboardButton(text="👟 Обувь")],
+            [KeyboardButton(text="🕶 Аксессуары"), KeyboardButton(text="🧰 Предметы")],
+            [KeyboardButton(text="📦 Разное")],
+            [KeyboardButton(text="🔙 В профиль")],
+        ],
+        resize_keyboard=True,
+    )
+
+
 async def sell_clothing_item(user_id: int, item_id: str) -> tuple[bool, str]:
     """Продаёт купленную одежду за 60% от её исходной цены."""
     item = clothing_item(item_id)
@@ -3689,24 +3703,25 @@ async def send_wardrobe(
     user_id: int,
     message_id: int | None = None,
     page: int = 0,
+    category: str | None = None,
 ):
-    """Показывает гардероб как магазин: одна вещь = одна карточка с картинкой."""
+    """Показывает гардероб по тем же категориям, что и магазин одежды."""
     owned = await get_owned_clothes(user_id)
+
+    # Проверяем все существующие слоты, а не только базовые 4.
     equipped_slots = {
         slot: await get_equipped(user_id, slot)
-        for slot in ("head", "top", "bottom", "shoes")
+        for slot in CLOTHING_LAYER_ORDER
     }
-    equipped = set(equipped_slots.values())
 
     items = []
     for item_id in owned:
         item = clothing_item(item_id)
-        if item:
+        if item and (category is None or item.get("slot", "top") == category):
             items.append(item)
 
-    # Всегда один и тот же порядок: сначала слой одежды, затем название.
-    # Это важно: Redis Set не гарантирует порядок, из-за чего гардероб
-    # мог показывать одну страницу, а кнопка «Снять» снимать другую вещь.
+    # Redis Set не гарантирует порядок — сортируем стабильно, чтобы
+    # после надевания/снятия/продажи страница всегда указывала на ту же вещь.
     layer_order = {slot: i for i, slot in enumerate(CLOTHING_LAYER_ORDER)}
     items.sort(key=lambda item: (
         layer_order.get(item.get("slot", "top"), 99),
@@ -3718,10 +3733,10 @@ async def send_wardrobe(
     page = max(0, min(page, total_pages - 1))
 
     if not items:
-        text = (
-            "👕 <b>Гардероб</b>\n\n"
-            "У тебя пока нет купленной одежды."
-        )
+        title = "👕 <b>Гардероб</b>"
+        if category:
+            title += f" — <b>{html.escape(next((name for name, value in SHOP_CLOTHING_CATEGORIES.items() if value == category), category))}</b>"
+        text = f"{title}\n\nВ этом разделе пока нет купленной одежды."
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")]
         ])
@@ -3735,7 +3750,7 @@ async def send_wardrobe(
                     parse_mode="HTML",
                     reply_markup=kb,
                 )
-                return
+                return message_id
             except TelegramBadRequest:
                 try:
                     await callback_or_message.bot.edit_message_text(
@@ -3745,26 +3760,27 @@ async def send_wardrobe(
                         parse_mode="HTML",
                         reply_markup=kb,
                     )
-                    return
+                    return message_id
                 except TelegramBadRequest:
                     pass
 
         if isinstance(callback_or_message, Message):
-            await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
+            sent = await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
         else:
-            await callback_or_message.message.answer(
-                text, parse_mode="HTML", reply_markup=kb
-            )
-        return
+            sent = await callback_or_message.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return sent.message_id
 
     item = items[page]
-    is_equipped = item["id"] == equipped_slots.get(item.get("slot", "top"))
+    slot = item.get("slot", "top")
+    is_equipped = item["id"] == equipped_slots.get(slot)
     sell_price = int(item["price"] * 0.60)
 
     status = "✅ <b>НАДЕТО</b>" if is_equipped else "📦 <b>В ГАРДЕРОБЕ</b>"
+    category_name = next((name for name, value in SHOP_CLOTHING_CATEGORIES.items() if value == category), None)
+    category_line = f"\n📂 Раздел: <b>{html.escape(category_name)}</b>" if category_name else ""
 
     text = (
-        f"👕 <b>Гардероб</b>\n\n"
+        f"👕 <b>Гардероб</b>{category_line}\n\n"
         f"{item['emoji']} <b>{html.escape(item['name'])}</b>\n"
         f"{html.escape(item['desc'])}\n\n"
         f"{status}\n"
@@ -3774,58 +3790,23 @@ async def send_wardrobe(
     )
 
     rows = []
-
     if is_equipped:
-        rows.append([
-            InlineKeyboardButton(
-                text="❌ Снять",
-                # Передаём ID вещи, а не полагаемся на порядок Redis Set.
-                callback_data=f"clothing_unequip:{item['id']}",
-            )
-        ])
+        rows.append([InlineKeyboardButton(text="❌ Снять", callback_data=f"clothing_unequip:{item['id']}")])
     else:
-        rows.append([
-            InlineKeyboardButton(
-                text="👕 Одеть",
-                callback_data=f"clothing_equip:{item['id']}",
-            )
-        ])
+        rows.append([InlineKeyboardButton(text="👕 Одеть", callback_data=f"clothing_equip:{item['id']}")])
 
-    rows.append([
-        InlineKeyboardButton(
-            text=f"💰 Продать за {sell_price:,} ₽",
-            callback_data=f"clothing_sell:{item['id']}",
-        )
-    ])
+    rows.append([InlineKeyboardButton(text=f"💰 Продать за {sell_price:,} ₽", callback_data=f"clothing_sell:{item['id']}")])
 
     nav = []
     if page > 0:
-        nav.append(
-            InlineKeyboardButton(
-                text="⬅️",
-                callback_data=f"clothing_wardrobe_page:{page - 1}",
-            )
-        )
-    nav.append(
-        InlineKeyboardButton(
-            text=f"{page + 1}/{len(items)}",
-            callback_data="clothing_noop",
-        )
-    )
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"clothing_wardrobe_page:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{len(items)}", callback_data="clothing_noop"))
     if page < len(items) - 1:
-        nav.append(
-            InlineKeyboardButton(
-                text="➡️",
-                callback_data=f"clothing_wardrobe_page:{page + 1}",
-            )
-        )
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"clothing_wardrobe_page:{page + 1}"))
     if len(nav) > 1:
         rows.append(nav)
 
-    rows.append([
-        InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")
-    ])
-
+    rows.append([InlineKeyboardButton(text="🔙 В профиль", callback_data="profile_refresh")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     image_path = item.get("image")
 
@@ -3835,11 +3816,7 @@ async def send_wardrobe(
                 await callback_or_message.bot.edit_message_media(
                     chat_id=callback_or_message.message.chat.id,
                     message_id=message_id,
-                    media=InputMediaPhoto(
-                        media=FSInputFile(image_path),
-                        caption=text,
-                        parse_mode="HTML",
-                    ),
+                    media=InputMediaPhoto(media=FSInputFile(image_path), caption=text, parse_mode="HTML"),
                     reply_markup=kb,
                 )
             else:
@@ -3850,30 +3827,19 @@ async def send_wardrobe(
                     parse_mode="HTML",
                     reply_markup=kb,
                 )
-            return
+            return message_id
         except TelegramBadRequest:
             pass
 
+    chat_id = callback_or_message.message.chat.id if not isinstance(callback_or_message, Message) else callback_or_message.chat.id
     if image_path and os.path.exists(image_path):
         sent = await callback_or_message.bot.send_photo(
-            chat_id=callback_or_message.message.chat.id
-            if not isinstance(callback_or_message, Message)
-            else callback_or_message.chat.id,
-            photo=FSInputFile(image_path),
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=kb,
+            chat_id=chat_id, photo=FSInputFile(image_path), caption=text, parse_mode="HTML", reply_markup=kb
         )
-        return sent.message_id
-
-    if isinstance(callback_or_message, Message):
-        sent = await callback_or_message.answer(
-            text, parse_mode="HTML", reply_markup=kb
-        )
+    elif isinstance(callback_or_message, Message):
+        sent = await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
     else:
-        sent = await callback_or_message.message.answer(
-            text, parse_mode="HTML", reply_markup=kb
-        )
+        sent = await callback_or_message.message.answer(text, parse_mode="HTML", reply_markup=kb)
     return sent.message_id
 
 
@@ -3894,9 +3860,11 @@ async def clothing_sell_callback(callback: CallbackQuery, state: FSMContext):
     sell_price = int(item["price"] * 0.60)
 
     # Сохраняем выбранную вещь и просим подтверждение.
+    current_state = await state.get_data()
     await state.update_data(
         wardrobe_sell_item=item_id,
-        wardrobe_sell_page=int((await state.get_data()).get("wardrobe_page", 0)),
+        wardrobe_sell_page=int(current_state.get("wardrobe_page", 0)),
+        wardrobe_category=current_state.get("wardrobe_category"),
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3945,25 +3913,23 @@ async def clothing_sell_callback(callback: CallbackQuery, state: FSMContext):
 async def clothing_sell_confirm_callback(callback: CallbackQuery, state: FSMContext):
     item_id = callback.data.split(":", 1)[1]
     data = await state.get_data()
-    page = int(data.get("wardrobe_sell_page", 0))
+    page = int(data.get("wardrobe_sell_page", data.get("wardrobe_page", 0)))
+    category = data.get("wardrobe_category")
 
     ok, msg = await sell_clothing_item(callback.from_user.id, item_id)
-
     if not ok:
         await callback.answer(msg, show_alert=True)
         return
 
     owned_after = await get_owned_clothes(callback.from_user.id)
-    max_page = max(0, len(owned_after) - 1)
-    page = min(page, max_page)
-
-    await state.update_data(wardrobe_page=page)
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=page,
+    category_count = sum(
+        1 for owned_id in owned_after
+        if (item := clothing_item(owned_id)) and (category is None or item.get("slot", "top") == category)
     )
+    page = min(page, max(0, category_count - 1))
+
+    await state.update_data(wardrobe_page=page, wardrobe_category=category)
+    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id, page=page, category=category)
     await callback.answer(msg, show_alert=True)
 
 
@@ -3971,27 +3937,19 @@ async def clothing_sell_confirm_callback(callback: CallbackQuery, state: FSMCont
 async def clothing_sell_cancel_callback(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     page = int(data.get("wardrobe_sell_page", data.get("wardrobe_page", 0)))
-
-    await state.update_data(wardrobe_page=page)
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=page,
-    )
+    category = data.get("wardrobe_category")
+    await state.update_data(wardrobe_page=page, wardrobe_category=category)
+    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id, page=page, category=category)
     await callback.answer("Продажа отменена.")
 
 
 @router.callback_query(F.data.startswith("clothing_wardrobe_page:"))
 async def clothing_wardrobe_page_callback(callback: CallbackQuery, state: FSMContext):
     page = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    category = data.get("wardrobe_category")
     await state.update_data(wardrobe_page=page)
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=page,
-    )
+    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id, page=page, category=category)
     await callback.answer()
 
 
@@ -4005,16 +3963,14 @@ async def clothing_equip_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала купи эту вещь.", show_alert=True)
         return
 
-    await set_equipped(callback.from_user.id, item["slot"], item_id)
+    # В каждом слоте может быть только одна надетая вещь.
+    # set_equipped заменяет старую вещь в том же слоте.
+    await set_equipped(callback.from_user.id, item.get("slot", "top"), item_id)
+
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
-
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=page,
-    )
+    category = data.get("wardrobe_category")
+    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id, page=page, category=category)
     await callback.answer(f"👕 {item['name']} надета!")
 
 
@@ -4037,26 +3993,32 @@ async def clothing_unequip_callback(callback: CallbackQuery, state: FSMContext):
     await set_equipped(callback.from_user.id, slot, None)
     data = await state.get_data()
     page = int(data.get("wardrobe_page", 0))
-
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=page,
-    )
+    category = data.get("wardrobe_category")
+    await send_wardrobe(callback, callback.from_user.id, callback.message.message_id, page=page, category=category)
     await callback.answer("Одежда снята!")
 
 
 @router.callback_query(F.data == "clothing_wardrobe")
 async def clothing_wardrobe_callback(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(wardrobe_page=0)
-    await send_wardrobe(
-        callback,
-        callback.from_user.id,
-        callback.message.message_id,
-        page=0,
-    )
+    # Сначала показываем выбор раздела — так же, как в магазине.
+    await state.update_data(wardrobe_page=0, wardrobe_category=None, wardrobe_mode="1")
+    try:
+        await callback.message.edit_caption(caption="👕 <b>Гардероб</b>\n\nВыбери раздел:", parse_mode="HTML", reply_markup=None)
+    except TelegramBadRequest:
+        try:
+            await callback.message.edit_text("👕 <b>Гардероб</b>\n\nВыбери раздел:", parse_mode="HTML", reply_markup=None)
+        except TelegramBadRequest:
+            pass
+
+    # Reply-клавиатура с теми же разделами, что и магазин.
+    await callback.message.answer("Выбери раздел гардероба:", reply_markup=get_wardrobe_category_keyboard())
     await callback.answer()
+
+
+@router.message(F.text == "🔙 В профиль")
+async def wardrobe_back_to_profile(message: Message, state: FSMContext):
+    await state.clear()
+    await render_profile_message(message, message.from_user.id)
 
 
 @router.callback_query(F.data == "clothing_noop")
@@ -4727,6 +4689,12 @@ async def show_clothing_category(message: Message, state: FSMContext, category: 
 
 @router.message(F.text.in_(list(SHOP_CLOTHING_CATEGORIES.keys())))
 async def clothing_category_handler(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("wardrobe_mode") == "1":
+        category = SHOP_CLOTHING_CATEGORIES[message.text]
+        await state.update_data(wardrobe_category=category, wardrobe_page=0)
+        await send_wardrobe(message, message.from_user.id, page=0, category=category)
+        return
     await show_clothing_category(
         message,
         state,
