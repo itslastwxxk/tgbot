@@ -673,10 +673,24 @@ def biz_manage_view(biz):
         repair_cost = int(biz.get("price", 0) * BUSINESS_REPAIR_COST_RATE)
         rows.append([InlineKeyboardButton(text=f"🛠 Починить за {repair_cost:,} ₽", callback_data="biz_repair")])
     rows.extend([
-        [InlineKeyboardButton(text="💸 Продать", callback_data="biz_sell")],
+        [InlineKeyboardButton(text="⚙️ Управление", callback_data="biz_manage")],
         [InlineKeyboardButton(text="🔙 Выйти", callback_data="biz_exit")],
     ])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    return text, kb
+
+
+def biz_management_view(biz):
+    """Раздел «Управление»: продажа бизнеса и переход к другим бизнесам."""
+    text = (
+        f"⚙️ Управление бизнесом «{biz['name']}»\n\n"
+        "Выбери действие:"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Продать", callback_data="biz_sell")],
+        [InlineKeyboardButton(text="🏪 Другие бизнесы", callback_data="biz_other")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_refresh")],
+    ])
     return text, kb
 
 
@@ -6246,6 +6260,7 @@ async def handle_my_businesses(message: Message, state: FSMContext):
         return
     await state.clear()
     user_id = message.from_user.id
+    await message.answer("🏪", reply_markup=ReplyKeyboardRemove())
     biz = await get_biz(user_id)
     if biz:
         await settle_and_save_biz(user_id, biz)
@@ -6293,9 +6308,21 @@ async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
         biz = await get_biz(user_id)
         if biz:
             await settle_and_save_biz(user_id, biz)
-            text, kb = biz_manage_view(biz)
+            text, kb = biz_management_view(biz)
         else:
             text, kb = biz_no_biz_view()
+        await biz_edit(callback, text, kb)
+        return
+
+    if data == "biz_other":
+        await callback.answer()
+        biz = await get_biz(user_id)
+        if not biz:
+            text, kb = biz_no_biz_view()
+            await biz_edit(callback, text, kb)
+            return
+        balance = await get_balance(user_id)
+        text, kb = biz_carousel_view(0, balance)
         await biz_edit(callback, text, kb)
         return
 
