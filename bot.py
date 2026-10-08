@@ -2958,12 +2958,12 @@ async def command_me(message: Message, state: FSMContext):
         photo=BufferedInputFile(photo_bytes, filename="profile_skin.png"),
         caption=profile_text,
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
     )
 
 
 @router.message(F.text == "📋 Профиль")
 async def show_profile(message: Message, state: FSMContext):
+    await message.answer("👤", reply_markup=ReplyKeyboardRemove())
     await state.clear()
     user_id = message.from_user.id
     if not await check_level_access(message, user_id, PROFILE_UNLOCK_LEVEL):
@@ -5251,6 +5251,7 @@ def get_case_keyboard(index: int) -> InlineKeyboardMarkup:
 
 @router.message(F.text == "📦 Кейсы")
 async def show_cases(message: Message, state: FSMContext):
+    await message.answer("📦", reply_markup=ReplyKeyboardRemove())
     if not await check_level_access(message, message.from_user.id, CASE_UNLOCK_LEVEL): 
             return
     await state.clear()
@@ -5488,6 +5489,7 @@ async def show_public_top(callback: CallbackQuery):
 # ============================================================
 @router.message(F.text == "🎁 Бонус")
 async def handle_daily_bonus(message: Message, state: FSMContext):
+    await message.answer("🎁", reply_markup=ReplyKeyboardRemove())
     if not await check_level_access(message, message.from_user.id, BONUS_UNLOCK_LEVEL):
             return
     user_id = message.from_user.id
@@ -5516,17 +5518,10 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
 
     try:
         photo = FSInputFile("images/daily_bonus.png")
-        sent = await message.answer_photo(
-            photo=photo,
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await sent.edit_reply_markup(reply_markup=kb)
+        await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=kb)
     except FileNotFoundError:
         logger.warning("Файл images/daily_bonus.png не найден.")
-        sent = await message.answer(text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
-        await sent.edit_reply_markup(reply_markup=kb)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 @router.callback_query(F.data == "daily_claim")
 async def handle_daily_claim(callback: CallbackQuery, state: FSMContext):
@@ -5818,6 +5813,7 @@ async def handle_pickaxe_back(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🔗 Реф")
 async def handle_ref(message: Message):
+    await message.answer("🔗", reply_markup=ReplyKeyboardRemove())
     user_id = message.from_user.id
     referral_count = await get_referral_count(user_id)
     referral_earnings = await get_referral_earnings(user_id)
@@ -5839,8 +5835,7 @@ async def handle_ref(message: Message):
         [InlineKeyboardButton(text="👥 Топ по рефералам", callback_data="ref_top")],
         [InlineKeyboardButton(text="🔙 В меню", callback_data="ref_back")],
     ])
-    sent = await message.answer(text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
-    await sent.edit_reply_markup(reply_markup=kb)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "ref_top")
@@ -7577,9 +7572,11 @@ DICE_EMOJIS = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
 
 @router.message(F.text == "🥊 Дуэли")
 async def show_duel_menu(message: Message, state: FSMContext):
+    await message.answer("⚔️", reply_markup=ReplyKeyboardRemove())
     if not await check_level_access(message, message.from_user.id, DUEL_UNLOCK_LEVEL):
         return
     await state.clear()
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 В меню", callback_data="main_menu")]
     ])
