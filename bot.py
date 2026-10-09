@@ -217,10 +217,11 @@ GREETINGS = [
 TOP_PROMPT_VARIANTS = [
     "🏆 выбери рейтинг:\nнапоминаю что каждые 3 дня люди в топе получают вознаграждения",
     "📊 посмотри топ игроков:\nнапоминаю что каждые 3 дня люди в топе получают вознаграждения!!",
-    "🔥 рейтинг ждёт твоего выбора:",
-    "⚡ кто сейчас в топе? Выбери категорию:\nза нахождение в топе игроки получают вознаграждения",
-    "🎯 какой рейтинг хочешь увидеть?",
+    "🔥 бот ждёт твоего выбора:",
+    "⚡ кто сейчас в топе?\nза нахождение в топе игроки получают вознаграждения",
+    "🎯 какой топ хочешь увидеть?",
     "🌟 топ 5 каждого топа получают денежное вознаграждение",
+    "🏆 посмотри кто сейчас в топе:",
 ]
 
 # ============================================================
@@ -300,7 +301,7 @@ REFERRAL_REWARDS_BY_LEVEL = {
     50: (1_000_000_000, 6_700),
 }
 REFERRAL_NEWBIE_BONUS = 100000   # бонус новичку за регистрацию по ссылке
-REFERRAL_LEVEL_10_NEW_USER_BONUS = 500_000  # бонус рефералу при достижении 10 уровня
+REFERRAL_LEVEL_10_NEW_USER_BONUS = 5_000_000  # бонус рефералу при достижении 10 уровня
 REFERRAL_LEVEL_10_MULTIPLIER = 1  # пригласившему: та же сумма, что и выплата за 3 уровень
 
 def get_referral_reward(level: int) -> tuple[int, int]:
@@ -382,9 +383,9 @@ DUEL_COOLDOWN = 30
 ROULETTE_COOLDOWN = 10
 
 XP_PER_MINE = 50
-MATH_XP_REWARD = 200
-XP_PER_TRADE = 100
-XP_PER_DUEL = 300
+MATH_XP_REWARD = 400
+XP_PER_TRADE = 200
+XP_PER_DUEL = 400
 REFERRAL_XP_REWARD = 1000
 
 # --- НАГРАДЫ ЗА ПОВЫШЕНИЕ УРОВНЯ ---
@@ -716,7 +717,7 @@ def biz_carousel_view(idx, balance, view_only=False):
         f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
         f"📦 Расход сырья: {consumption:,}/мин\n"
         f"💸 Чистыми: {net:,} ₽/мин\n"
-        f"📦 Склад: {biz['raw_capacity']:,}\n"
+        f"📦 Склад: {biz['raw_capacity']:,}\n\n"
         f"Твой баланс: {balance:,} ₽"
     )
     nav = []
@@ -1800,7 +1801,7 @@ async def send_main_menu(target: Message | CallbackQuery, user_id: int):
     greeting_text = greeting_template.format(name=f"{display_name}")
     
     # Формируем полный текст сообщения
-    text = f"{greeting_text}\n<b>твой баланс:</b> {balance:,} ₽\nвыбирай куда направишься"
+    text = f"{greeting_text}\n<b>твой баланс:</b> {balance:,} ₽\n\nвыбирай куда направишься"
     # -------------------------------------
 
     try:
@@ -3168,7 +3169,7 @@ async def transfer_process(message: Message, state: FSMContext):
 @router.message(F.text == "💼 Работа")
 async def show_work_menu(message: Message, state: FSMContext):
     await state.clear()
-    text = "💼 <b>Работа</b>\n\nВыбирай где хочешь поднять деньги"
+    text = "💼 <b>Работа</b>\n\nвыбирай где хочешь поднять деньги"
     try:
         photo = FSInputFile("images/work.png")
         await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=await get_work_keyboard(message.from_user.id))
@@ -3483,7 +3484,7 @@ async def clothing_shop_view(idx: int, user_id: int, category: str | None = None
         category_items = clothing_items_for_category(category)
         if not category_items:
             return (
-                "🛒 <b>Магазин одежды</b>\n\nВ этом разделе пока нет товаров.",
+                "🛒 <b>Отдел одежды</b>\n\nВ этом разделе пока нет товаров.",
                 InlineKeyboardMarkup(inline_keyboard=[]),
                 {"id": "", "name": "", "image": None},
             )
@@ -3506,12 +3507,10 @@ async def clothing_shop_view(idx: int, user_id: int, category: str | None = None
         callback = f"clothing_try:{item['id']}"
 
     text = (
-        f"🛒 <b>Магазин одежды</b>\n\n"
         f"{item['emoji']} <b>{html.escape(item['name'])}</b>\n"
         f"{html.escape(item['desc'])}\n\n"
-        f"💰 Цена: <b>{item['price']:,} ₽</b>\n"
+        f"💰 Цена: <b>{item['price']:,} ₽</b>\n\n"
         f"💳 Баланс: <b>{balance:,} ₽</b>\n"
-        f"👕 В гардеробе: {'да' if item['id'] in owned else 'нет'}"
     )
 
     nav = []
@@ -4068,7 +4067,7 @@ async def render_profile_message(message: Message, user_id: int, edit: bool = Fa
     equipped_item = clothing_item(equipped) if equipped else None
 
     profile_text = (
-        f"📋 <b>твой профиль, {html.escape(name)}\n({vip_line})</b>\n\n"
+        f"📋 <b>твой профиль, {html.escape(name)}\n{vip_line}</b>\n\n"
         f"💰 баланс: <b>{balance:,} ₽</b>\n"
         f"💎 токены: <b>{tokens} ТК</b>\n"
         f"📈 уровень: <b>{level}</b>\n"
@@ -4650,7 +4649,7 @@ async def show_clothing_category(message: Message, state: FSMContext, category: 
 
     if not items:
         await message.answer(
-            "🛒 <b>Магазин одежды</b>\n\n"
+            "🛒 <b>Отдел одежды</b>\n\n"
             "В этом разделе пока нет товаров.",
             parse_mode="HTML",
             reply_markup=get_clothing_category_keyboard(),
@@ -4713,7 +4712,7 @@ async def show_clothing_shop(message: Message, state: FSMContext):
 
     await state.clear()
     await message.answer(
-        "🛒 <b>Магазин одежды</b>\n\nВыбери раздел:",
+        "🛒 <b>Отдел одежды</b>\n\nВыбери раздел:",
         parse_mode="HTML",
         reply_markup=get_clothing_category_keyboard(),
     )
@@ -4863,30 +4862,30 @@ DONATE_SHOP_ITEMS = [
     {
         "id": "token_business_hypermarket",
         "emoji": "🏬",
-        "name": "Гипермаркет",
-        "price": 50,
-        "desc": "\n  Бизнес «Гипермаркет»\nЧистый доход: 90,000 ₽ в минуту",
+        "name": "Бизнес «Гипермаркет»",
+        "price": 45,
+        "desc": "\nЧистый доход: 90,000 ₽ в минуту",
     },
     {
         "id": "token_business_palace",
         "emoji": "🏰",
-        "name": "Дворец",
-        "price": 100,
-        "desc": "\n  Бизнес «Дворец»\nЧистый доход: 400,000 ₽ в минуту",
+        "name": "Бизнес «Дворец»",
+        "price": 80,
+        "desc": "\nЧистый доход: 400,000 ₽ в минуту",
     },
     {
         "id": "token_vip_casino",
         "emoji": "👑",
-        "name": "VIP на месяц + Казино",
-        "price": 150,
-        "desc": "\n VIP на 1 месяц и бизнес «Казино»\nVIP будет отображаться у тебя в профиле и его будут видеть все.Также VIP дает доступ к чату с админами бота.\nБизнес «Казино» приносит чистый доход: 2,000,000 ₽ в минуту",
+        "name": "VIP на месяц + бизнес «Казино»",
+        "price": 125,
+        "desc": "\nVIP будет отображаться в профиле. А также VIP дает доступ к чату с админами бота.\n    Бизнес «Казино» приносит чистый доход: 2,000,000 ₽ в минуту",
     },
     {
         "id": "token_vip_month",
         "emoji": "👑",
         "name": "VIP на месяц",
         "price": 35,
-        "desc": "\n VIP на 1 месяц\nVIP будет отображаться у тебя в профиле и его будут видеть все в топе.Также VIP дает доступ к чату с админами бота.",
+        "desc": "\nVIP отображается в профиле.А также VIP дает доступ к чату с админами бота.",
     },
     {
         "id": "change_name",
@@ -4917,7 +4916,7 @@ def _donate_carousel_text(idx: int, user_id: int, tokens: int):
         f"💎 <b>Магазин за Токены</b>\n\n"
         f"{item['emoji']} <b>{item['name']}</b>\n"
         f"{item['desc']}{extra_line}\n\n"
-        f"💠 Цена: <b>{item['price']} ТК</b>\n"
+        f"💠 Цена: <b>{item['price']} ТК</b>\n\n"
         f"Твой баланс: <b>{tokens} ТК</b>"
         "\n\nТокены покупаются за реальные деньги 1 ТК = 1 рубль.\n Чтобы купить пиши в поддержку @kommersant_support"
     )
@@ -4953,7 +4952,7 @@ async def donate_carousel_view(idx: int, user_id: int, tokens: int):
         f"💎 <b>Магазин за Токены</b>\n\n"
         f"{item['emoji']} <b>{item['name']}</b>\n"
         f"{item['desc']}{extra_line}\n\n"
-        f"💠 Цена: <b>{item['price']} ТК</b>\n"
+        f"💠 Цена: <b>{item['price']} ТК</b>\n\n"
         f"Твой баланс: <b>{tokens} ТК</b>"
         "\n\nТокены покупаются за реальные деньги 1 ТК = 1 рубль.\n Чтобы купить пиши в поддержку @kommersant_support"
     )
@@ -5386,7 +5385,7 @@ async def cases_open(callback: CallbackQuery):
             f"{case['emoji']} <b>{case['name']}</b>\n\n"
             f"🎉 выпало: <b>{prize:,} ₽</b>\n"
             + ("🎟 использован кейс из токен-магазина\n" if used_inventory_case else "")
-            + f"💳 баланс: <b>{new_balance:,} ₽</b>"
+            + f"\n💳 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
         new_balance = await get_balance(user_id)
@@ -5534,8 +5533,7 @@ async def handle_daily_bonus(message: Message, state: FSMContext):
         text = (
             f"🎁 <b>ежедневный бонус</b>\n\n"
             f"🔥 серия: <b>{streak}</b> дн. подряд\n"
-            f"⏳ бонус уже забран. приходи через:\n"
-            f"⏰ <b>{format_cooldown(remaining)}</b>"
+            f"⏳ бонус уже забран. \n⏰ приходи через: <b>{format_cooldown(remaining)}</b>\n"
         )
         kb = get_daily_bonus_keyboard(False)
 
@@ -5947,12 +5945,11 @@ async def handle_trading(message: Message, state: FSMContext):
             reply_markup=await get_work_keyboard(message.from_user.id)
         )
         return
-
+    
     await message.answer("💻", reply_markup=ReplyKeyboardRemove())
     await message.answer(
-        "ps: курсы не продам\n"
-        f"💰 Твой баланс: <b>{balance:,} ₽</b>\n"
-        "Выбери уровень риска:",
+        "Выбери уровень риска:\n\n"
+        f"💰 <b>Твой баланс: {balance:,} ₽</b>\nps: курсы не продам",
         parse_mode="HTML",
         reply_markup=get_trading_mode_keyboard()
     )
@@ -5965,9 +5962,9 @@ async def choose_risk(callback: CallbackQuery, state: FSMContext):
 
     balance = await get_balance(callback.from_user.id)
     await callback.message.edit_text(
-        f"режим: <b>{mode}</b>\n"
-        f"💰 баланс: <b>{balance:,} ₽</b>\n"
-        "введи сумму ставки:",
+        f"режим: <b>{mode}</b>\n\n"
+        "введи сумму ставки:"
+        f"💰 баланс: <b>{balance:,} ₽</b>\n",
         parse_mode="HTML",
         reply_markup=get_trading_result_keyboard2()
     )
@@ -7033,7 +7030,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             f"выпало: {color} <b>{number}</b>\n"
             f"твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"✅ <b>ВЫЙГРЫШ!</b>\n"
-            f"🎉 чистыми: +{winnings - amount:,} ₽ (выплата {winnings:,} ₽)\n"
+            f"🎉 чистыми: +{winnings - amount:,} ₽ (выплата {winnings:,} ₽)\n\n"
             f"💰 баланс: <b>{new_balance:,} ₽</b>"
         )
     else:
@@ -7044,7 +7041,7 @@ async def process_roulette_bet(callback: CallbackQuery, state: FSMContext):
             f"выпало: {color} <b>{number}</b>\n"
             f"твоя ставка: <b>{roulette_bet_name(bet)}</b>\n\n"
             f"❌ <b>ПРОИГРЫШ!</b>\n"
-            f"💸 списание: -{amount:,} ₽\n"
+            f"💸 списание: -{amount:,} ₽\n\n"
             f"💰 баланс: <b>{new_balance:,} ₽</b>"
         )
 
@@ -7589,7 +7586,7 @@ async def command_roulette(message: Message, state: FSMContext):
             f"🎡 <b>РУЛЕТКА</b>\n"
             f"выпало: {color} <b>{number}</b>\n"
             f"ставка: <b>{bet_name}</b> — {amount:,} ₽\n"
-            f"✅ <b>ВЫИГРЫШ!</b> +{winnings - amount:,} ₽\n"
+            f"✅ <b>ВЫИГРЫШ!</b> +{winnings - amount:,} ₽\n\n"
             f"💰 баланс: <b>{await get_balance(user_id):,} ₽</b>"
         )
     else:
@@ -7597,7 +7594,7 @@ async def command_roulette(message: Message, state: FSMContext):
             f"🎡 <b>РУЛЕТКА</b>\n"
             f"выпало: {color} <b>{number}</b>\n"
             f"ставка: <b>{bet_name}</b> — {amount:,} ₽\n"
-            f"❌ <b>ПРОИГРЫШ!</b> -{amount:,} ₽\n"
+            f"❌ <b>ПРОИГРЫШ!</b> -{amount:,} ₽\n\n"
             f"💰 баланс: <b>{await get_balance(user_id):,} ₽</b>"
         )
 
