@@ -3241,7 +3241,11 @@ async def show_work_menu(message: Message, state: FSMContext):
         await message.answer_photo(photo=photo, caption=text, parse_mode="HTML", reply_markup=await get_work_keyboard(message.from_user.id))
     except FileNotFoundError:
         logger.warning("Файл images/work.png не найден.")
-        await message.answer(text, reply_markup=await get_work_keyboard(message.from_user.id))
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=await get_work_keyboard(message.from_user.id),
+        )
 
 
 # ============================================================
@@ -6726,7 +6730,7 @@ async def process_raw_amount(message: Message, state: FSMContext):
     )
 
     text, kb = biz_warehouse_view(biz)
-    await message.answer(text, reply_markup=kb)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 # ============================================================
