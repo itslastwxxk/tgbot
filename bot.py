@@ -149,6 +149,7 @@ class AdminForm(StatesGroup):
     waiting_for_level = State()
     waiting_for_tk_amount = State()
     waiting_for_broadcast = State()
+    waiting_for_nickname = State()
 
 class DuelForm(StatesGroup):
     waiting_for_target = State()
@@ -412,6 +413,7 @@ CASINO_UNLOCK_LEVEL = 10
 # ============================================================
 BUSINESS_LIST = [
     {
+        "emoji": "🛍️",
         "name": "Ларёк «Всё по 67»",
         "price": 100_000,
         "income_per_min": 167,
@@ -419,6 +421,7 @@ BUSINESS_LIST = [
         "raw_capacity": 60_000,
     },
     {
+        "emoji": "🌯",
         "name": "Шаурмечка",
         "price": 450_000,
         "income_per_min": 750,
@@ -426,6 +429,7 @@ BUSINESS_LIST = [
         "raw_capacity": 270_000,
     },
     {
+        "emoji": "🏬",
         "name": "Магазин «Недорого, но сердито»",
         "price": 2_000_000,
         "income_per_min": 3_333,
@@ -433,6 +437,7 @@ BUSINESS_LIST = [
         "raw_capacity": 1_200_000,
     },
     {
+        "emoji": "🚜",
         "name": "Ферма",
         "price": 6_000_000,
         "income_per_min": 10_000,
@@ -440,6 +445,7 @@ BUSINESS_LIST = [
         "raw_capacity": 3_600_000,
     },
     {
+        "emoji": "🎰",
         "name": "Букмекерская контора",
         "price": 15_000_000,
         "income_per_min": 25_000,
@@ -447,6 +453,7 @@ BUSINESS_LIST = [
         "raw_capacity": 9_000_000,
     },
     {
+        "emoji": "⛽",
         "name": "Заправка",
         "price": 40_000_000,
         "income_per_min": 60_000,
@@ -454,6 +461,7 @@ BUSINESS_LIST = [
         "raw_capacity": 18_000_000,
     },
     {
+        "emoji": "🛒",
         "name": "Гипермаркет",
         "price": 90_000_000,
         "income_per_min": 130_000,
@@ -461,6 +469,7 @@ BUSINESS_LIST = [
         "raw_capacity": 36_000_000,
     },
     {
+        "emoji": "💹",
         "name": "Криптобиржа",
         "price": 190_000_000,
         "income_per_min": 290_000,
@@ -468,6 +477,7 @@ BUSINESS_LIST = [
         "raw_capacity": 90_000_000,
     },
     {
+        "emoji": "🏰",
         "name": "Дворец",
         "price": 400_000_000,
         "income_per_min": 700_000,
@@ -475,6 +485,7 @@ BUSINESS_LIST = [
         "raw_capacity": 270_000_000,
     },
     {
+        "emoji": "✈️",
         "name": "Аэропорт",
         "price": 1_000_000_000,
         "income_per_min": 1_600_000,
@@ -482,6 +493,7 @@ BUSINESS_LIST = [
         "raw_capacity": 540_000_000,
     },
     {
+        "emoji": "🎲",
         "name": "Казино",
         "price": 2_000_000_000,
         "income_per_min": 3_200_000,
@@ -489,6 +501,7 @@ BUSINESS_LIST = [
         "raw_capacity": 1_080_000_000,
     },
     {
+        "emoji": "🍸",
         "name": "Бордель",
         "price": 4_500_000_000,
         "income_per_min": 7_200_000,
@@ -651,7 +664,7 @@ def biz_manage_view(biz):
     net_profit = biz_net_profit_per_min(biz)
     time_left = biz_time_until_empty(biz)
     text = (
-        f"🏪 Твой бизнес: «{biz['name']}»\n\n"
+        f"{biz.get('emoji', '🏪')} Твой бизнес: <b>«{html.escape(biz['name'])}»</b>\n\n"
         f"🚀 Уровень: {biz.get('level', 1)}/3\n"
         f"💰 Доход: {biz.get('income_per_min', 0):,} ₽/мин\n"
         f"📦 Расход сырья: {consumption:,}/мин\n"
@@ -684,7 +697,7 @@ def biz_manage_view(biz):
 def biz_management_view(biz):
     """Раздел «Управление»: продажа бизнеса и переход к другим бизнесам."""
     text = (
-        f"⚙️ Управление бизнесом «{biz['name']}»\n\n"
+        f"⚙️ Управление бизнесом <b>«{html.escape(biz['name'])}»</b>\n\n"
         "Выбери действие:"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -712,7 +725,7 @@ def biz_carousel_view(idx, balance, view_only=False):
     run_time = biz["raw_capacity"] / consumption if consumption > 0 else 0
     payback_min = biz["price"] / net if net > 0 else 0
     text = (
-        f"🏗 {biz['name']}\n\n"
+        f"{biz.get('emoji', '🏗️')} <b>{html.escape(biz['name'])}</b>\n\n"
         f"💸 Цена: {biz['price']:,} ₽\n"
         f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
         f"📦 Расход сырья: {consumption:,}/мин\n"
@@ -743,7 +756,7 @@ def biz_warehouse_view(biz):
     biz_balance = biz.get("balance", 0)
     time_left = biz_time_until_empty(biz)
     text = (
-        f"📦 Склад «{biz['name']}»\n\n"
+        f"📦 Склад <b>«{html.escape(biz['name'])}»</b>\n\n"
         f"Сырьё: {stock:,}/{capacity:,}\n"
         f"Цена: {RAW_PRICE} ₽ за штуку\n"
         f"📦 Расход: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
@@ -753,7 +766,7 @@ def biz_warehouse_view(biz):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 С основного баланса", callback_data="biz_wh:user")],
         [InlineKeyboardButton(text="🏪 Со счёта бизнеса", callback_data="biz_wh:biz")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_refresh")],
     ])
     return text, kb
 
@@ -762,9 +775,9 @@ def biz_upgrade_view(biz):
     level = biz.get("level", 1)
     cost = biz_upgrade_cost(biz)
     if cost is None:
-        text = f"🚀 «{biz['name']}»\n\nуровень: {level}/3 — твой бизнес полностью вкачен!"
+        text = f"🚀 <b>«{html.escape(biz['name'])}»</b>\n\nуровень: {level}/3 — твой бизнес полностью вкачен!"
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")]
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_refresh")]
         ])
         return text, kb
     new_level = level + 1
@@ -779,7 +792,7 @@ def biz_upgrade_view(biz):
     current_net = biz_net_profit_per_min(biz)
 
     text = (
-        f"🚀 Прокачка «{biz['name']}»\n\n"
+        f"🚀 Прокачка <b>«{html.escape(biz['name'])}»</b>\n\n"
         f"Сейчас уровень: {level}/3\n"
         f"💰 Доход: {biz['income_per_min']:,} ₽/мин\n"
         f"📦 Расход сырья: {biz.get('raw_consumption_per_min', 0):,}/мин\n"
@@ -797,7 +810,7 @@ def biz_upgrade_view(biz):
             InlineKeyboardButton(text=f"🛒 За {cost:,} ₽ (баланс)", callback_data="biz_up_do:user"),
             InlineKeyboardButton(text=f"🏪 За {cost:,} ₽ (бизнес)", callback_data="biz_up_do:biz"),
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_manage")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="biz_refresh")]
     ])
     return text, kb
 
@@ -805,7 +818,7 @@ def biz_upgrade_view(biz):
 def biz_sell_view(biz):
     sell_price = biz_sell_price(biz)
     text = (
-        f"💸 Продажа «{biz['name']}»\n\n"
+        f"💸 Продажа <b>«{html.escape(biz['name'])}»</b>\n\n"
         f"на руки получишь: {sell_price:,} ₽\n"
         f"(50% цены + 50% сырья + баланс бизнеса)"
     )
@@ -818,9 +831,9 @@ def biz_sell_view(biz):
 
 async def biz_edit(callback, text, kb):
     try:
-        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except TelegramBadRequest:
-        await callback.message.answer(text, reply_markup=kb)
+        await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # --- Инициализация Redis ---
 async def init_redis():
@@ -1844,6 +1857,7 @@ def get_admin_player_keyboard(player_id: int):
             InlineKeyboardButton(text="➖ Вычесть ТК", callback_data=f"admin_tk_act:sub:{player_id}"),
         ],
         [InlineKeyboardButton(text="⭐ Выдать уровень", callback_data=f"admin_level:{player_id}")],
+        [InlineKeyboardButton(text="✏️ Изменить ник", callback_data=f"admin_nick:{player_id}")],
         [InlineKeyboardButton(text="🔙 К меню", callback_data="admin_main")],
     ])
 
@@ -2047,6 +2061,58 @@ async def _show_admin_player(bot_obj, chat_id: int, msg_id: int | None,
     await state.update_data(admin_player_id=player_id)
     await _edit_or_answer(bot_obj, chat_id, msg_id, text, kb)
     await state.update_data(admin_msg_id=msg_id)
+
+
+@router.callback_query(F.data.startswith("admin_nick:"))
+async def admin_nick_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ закрыт, ты не админ.", show_alert=True)
+        return
+    player_id = int(callback.data.split(":")[1])
+    await state.update_data(admin_player_id=player_id, admin_msg_id=callback.message.message_id)
+    await state.set_state(AdminForm.waiting_for_nickname)
+    await callback.answer()
+    current_name = await get_user_name(player_id) or "без ника"
+    await _edit_or_answer(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        f"✏️ Текущий ник: <b>{html.escape(current_name)}</b>\n\n"
+        "Введи новый ник (3–10 символов, только латинские буквы и цифры):",
+        get_admin_back_keyboard(player_id),
+    )
+
+
+@router.message(AdminForm.waiting_for_nickname)
+async def admin_nick_enter(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    player_id = data.get("admin_player_id")
+    msg_id = data.get("admin_msg_id")
+    name = (message.text or "").strip()
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
+    if not re.fullmatch(r"[A-Za-z0-9]{3,10}", name):
+        await _edit_or_answer(message.bot, message.chat.id, msg_id,
+            "❌ Ник должен содержать 3–10 латинских букв или цифр.",
+            get_admin_back_keyboard(player_id))
+        return
+
+    existing_id = await get_user_id_by_name_direct(name)
+    if existing_id and existing_id != player_id:
+        await _edit_or_answer(message.bot, message.chat.id, msg_id,
+            f"❌ Ник <b>{html.escape(name)}</b> уже занят игроком #{existing_id}. Введи другой:",
+            get_admin_back_keyboard(player_id))
+        return
+
+    old_name = await get_user_name(player_id) or "без ника"
+    await save_user_name(player_id, name)
+    await _edit_or_answer(message.bot, message.chat.id, msg_id,
+        f"✅ Ник игрока #{player_id} изменён: <b>{html.escape(old_name)}</b> → <b>{html.escape(name)}</b>",
+        get_admin_player_keyboard(player_id))
+    await state.set_state(None)
 
 
 @router.callback_query(F.data.startswith("admin_level:"))
@@ -6274,7 +6340,7 @@ async def handle_my_businesses(message: Message, state: FSMContext):
     else:
         text, kb = biz_no_biz_view()
 
-    await message.answer(text, reply_markup=kb)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("biz_"))
 async def handle_biz_callbacks(callback: CallbackQuery, state: FSMContext):
