@@ -1717,10 +1717,10 @@ UNLOCK_LEVELS = {
     "📋 Профиль": PROFILE_UNLOCK_LEVEL,
     "🧮 Математика": MATH_UNLOCK_LEVEL,
     "🥊 Дуэли": DUEL_UNLOCK_LEVEL,
-    "📈 Трейдинг\n\n переходи в 'Работы' и жми 'Трейдинг'": TRADING_UNLOCK_LEVEL,
+    "📈 Трейдинг": TRADING_UNLOCK_LEVEL,
     "🏪 Бизнесы": BUSINESS_UNLOCK_LEVEL,
     "🎰 Казино": CASINO_UNLOCK_LEVEL,
-    "🎁 Ежедневный бонус\n\n переходи в главное меню и жми 'Бонус'": BONUS_UNLOCK_LEVEL,
+    "🎁 Ежедневный бонус": BONUS_UNLOCK_LEVEL,
     "📦 Кейсы": CASE_UNLOCK_LEVEL,
 }
 
